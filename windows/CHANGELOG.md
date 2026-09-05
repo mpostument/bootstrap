@@ -19,6 +19,43 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.5.0]
+
+### Added
+
+- **A daily unattended run**, registered as a Windows scheduled task by a new
+  schedule phase. This is what the rest of the tool was built for: every phase
+  reports `current` when it changed nothing, so a daily run costs almost
+  nothing and its log is only worth reading on the days it is *not* all
+  `current`. Configured under `Schedule` in the manifest — time, task name, log
+  directory, retention — and disabled either with `Enabled = $false` or, for a
+  single run, `-SkipSchedule`.
+
+  Logs go to `%LOCALAPPDATA%\windows-bootstrap\logs`, one file per day, pruned
+  past `KeepLogDays`. Pruning happens on every run rather than only when the
+  task changes, or a machine whose task is already correct would never clean up
+  — which is every machine after the first run.
+
+  The task runs as you, interactively, elevated, so nothing needs a stored
+  credential; registering it therefore needs one elevated run, and an
+  unelevated run reports the step as `skipped` with the reason rather than
+  failing. `StartWhenAvailable` means a machine that was asleep at the trigger
+  time catches up instead of silently missing the day, and the battery settings
+  are deliberate: "only when plugged in" is how a laptop goes months without
+  ever running this.
+
+  The path to PowerShell is chosen carefully, and `(Get-Command pwsh).Source`
+  is specifically *not* it. Where PowerShell came from the Store that resolves
+  to `C:\Program Files\WindowsApps\Microsoft.PowerShell_7.6.5.0_x64__…`, a path
+  with the version in it — the folder is renamed on the next update and the
+  task then fails silently at 04:20 with nobody watching. It is the same shape
+  as the versioned Oh My Posh MSIX directory the shell phase already works
+  around. The task points at the WindowsApps execution alias, the Program Files
+  install, or System32's `powershell.exe`, in that order — all of which stay
+  put.
+- `-SkipSchedule`, for symmetry with `-SkipShell` and `-SkipMpv`.
+- `Schedule` joins the manifest sections checked at load and in CI.
+
 ## [1.4.0]
 
 ### Added

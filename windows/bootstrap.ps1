@@ -30,6 +30,11 @@
     Skip the mpv phase - its config, the uosc UI and thumbfast - and leave
     whatever is in %APPDATA%mpv alone.
 
+.PARAMETER SkipSchedule
+    Skip the schedule phase and leave Task Scheduler alone. A task already
+    registered keeps running - this skips the step that creates or updates it,
+    it does not remove anything.
+
 .PARAMETER IncludeUnknown
     Pass --include-unknown to winget upgrade, which makes it act on packages
     whose installed version it cannot parse - typically things installed by
@@ -59,6 +64,7 @@ param(
     [switch]$SkipUpgrade,
     [switch]$SkipShell,
     [switch]$SkipMpv,
+    [switch]$SkipSchedule,
     [switch]$IncludeUnknown,
     [switch]$Silent,
     [switch]$ListGroups,
@@ -103,6 +109,33 @@ if (-not $script:ToolRoot) { $script:ToolRoot = Split-Path -Parent $MyInvocation
 $script:ProfileSource = Join-Path $script:ToolRoot 'profile.ps1'
 $script:MergeScript = Join-Path $script:ToolRoot 'merge-terminal-settings.ps1'
 $script:MpvSource = Join-Path $script:ToolRoot 'mpv'
+
+# The scheduled task needs an absolute path to THIS script and to a pwsh that
+# will still resolve when it fires months from now, so both are captured here
+# alongside every other path this tool depends on.
+#
+# A full path rather than a bare name on purpose: a task registered once and
+# left alone must not depend on a PATH lookup that could resolve differently
+# later, or not at all under a different account.
+$script:ScriptSelf = Join-Path $script:ToolRoot 'bootstrap.ps1'
+
+# NOT `(Get-Command pwsh).Source`, which is the trap here. On a machine where
+# PowerShell came from the Store that resolves to
+# C:\Program Files\WindowsApps\Microsoft.PowerShell_7.6.5.0_x64__...\pwsh.exe
+# - a path with the VERSION in it. The folder is renamed on every PowerShell
+# update, so a task registered today points at nothing after the next one, and
+# it fails silently at 04:20 with nobody watching. It is the same shape as the
+# versioned Oh My Posh MSIX directory the shell phase already works around.
+#
+# So: prefer paths that do not move. The WindowsApps execution alias is a
+# reparse point that always resolves to the current version, the Program Files
+# install is a fixed location, and System32's powershell.exe has been in the
+# same place for twenty years.
+$script:PwshForTask = @(
+    (Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe')
+    (Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe')
+    (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe')
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $ManifestPath) { $ManifestPath = Join-Path $script:ToolRoot 'packages.psd1' }
 
 # The single source of truth for this tool's version, and the ONLY place it is
@@ -114,7 +147,7 @@ if (-not $ManifestPath) { $ManifestPath = Join-Path $script:ToolRoot 'packages.p
 #
 # Bump it in the same commit as the change it describes, and add a
 # windows/CHANGELOG.md entry; the release notes are read from that file.
-$script:BootstrapVersion = '1.4.0'
+$script:BootstrapVersion = '1.5.0'
 
 # Deliberately -ShowVersion and not -Version: PowerShell reserves -Version on
 # some hosts, and a parameter that silently binds to something else is a bad
@@ -695,7 +728,7 @@ $manifest = Import-PowerShellDataFile -Path $ManifestPath
 # because an edit to the neighbouring Mpv block took the following section
 # with it. Every test run afterwards happened to pass -SkipShell, so the one
 # phase that reads it was never exercised.
-$required = @('Groups', 'Pins', 'Managed', 'Shell', 'Mpv')
+$required = @('Groups', 'Pins', 'Managed', 'Shell', 'Mpv', 'Schedule')
 $missing = @($required | Where-Object { -not $manifest.Contains($_) })
 if ($missing.Count -gt 0) {
     throw ("Manifest is missing required section(s): {0}. Found: {1}. See {2}." -f
@@ -1224,6 +1257,118 @@ if ($SkipMpv) {
     }
 }
 
+
+# ============================================================
+# Phase 5 - schedule
+# ============================================================
+# The whole point of a tool that is safe to re-run is that something else can
+# re-run it. Every phase above reports `current` when it changed nothing, so a
+# daily unattended run costs almost nothing and its log is only worth reading
+# on the days it is not all `current`.
+
+$schedule = $manifest.Schedule
+
+if ($SkipSchedule) {
+    Write-Phase 'Schedule - skipped (-SkipSchedule)'
+} elseif (-not $schedule.Enabled) {
+    Write-Phase 'Schedule - disabled in the manifest'
+    Add-Result -Group 'schedule' -Id $schedule.TaskName -Action 'skipped' -Detail 'Enabled is false'
+} else {
+    Write-Phase 'Schedule - daily unattended run'
+
+    $logDir = Join-Path $env:LOCALAPPDATA $schedule.LogDir
+
+    # Pruned whether or not the task itself needs touching. Tying cleanup to
+    # "the task changed" would mean a machine where the task is already correct
+    # never cleans up at all, which is every machine after the first run.
+    if (Test-Path $logDir) {
+        $cutoff = (Get-Date).AddDays(-$schedule.KeepLogDays)
+        $stale = @(Get-ChildItem $logDir -Filter 'bootstrap-*.log' -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -lt $cutoff })
+        if ($stale.Count -gt 0 -and $PSCmdlet.ShouldProcess("$($stale.Count) log file(s)", 'prune')) {
+            $stale | Remove-Item -Force -ErrorAction SilentlyContinue -WhatIf:$false
+            Add-Result -Group 'schedule' -Id 'log pruning' -Action 'installed' `
+                -Detail ('removed {0} older than {1} days' -f $stale.Count, $schedule.KeepLogDays)
+        }
+    }
+
+    # Registering a task that runs elevated requires an elevated caller.
+    # Reported as skipped, not failed: nothing is broken, this one step simply
+    # was not given what it needs, and every other phase still did its work.
+    if (-not (Test-Elevated)) {
+        Add-Result -Group 'schedule' -Id $schedule.TaskName -Action 'skipped' `
+            -Detail 'needs an elevated run to register a task that installs software'
+    } elseif (-not $script:PwshForTask) {
+        Add-Result -Group 'schedule' -Id $schedule.TaskName -Action 'failed' `
+            -Detail 'no pwsh or powershell.exe on PATH to point the task at'
+    } else {
+        # Task Scheduler stores this argument string verbatim and pwsh parses
+        # it, so the native-argument quoting that bites elsewhere in this file
+        # does not apply - but the nesting still has to be right: double quotes
+        # around -Command, single quotes inside it.
+        #
+        # The date is computed BY THE TASK, not now, so the log rolls over on
+        # its own instead of being frozen to whichever day this was registered.
+        $logExpr = "(Join-Path '$logDir' ('bootstrap-{0:yyyy-MM-dd}.log' -f (Get-Date)))"
+        $inner = "& '$script:ScriptSelf' -Silent *>&1 | Tee-Object -FilePath $logExpr -Append"
+        $taskArgs = '-NoProfile -ExecutionPolicy Bypass -Command "' + $inner + '"'
+
+        $action = New-ScheduledTaskAction -Execute $script:PwshForTask -Argument $taskArgs `
+            -WorkingDirectory $script:ToolRoot
+        $trigger = New-ScheduledTaskTrigger -Daily -At $schedule.Time
+        # StartWhenAvailable so a machine that was asleep at the trigger time
+        # catches up rather than silently skipping the day. The battery
+        # settings are deliberate too: "only when plugged in" is how a laptop
+        # goes months without ever running this.
+        $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
+            -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries `
+            -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+        # Interactive rather than a stored password: it runs as you, while you
+        # are logged in, elevated. Nothing here needs a credential on disk.
+        $principal = New-ScheduledTaskPrincipal `
+            -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) `
+            -LogonType Interactive -RunLevel Highest
+
+        $existing = Get-ScheduledTask -TaskName $schedule.TaskName -ErrorAction SilentlyContinue
+
+        # Compare what actually matters. The task object carries registration
+        # timestamps and author fields that never compare equal, so a whole
+        # object comparison would re-register on every single run.
+        $isCurrent = $false
+        if ($existing) {
+            $sameCmd = (@($existing.Actions).Execute -eq $script:PwshForTask -and
+                @($existing.Actions).Arguments -eq $taskArgs)
+            $sameTime = @($existing.Triggers | Where-Object {
+                    $_.StartBoundary -and
+                    ([datetime]$_.StartBoundary).ToString('HH:mm') -eq $schedule.Time
+                }).Count -gt 0
+            $isCurrent = $sameCmd -and $sameTime
+        }
+
+        if ($isCurrent) {
+            Add-Result -Group 'schedule' -Id $schedule.TaskName -Action 'current' `
+                -Detail ('daily at {0}, logs in {1}' -f $schedule.Time, $logDir)
+        } elseif (-not $PSCmdlet.ShouldProcess($schedule.TaskName, 'register daily task')) {
+            $act = if ($existing) { 'would-upgrade' } else { 'would-install' }
+            Add-Result -Group 'schedule' -Id $schedule.TaskName -Action $act `
+                -Detail ('daily at {0}' -f $schedule.Time)
+        } else {
+            try {
+                New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+                # -Force updates in place, so changing Time in the manifest
+                # moves the existing task rather than erroring or duplicating.
+                $null = Register-ScheduledTask -TaskName $schedule.TaskName -Action $action `
+                    -Trigger $trigger -Settings $settings -Principal $principal -Force `
+                    -Description 'Runs the Windows bootstrap unattended, taking package and script updates.'
+                $act = if ($existing) { 'upgraded' } else { 'installed' }
+                Add-Result -Group 'schedule' -Id $schedule.TaskName -Action $act `
+                    -Detail ('daily at {0}, logs in {1}' -f $schedule.Time, $logDir)
+            } catch {
+                Add-Result -Group 'schedule' -Id $schedule.TaskName -Action 'failed' -Detail $_.Exception.Message
+            }
+        }
+    }
+}
 
 # ============================================================
 # Summary

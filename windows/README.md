@@ -50,6 +50,8 @@ to start, so the first command still needs one of those two.
    and 7, the profile, execution policy, and a Windows Terminal settings merge
    that patches two keys instead of overwriting the file.
 4. **mpv** — the player's config, UI and scripts. Skip with `-SkipMpv`.
+5. **Schedule** — a daily unattended run, so updates arrive without anyone
+   remembering to ask. Skip with `-SkipSchedule`.
 
 ## mpv
 

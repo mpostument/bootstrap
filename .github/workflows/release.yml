@@ -97,7 +97,7 @@ jobs:
           # import still succeeds - 1.3.0 shipped without Shell exactly that
           # way, and the failure surfaced at runtime as a StrictMode property
           # error naming the consuming line rather than the manifest.
-          $required = @('Groups', 'Pins', 'Managed', 'Shell', 'Mpv')
+          $required = @('Groups', 'Pins', 'Managed', 'Shell', 'Mpv', 'Schedule')
           $absent = @($required | Where-Object { -not $m.Contains($_) })
           if ($absent.Count) {
               $failed = $true

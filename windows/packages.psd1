@@ -235,6 +235,28 @@
         }
     )
 
+    # Consumed by the schedule phase: a daily unattended run, so updates
+    # arrive without anyone remembering to ask for them.
+    #
+    # Enabled = $false leaves Task Scheduler completely alone; the phase then
+    # reports what it would have registered and does nothing. -SkipSchedule
+    # does the same for one run.
+    Schedule = @{
+        Enabled  = $true
+        TaskName = 'windows-bootstrap daily update'
+
+        # 24-hour HH:mm. Not on the hour, and not at a time the machine is
+        # likely to be mid-something: a run that fires while you are working
+        # pops installer windows over whatever you are doing.
+        Time     = '04:20'
+
+        # Under %LOCALAPPDATA%. One file per day, so a failure three days ago
+        # is still readable, and anything older than KeepLogDays is pruned on
+        # each run - a daily task left alone for a year is otherwise 365 files.
+        LogDir       = 'windows-bootstrap\logs'
+        KeepLogDays  = 30
+    }
+
     # Consumed by the shell phase: the Nerd Font, the Oh My Posh theme
     # directory, the modules installed per PowerShell edition, and the two
     # Windows Terminal settings the merge script patches.
