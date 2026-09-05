@@ -19,6 +19,34 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.3.0]
+
+### Added
+
+- **mpv is put on your `PATH`.** Its installer writes `mpv.exe` under Program
+  Files and adds nothing to `PATH`, so `mpv file.mkv` from a prompt did not
+  work even after a successful install. The mpv phase now appends the directory
+  it actually resolved the player in to the **user** `PATH` — never the machine
+  one, which would need elevation and is not this tool's to edit. Set
+  `AddToPath = $false` in the manifest's `Mpv` section to opt out.
+
+  The registry write is deliberately not the one-liner. Reading `PATH` through
+  `[Environment]::GetEnvironmentVariable` *expands* it, so `%USERPROFILE%\bin`
+  comes back as a literal path; writing that back both freezes every such entry
+  to what it meant at that moment and downgrades the value from
+  `REG_EXPAND_SZ` to `REG_SZ` for everything afterwards. The damage is silent
+  and only surfaces later, on a machine whose profile directory moved. So the
+  raw value is read with `DoNotExpandEnvironmentNames`, appended to, and
+  written back with its original value kind. Verified on a real `PATH`
+  containing `%USERPROFILE%\.dotnet\tools`, which survived unexpanded.
+
+  Comparison ignores a trailing separator, so a re-run reports `current`
+  instead of growing a duplicate entry. A `WM_SETTINGCHANGE` broadcast tells
+  already-running shells to re-read the environment — without it a terminal
+  opened *after* the change still inherits Explorer's stale copy and the entry
+  looks like it did not take. The broadcast is best-effort: if it fails, the
+  registry write, which is the part that persists, has already happened.
+
 ## [1.2.0]
 
 ### Added

@@ -254,6 +254,13 @@
     # Path narrows a commit lookup to the file that matters, so an unrelated
     # commit elsewhere in a large repository is not mistaken for a new version.
     Mpv = @{
+        # mpv's own installer puts mpv.exe under Program Files and adds nothing
+        # to PATH, so `mpv file.mkv` from a prompt does not work out of the box.
+        # This appends the directory the player was actually found in to the
+        # USER PATH - never the machine one, which would need elevation and is
+        # not this tool's to edit. Set to $false to leave PATH alone.
+        AddToPath = $true
+
         Addons = @(
             @{
                 Name   = 'uosc'

@@ -66,6 +66,13 @@ worth using, into `%APPDATA%\mpv\`:
 | **autoload** | Opening one file queues the rest of the directory. Without it the uosc playlist menu is always empty, because nothing else ever builds a playlist. |
 | **memo** | A recently-played menu, on `h` and in the uosc menu under Navigation. |
 
+mpv's own installer puts `mpv.exe` under Program Files and adds nothing to
+`PATH`, so `mpv file.mkv` from a prompt does not work out of the box. The mpv
+phase appends the directory it actually found the player in to your **user**
+`PATH` — never the machine one, which would need elevation and is not this
+tool's to edit. Set `AddToPath = $false` in the manifest's `Mpv` section to
+leave `PATH` alone.
+
 All four are downloaded from GitHub and **deliberately unpinned**, the same call
 worth stating: this is desktop config on a machine you use interactively, not
 infrastructure where a surprise version means an outage. Staying current wins

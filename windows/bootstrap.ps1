@@ -114,7 +114,7 @@ if (-not $ManifestPath) { $ManifestPath = Join-Path $script:ToolRoot 'packages.p
 #
 # Bump it in the same commit as the change it describes, and add a
 # windows/CHANGELOG.md entry; the release notes are read from that file.
-$script:BootstrapVersion = '1.2.0'
+$script:BootstrapVersion = '1.3.0'
 
 # Deliberately -ShowVersion and not -Version: PowerShell reserves -Version on
 # some hosts, and a parameter that silently binds to something else is a bad
@@ -436,6 +436,81 @@ function Get-RegValue {
 # well-known directories on purpose: a machine can also carry an older,
 # unregistered C:\Program Files\mpv, and InstallLocation is the only source
 # that names the copy winget is actually managing.
+# Adding a directory to the user's PATH permanently, done the careful way.
+#
+# The one-line version of this is
+# [Environment]::SetEnvironmentVariable('Path', "$old;$new", 'User'), and it is
+# the line that eats people's PATHs. GetEnvironmentVariable EXPANDS the value
+# it reads, so %USERPROFILE%\bin comes back as C:\Users\someone\bin; writing
+# that back stores the expanded text and, worse, stores it as a plain REG_SZ.
+# Every %VAR% entry the user had is then frozen to whatever it meant at that
+# moment, and the variable stops being REG_EXPAND_SZ for everything afterwards.
+# The damage is silent and shows up much later on a machine whose profile
+# directory moved.
+#
+# So the raw value is read with DoNotExpandEnvironmentNames, appended to, and
+# written back with the ORIGINAL value kind.
+function Add-UserPathEntry {
+    param([string]$Directory, [string]$Group, [string]$Label)
+
+    $key = 'HKCU:\Environment'
+    $raw = ''
+    $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+    try {
+        $item = Get-Item -Path $key -ErrorAction Stop
+        if ($item.GetValueNames() -contains 'Path') {
+            $raw = [string]$item.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+            $kind = $item.GetValueKind('Path')
+        }
+    } catch {
+        Add-Result -Group $Group -Id $Label -Action 'failed' -Detail $_.Exception.Message
+        return
+    }
+
+    # TrimEnd('\') on both sides so "C:\Program Files\mpv" and the same path
+    # with a trailing separator are not both added, which is how a PATH grows a
+    # duplicate on every run.
+    $entries = @($raw -split ';' | Where-Object { $_ })
+    $wanted = $Directory.TrimEnd('\')
+    if (@($entries | Where-Object { $_.TrimEnd('\') -eq $wanted }).Count -gt 0) {
+        Add-Result -Group $Group -Id $Label -Action 'current' -Detail $Directory
+        return
+    }
+    if (-not $PSCmdlet.ShouldProcess($Directory, 'add to user PATH')) {
+        Add-Result -Group $Group -Id $Label -Action 'would-install' -Detail $Directory
+        return
+    }
+    try {
+        Set-ItemProperty -Path $key -Name 'Path' -Value (($entries + $Directory) -join ';') -Type $kind
+        # This process too, so anything later in the run can find it.
+        $env:Path = $env:Path.TrimEnd(';') + ';' + $Directory
+        # Already-running processes read their environment once, at start, and
+        # Explorer is one of them - so without this a terminal opened AFTER the
+        # change still inherits Explorer's stale copy, and the entry looks like
+        # it did not take. WM_SETTINGCHANGE is what tells the shell to re-read.
+        # Best-effort: a machine that refuses the P/Invoke still got the
+        # registry write, which is the part that persists.
+        try {
+            if (-not ('NativeMethods.WinApi' -as [type])) {
+                Add-Type -Namespace 'NativeMethods' -Name 'WinApi' -MemberDefinition @'
+[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam,
+    string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+'@
+            }
+            $result = [UIntPtr]::Zero
+            # HWND_BROADCAST 0xffff, WM_SETTINGCHANGE 0x1A, SMTO_ABORTIFHUNG 0x2
+            [void][NativeMethods.WinApi]::SendMessageTimeout(
+                [IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 0x2, 3000, [ref]$result)
+        } catch {
+            Write-Verbose "PATH broadcast failed: $($_.Exception.Message)"
+        }
+        Add-Result -Group $Group -Id $Label -Action 'installed' -Detail $Directory
+    } catch {
+        Add-Result -Group $Group -Id $Label -Action 'failed' -Detail $_.Exception.Message
+    }
+}
+
 function Resolve-MpvExe {
     $cmd = Get-Command mpv -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
@@ -1099,6 +1174,13 @@ if ($SkipMpv) {
     Add-Result -Group 'mpv' -Id 'mpv' -Action 'present' -Detail $mpvExe
     $mpv = $manifest.Mpv
     $mpvDir = Join-Path $env:APPDATA 'mpv'
+
+    # mpv's installer adds nothing to PATH - that is the whole reason
+    # Resolve-MpvExe exists - so `mpv file.mkv` from a prompt does not work
+    # until something puts it there. Opt out with AddToPath = $false.
+    if ($mpv.Contains('AddToPath') -and $mpv.AddToPath) {
+        Add-UserPathEntry -Directory (Split-Path $mpvExe -Parent) -Group 'mpv' -Label 'mpv on PATH'
+    }
 
     # script-opts\autoload.conf is a nested path on purpose - mpv looks for
     # script configuration in %APPDATA%\mpv\script-opts\<script>.conf and
