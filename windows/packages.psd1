@@ -231,6 +231,25 @@
         }
     )
 
+    # Consumed by the shell phase: the Nerd Font, the Oh My Posh theme
+    # directory, the modules installed per PowerShell edition, and the two
+    # Windows Terminal settings the merge script patches.
+    Shell = @{
+        NerdFont          = 'Meslo'
+        TerminalFontFace  = 'MesloLGM Nerd Font Mono'
+        # Fixed GUID for the Windows Terminal "PowerShell 7" profile entry,
+        # kept stable across runs so the merge script can find it again.
+        TerminalPwshGuid  = '{574e775e-4f2a-5b96-ac1e-a2962a402336}'
+        OmpThemesDir      = 'oh-my-posh\themes'
+        Modules51         = @('PSReadLine', 'Terminal-Icons', 'PSFzf')
+        # CompletionPredictor is PS7-only: it plugs into the predictor
+        # subsystem, which does not exist in Windows PowerShell 5.1.
+        # profile.ps1 imports it with -ErrorAction SilentlyContinue and falls
+        # back to PredictionSource History, which is exactly the 5.1 case.
+        Modules7          = @('PSReadLine', 'Terminal-Icons', 'PSFzf', 'CompletionPredictor')
+        PSReadLineMinimum = '2.4.5'
+    }
+
     # Consumed by the mpv phase. The player itself is in the apps group above;
     # this is the UI and scripts that make it worth using.
     #

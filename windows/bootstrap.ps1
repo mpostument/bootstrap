@@ -114,7 +114,7 @@ if (-not $ManifestPath) { $ManifestPath = Join-Path $script:ToolRoot 'packages.p
 #
 # Bump it in the same commit as the change it describes, and add a
 # windows/CHANGELOG.md entry; the release notes are read from that file.
-$script:BootstrapVersion = '1.3.0'
+$script:BootstrapVersion = '1.3.1'
 
 # Deliberately -ShowVersion and not -Version: PowerShell reserves -Version on
 # some hosts, and a parameter that silently binds to something else is a bad
@@ -683,6 +683,24 @@ function Install-MpvAddon {
 
 if (-not (Test-Path $ManifestPath)) { throw "Manifest not found: $ManifestPath" }
 $manifest = Import-PowerShellDataFile -Path $ManifestPath
+
+# Checked here, once, rather than discovered 400 lines later. A manifest that
+# parses is not a manifest that is complete: drop a top-level section and the
+# import still succeeds, the packages phase still runs, and the failure
+# arrives much later as "The property 'Shell' cannot be found on this object"
+# - a StrictMode message that names the symptom, points at the consuming line,
+# and says nothing about the manifest being short a section.
+#
+# Not hypothetical. 1.3.0 shipped with the Shell section missing entirely,
+# because an edit to the neighbouring Mpv block took the following section
+# with it. Every test run afterwards happened to pass -SkipShell, so the one
+# phase that reads it was never exercised.
+$required = @('Groups', 'Pins', 'Managed', 'Shell', 'Mpv')
+$missing = @($required | Where-Object { -not $manifest.Contains($_) })
+if ($missing.Count -gt 0) {
+    throw ("Manifest is missing required section(s): {0}. Found: {1}. See {2}." -f
+        ($missing -join ', '), (@($manifest.Keys) -join ', '), $ManifestPath)
+}
 
 if ($ListGroups) {
     Write-Host ''

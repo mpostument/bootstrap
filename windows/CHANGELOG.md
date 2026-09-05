@@ -19,6 +19,33 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.3.1]
+
+### Fixed
+
+- **1.3.0 shipped with the `Shell` section missing from `packages.psd1`
+  entirely.** The whole shell phase — Nerd Font, Oh My Posh themes, PowerShell
+  modules, the profile, execution policy, Windows Terminal — died on
+  `The property 'Shell' cannot be found on this object`. An edit to the
+  neighbouring `Mpv` block had taken the section that followed it along too.
+  The section is restored unchanged.
+
+  Two things let it through, and both are now closed. `Import-PowerShellDataFile`
+  succeeds on a manifest that is short an entire section, so nothing objected
+  until a phase 400 lines later tried to read it — and every verification run
+  after that edit happened to pass `-SkipShell`, so the one phase that reads it
+  was never exercised.
+
+### Added
+
+- **The manifest is checked for its required sections at load**, right after
+  the import, instead of failing later with a StrictMode property error that
+  names the consuming line and says nothing about the manifest. A missing
+  section now stops the run immediately with the sections it wanted, the ones
+  it found, and the path it read.
+- The release workflow performs the same check, so a manifest short a section
+  cannot be published.
+
 ## [1.3.0]
 
 ### Added

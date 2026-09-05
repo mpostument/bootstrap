@@ -93,8 +93,18 @@ jobs:
           # Import-PowerShellDataFile evaluates nothing, so this proves the
           # manifest parses without running anything out of it.
           $m = Import-PowerShellDataFile windows/packages.psd1
+          # Parsing is not completeness. Drop a whole top-level section and the
+          # import still succeeds - 1.3.0 shipped without Shell exactly that
+          # way, and the failure surfaced at runtime as a StrictMode property
+          # error naming the consuming line rather than the manifest.
+          $required = @('Groups', 'Pins', 'Managed', 'Shell', 'Mpv')
+          $absent = @($required | Where-Object { -not $m.Contains($_) })
+          if ($absent.Count) {
+              $failed = $true
+              Write-Host "::error file=windows/packages.psd1::Missing section(s): $($absent -join ', ')"
+          }
           $count = ($m.Groups | ForEach-Object { $_.Packages.Count } | Measure-Object -Sum).Sum
-          Write-Host "OK   packages.psd1 - $($m.Groups.Count) groups, $count packages"
+          Write-Host "OK   packages.psd1 - $($m.Groups.Count) groups, $count packages, sections: $(@($m.Keys) -join ', ')"
           if ($failed) { exit 1 }
 
       # 1.0.2 shipped with `$script:Root` holding the tool's own directory and,
