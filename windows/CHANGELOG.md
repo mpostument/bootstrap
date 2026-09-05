@@ -19,6 +19,17 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.7.0]
+
+### Added
+
+- **`Zoom.Zoom.EXE`** joins the `apps` group. Note the id: winget publishes
+  both `Zoom.Zoom` and `Zoom.Zoom.EXE`, the same product in two installer
+  flavours. The copy already on this machine came from the EXE manifest, so
+  naming the other one would have installed a second Zoom beside it instead of
+  upgrading the one that is there — confirmed by the dry run reporting
+  `would-upgrade 7.0.6` rather than `would-install`.
+
 ## [1.6.0]
 
 ### Added

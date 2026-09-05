@@ -14,6 +14,15 @@ together.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0]
+
+### Added
+
+- **Zoom**, as the Flathub reference `us.zoom.Zoom` in the desktop-gated `apps`
+  group. Not in the Debian archive, and its own `.deb` is a direct download
+  with no repository behind it — so Flathub is the only one of the three
+  options that a normal update run would ever keep current.
+
 ## [1.0.0]
 
 First release. A Debian-family counterpart to the Windows bootstrap, built on

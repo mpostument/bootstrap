@@ -193,6 +193,12 @@
                 # expect this one to sit at whatever Ubisoft's own launcher
                 # last installed, which it updates itself anyway.
                 'Ubisoft.Connect'
+                # .EXE, not the plain Zoom.Zoom. winget publishes both and
+                # they are the same product in two installer flavours - but
+                # the copy on this machine came from the EXE manifest, and
+                # naming the other one would install a second Zoom beside it
+                # rather than upgrading the one that is there.
+                'Zoom.Zoom.EXE'
             )
         }
     )
