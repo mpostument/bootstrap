@@ -65,6 +65,8 @@ worth using, into `%APPDATA%\mpv\`:
 | **thumbfast** | Hover-preview thumbnails on the seek bar. uosc uses it automatically when present. |
 | **autoload** | Opening one file queues the rest of the directory. Without it the uosc playlist menu is always empty, because nothing else ever builds a playlist. |
 | **memo** | A recently-played menu, on `h` and in the uosc menu under Navigation. |
+| **chapterskip** | `Ctrl+s` fast-forwards to the next silence — where an opening usually ends. Never automatic. |
+| **auto-save-state** | Re-saves the resume position periodically, so a crash does not lose it. |
 
 mpv's own installer puts `mpv.exe` under Program Files and adds nothing to
 `PATH`, so `mpv file.mkv` from a prompt does not work out of the box. The mpv

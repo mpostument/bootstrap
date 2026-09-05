@@ -90,6 +90,10 @@
                 'OpenJS.NodeJS.LTS'
                 'DenoLand.Deno'
                 'Microsoft.DotNet.SDK.10'
+                # Plain id, not .Alpha / .Beta / .RC - winget publishes all
+                # four, they share the `terraform` moniker, and a prerelease
+                # is not what you want a routine update run installing.
+                'Hashicorp.Terraform'
             )
         }
 
@@ -309,6 +313,37 @@
                 Kind   = 'script'
                 File   = 'autoload.lua'
                 Url    = 'https://raw.githubusercontent.com/mpv-player/mpv/{0}/TOOLS/lua/autoload.lua'
+            }
+            @{
+                # Press a key during an opening and it fast-forwards to the
+                # next silence, which is where an OP almost always ends. Not
+                # automatic - nothing is skipped unless you ask - which is the
+                # right default for a script that guesses.
+                #
+                # Taken from dyphire/mpv-scripts rather than po5/chapterskip:
+                # same lineage, but that one has not been touched since 2022
+                # while this collection is actively maintained.
+                Name   = 'chapterskip'
+                Source = 'commit'
+                Repo   = 'dyphire/mpv-scripts'
+                Path   = 'chapterskip.lua'
+                Kind   = 'script'
+                File   = 'chapterskip.lua'
+                Url    = 'https://raw.githubusercontent.com/dyphire/mpv-scripts/{0}/chapterskip.lua'
+            }
+            @{
+                # mpv.conf sets save-position-on-quit, but that only writes on
+                # a CLEAN quit - a crash, a power cut or a killed process loses
+                # the position entirely. This re-saves periodically, so the
+                # worst case is a minute of rewatching rather than starting the
+                # episode again.
+                Name   = 'auto-save-state'
+                Source = 'commit'
+                Repo   = 'dyphire/mpv-scripts'
+                Path   = 'auto-save-state.lua'
+                Kind   = 'script'
+                File   = 'auto-save-state.lua'
+                Url    = 'https://raw.githubusercontent.com/dyphire/mpv-scripts/{0}/auto-save-state.lua'
             }
             @{
                 Name   = 'memo'

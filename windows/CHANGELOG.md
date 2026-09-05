@@ -19,6 +19,42 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.4.0]
+
+### Added
+
+- **`Hashicorp.Terraform`** joins the `dev` group. The plain id, not `.Alpha`,
+  `.Beta` or `.RC` — winget publishes all four and they share the `terraform`
+  moniker, so it is worth being explicit that a routine update run should never
+  pull a prerelease.
+- **Two more mpv scripts**, chosen by looking at what the popular mpv config
+  packs actually ship rather than from memory:
+  - **chapterskip** — press `Ctrl+s` during an opening and it fast-forwards to
+    the next silence, which is where an OP almost always ends. Deliberately not
+    automatic: nothing is skipped unless you ask, which is the right default
+    for a script that guesses. Taken from `dyphire/mpv-scripts` rather than the
+    original `po5/chapterskip` — same lineage, but that one has not been
+    touched since 2022 while this collection is actively maintained.
+  - **auto-save-state** — `mpv.conf` already sets `save-position-on-quit`, but
+    that only writes on a *clean* quit, so a crash or a killed process loses
+    the position entirely. This re-saves periodically; the worst case becomes a
+    minute of rewatching rather than starting the episode again.
+
+  Note for anyone binding chapterskip themselves: it registers through
+  `mp.register_script_message`, so `input.conf` needs `script-message
+  skip-to-silence`. The script's own header comment says `script-binding`,
+  which silently does nothing.
+
+### Changed
+
+- uosc stays as the on-screen UI, and that is a deliberate re-check rather than
+  inertia. Measured against the alternatives: uosc 3.4k stars and last pushed
+  days ago, ModernZ 1.2k and three months, ModernX 761 and seven. They all
+  replace the OSC, so it is one or the other — and uosc is both the most
+  capable and the most actively maintained. The `#!` menu entries in
+  `input.conf` are a uosc convention, so switching would mean rewriting those
+  too.
+
 ## [1.3.1]
 
 ### Fixed

@@ -114,7 +114,7 @@ if (-not $ManifestPath) { $ManifestPath = Join-Path $script:ToolRoot 'packages.p
 #
 # Bump it in the same commit as the change it describes, and add a
 # windows/CHANGELOG.md entry; the release notes are read from that file.
-$script:BootstrapVersion = '1.3.1'
+$script:BootstrapVersion = '1.4.0'
 
 # Deliberately -ShowVersion and not -Version: PowerShell reserves -Version on
 # some hosts, and a parameter that silently binds to something else is a bad
