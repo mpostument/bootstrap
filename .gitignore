@@ -1,0 +1,16 @@
+# Release staging, built by .github/workflows/release.yml
+bootstrap-windows-v*/
+bootstrap-windows-v*.zip
+bootstrap-windows-v*.zip.sha256
+release-notes.md
+
+# Backups the tool writes beside a hand-edited file it is about to replace.
+# These are the user's own content and must never be committed by accident.
+*.bak
+
+# Editors and OS clutter
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
