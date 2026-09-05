@@ -19,6 +19,27 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.6.0]
+
+### Added
+
+- Packages, all of them chosen to keep the two platforms in step now that a
+  Linux bootstrap exists alongside this one: `MikeFarah.yq` next to `jq`,
+  `GoLang.Go`, and `Microsoft.OpenJDK.21` — Microsoft's build rather than
+  Oracle's, since it is the same OpenJDK sources with no click-through licence
+  and matches what the Linux side gets from `default-jdk`.
+
+### Changed
+
+- **Python moves from 3.12 to 3.14**, the newest stable line rather than the
+  one the machine happened to have. `Python.Launcher`, already in the manifest,
+  is what makes that safe: `py` picks between whatever is installed, and a
+  project pinned to an older minor keeps working through `py -3.12`. Note that
+  changing the id does not remove the old version — nothing here ever
+  uninstalls — so 3.12 stays on disk and simply stops being upgraded.
+- The release workflow is now `release-windows.yml`, alongside a
+  `release-linux.yml`, since this repository releases each platform separately.
+
 ## [1.5.0]
 
 ### Added

@@ -50,6 +50,10 @@
                 'ajeetdsouza.zoxide'
                 'junegunn.fzf'
                 'jqlang.jq'
+                # yq alongside jq, and on the Linux side too: the fleet's
+                # playbooks and CI are YAML, so the two get reached for in
+                # the same breath.
+                'MikeFarah.yq'
                 '7zip.7zip'
                 'yt-dlp.yt-dlp'
                 'yt-dlp.FFmpeg'
@@ -74,7 +78,15 @@
                 'JetBrains.Toolbox'
                 'Microsoft.WSL'
                 'Canonical.Ubuntu'
-                'Python.Python.3.12'
+                # The newest stable line, not the one the machine happens to
+                # have. Python.Launcher below is what makes that safe: `py`
+                # picks between whatever is installed, and a project pinned
+                # to an older minor keeps working through `py -3.12`.
+                #
+                # Changing this id does NOT remove the previous version -
+                # nothing here ever uninstalls - so an older Python stays on
+                # disk and simply stops being upgraded by this script.
+                'Python.Python.3.14'
                 'Python.Launcher'
                 # The LTS channel, not the current-release one, and that is
                 # the whole Node version policy - no pin required. LTS never
@@ -90,6 +102,12 @@
                 'OpenJS.NodeJS.LTS'
                 'DenoLand.Deno'
                 'Microsoft.DotNet.SDK.10'
+                'GoLang.Go'
+                # Microsoft's build of OpenJDK rather than Oracle's: same
+                # OpenJDK sources, no click-through licence, and it is the
+                # one that matches what the Linux side gets from the
+                # distribution's default-jdk.
+                'Microsoft.OpenJDK.21'
                 # Plain id, not .Alpha / .Beta / .RC - winget publishes all
                 # four, they share the `terraform` moniker, and a prerelease
                 # is not what you want a routine update run installing.

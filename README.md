@@ -6,11 +6,11 @@ One command does both jobs. On a fresh machine it installs everything; on a
 machine that already has it, it takes the updates. The tool works out per
 package which one it is doing, and prints a line for every decision it makes.
 
-| Platform | Status | Package manager |
+| Platform | Status | Sources |
 |---|---|---|
 | [Windows](windows/) | Working — see [`windows/README.md`](windows/README.md) | winget |
+| [Linux](linux/) | Working — see [`linux/README.md`](linux/README.md) | apt, Flathub, `$HOME` version managers |
 | macOS | Planned | Homebrew |
-| Linux | Planned | apt |
 
 ## Windows
 
@@ -22,6 +22,20 @@ cd windows
 
 Full documentation, including the first run from a downloaded release, is in
 [`windows/README.md`](windows/README.md).
+
+## Linux
+
+```bash
+cd linux
+./bootstrap.sh --dry-run     # show what would change, touch nothing
+./bootstrap.sh               # do it
+```
+
+Debian family, and it works on a server as well as a workstation: groups that
+need a desktop are detected and skipped on a headless machine, rather than
+dragging Blender onto a box where nobody can open it. See
+[`linux/README.md`](linux/README.md) for how that check works — and why the two
+obvious ways to make it are both wrong.
 
 ## What this is trying to be
 
