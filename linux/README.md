@@ -47,11 +47,17 @@ Override it with `--gui` or `--no-gui` when you know better.
 2. **Repository packages** — VS Code, Docker, Unity Hub.
 3. **Package groups** — everything from the distribution archive and Flathub,
    with GUI groups gated on the desktop check.
-4. **Upgrades** — one apt transaction for the whole system, plus `flatpak update`.
-5. **Tools** — `pyenv`, `pyenv-virtualenv` and `tfenv`, git clones under `$HOME`.
+4. **Upgrades** — one apt transaction for the whole system, plus `flatpak
+   update` — and only when something is actually outdated.
+5. **Tools** — `pyenv`, `pyenv-virtualenv`, `tfenv` and `nvm`, git clones under
+   `$HOME`.
 6. **.NET SDK** — Microsoft's install script, into `$HOME/.dotnet`.
-7. **zsh** — oh-my-zsh, powerlevel10k and the plugins, plus a managed
-   `~/.zshrc.bootstrap` fragment sourced from your own `.zshrc`.
+7. **Release binaries** — `tflint` and `terraform-docs`, static builds from
+   GitHub into `~/.local/bin`, for software Debian does not package.
+8. **Nerd Font** — Meslo, on desktop machines, because powerlevel10k needs it.
+9. **Claude Code** — Anthropic's script, once, into `~/.local/bin`.
+10. **zsh** — oh-my-zsh, powerlevel10k and the plugins, plus a managed
+    `~/.zshrc.bootstrap` fragment sourced from your own `.zshrc`.
 
 ## Options
 
@@ -76,6 +82,7 @@ it, because that is the distinction that matters when an update goes wrong:
 | `GROUP_*_APT` | yes | yes, in one system-wide transaction |
 | `GROUP_*_FLATPAK` | yes | yes |
 | `REPOS` | yes, with its key and source file | yes |
+| `RELEASES` | yes, a static binary into `~/.local/bin` | yes, checked against the newest release tag |
 | `TOOLS` | yes, git clone into `$HOME` | yes, `git pull --ff-only` |
 | `HELD` | no | no |
 | `MANUAL` | no | no |
@@ -123,6 +130,11 @@ is not already there.
 
 ## Releases
 
-Tagged `linux-vX.Y.Z`. The version lives in one place, `BOOTSTRAP_VERSION` in
-`bootstrap.sh`, and the release workflow refuses to publish a tag that
-disagrees with it.
+All three platforms ship in **one** GitHub release, tagged `vX` — the tag names
+the bundle, not a version. Each platform still versions independently, so a
+release states which version of each is inside, and this one's number lives in
+`BOOTSTRAP_VERSION` in `bootstrap.sh` with its notes in `CHANGELOG.md`.
+
+The release workflow refuses to publish if any platform's current version has
+no matching changelog section, if any shipped script fails to parse, or if
+shellcheck complains.

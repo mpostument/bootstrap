@@ -2,14 +2,15 @@
 
 Versions of `windows/bootstrap.ps1` and the manifest it reads.
 
-The version lives in one place, `$script:BootstrapVersion` in `bootstrap.ps1`.
-The release workflow refuses to publish a tag whose version disagrees with it,
-and reads the release notes from the matching section below — so an entry here
-is not optional.
+The version lives in one place, `$script:BootstrapVersion` in `bootstrap.ps1`,
+and its notes live here. The release workflow reads both, and refuses to
+publish a release in which this version has no section below — so an entry
+here is not optional.
 
-Tags are `windows-vX.Y.Z`. The prefix is deliberate: this repository is meant to
-hold more than one platform, and a bare `vX.Y.Z` would imply all of it had been
-released together.
+All three platforms ship in one GitHub release, tagged `vX`. That tag names the
+bundle, not a version: the platforms version independently, because a fix on
+one is not a reason to renumber the other two, and the release states which
+version of each is inside.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
@@ -18,6 +19,56 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
   a hand-edited `packages.psd1` could stop working.
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
+
+## [1.8.0]
+
+### Added
+
+- **A `cloud` group** — kubectl, Helm, k9s, the AWS CLI v2, the Azure CLI and
+  the Google Cloud CLI. Kept in step with the Linux and macOS manifests so the
+  same commands exist wherever you land, which is the same reason the `cli`
+  group is identical across the three.
+
+  `stern` is deliberately absent: winget has no package for it, and an id that
+  does not resolve fails on every single run rather than once.
+
+- **A `git` phase, for two things a Unity checkout needs that installing
+  software does not give you.**
+
+  **Git LFS** is bundled with Git for Windows, so there is no package here —
+  adding `GitHub.GitLFS` would put a second copy on the machine for winget to
+  fight `Git.Git` over. What the phase does instead is check the part that
+  actually matters: `git lfs install` writes the clean/smudge/process filters
+  into the global config, and having the binary without the filters means
+  checkouts silently produce pointer stubs instead of files. A Unity project
+  full of those will not open.
+
+  **UnityYAMLMerge** is registered as a mergetool. It is the difference between
+  a merge conflict in a `.unity` scene or `.prefab` being resolvable and not:
+  those files are enormous auto-generated YAML with unstable ordering, git's
+  line-based merge cannot do anything sensible with them, and without this the
+  practical answer to a scene conflict is to pick a side and redo the other
+  person's work.
+
+  Registered as a mergetool rather than a merge driver, on purpose. A driver
+  runs automatically on every merge in every repository, and one that cannot
+  find its executable breaks the merge; a mergetool is invoked deliberately
+  with `git mergetool` and is inert until asked.
+
+  Unity Hub installs editors side by side, so the newest one carrying the tool
+  wins — sorted as versions rather than strings, because a string sort puts
+  `2022.3.9f1` after `6000.0.58f1`.
+
+### Fixed
+
+- **A package winget cannot read the version of was reported as `failed`.**
+  `Google.CloudSDK` is one — `winget list` shows it without a version number,
+  so winget declines to upgrade it and says `--include-unknown` would force it.
+  Nothing has gone wrong there: the SDK updates itself through `gcloud
+  components update`, and overriding that would put two installers on one
+  package. It reports `skipped` with a reason now, instead of a red line on
+  every run for something behaving exactly as intended. `Ubisoft.Connect` is in
+  the same category and gets the same treatment.
 
 ## [1.7.0]
 

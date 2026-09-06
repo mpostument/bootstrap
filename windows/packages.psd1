@@ -115,6 +115,41 @@
             )
         }
 
+
+        @{
+            Name        = 'cloud'
+            Description = 'Cloud and Kubernetes CLIs'
+            # Kept in step with the Linux and macOS manifests so the same
+            # commands exist wherever you land - the same reason the cli group
+            # is identical across the three.
+            #
+            # stern is deliberately absent: it has no winget package, and an id
+            # that does not resolve fails on every single run rather than once.
+            # `scoop install stern` or a release binary from stern/stern if you
+            # need it here.
+            Packages    = @(
+                'Kubernetes.kubectl'
+                'Helm.Helm'
+                # Capital D. winget is invoked with -e, so the id is matched
+                # EXACTLY - 'derailed.k9s' returns "No package found matching
+                # input criteria" rather than resolving case-insensitively.
+                'Derailed.k9s'
+                # v2. Amazon.AWSCLI is the v2 line; there is no separate v2 id.
+                'Amazon.AWSCLI'
+                'Microsoft.AzureCLI'
+                # winget cannot parse this one's installed version - it lists it
+                # without a number - so a plain run reports it as `skipped`
+                # rather than upgrading it, exactly like Ubisoft.Connect in the
+                # apps group.
+                #
+                # That is correct and not a gap. The SDK updates itself through
+                # `gcloud components update`, so forcing winget past it with
+                # -IncludeUnknown would put two installers on one package, which
+                # is the thing this manifest avoids everywhere else.
+                'Google.CloudSDK'
+            )
+        }
+
         @{
             Name        = 'creative'
             Description = '3D, 2D and capture tooling'
@@ -279,6 +314,40 @@
         # each run - a daily task left alone for a year is otherwise 365 files.
         LogDir       = 'windows-bootstrap\logs'
         KeepLogDays  = 30
+    }
+
+
+    # Consumed by the git phase. Two things Unity needs from git that nothing
+    # else sets up, and that cost real work when they are missing.
+    Git = @{
+        # `git lfs install` writes the clean/smudge/process filters into the
+        # global config. Installing the binary is NOT enough - without the
+        # filters, LFS pointer files are checked out as their text stubs and a
+        # Unity project full of them simply does not open.
+        #
+        # Git for Windows bundles git-lfs in its own installer, so there is no
+        # winget package here on purpose: adding GitHub.GitLFS would put a
+        # second copy on the machine for winget to fight Git.Git over.
+        LfsEnabled = $true
+
+        # Unity's own three-way merge tool for scenes and prefabs.
+        #
+        # This is the difference between a merge conflict in a .unity file
+        # being resolvable and not. Those files are enormous auto-generated
+        # YAML with unstable ordering; git's line-based merge cannot do
+        # anything sensible with them, so without this the practical answer to
+        # a scene conflict is to pick a side and redo the other person's work.
+        #
+        # Registered as a MERGETOOL, not a merge driver. A driver would run
+        # automatically on every merge in every repository, and one that cannot
+        # find its executable breaks the merge; a mergetool is invoked
+        # deliberately with `git mergetool` and is inert until you ask.
+        UnityMergeEnabled = $true
+        # Unity Hub installs each editor under here, side by side - which is
+        # exactly what the Managed section above says happens on purpose. The
+        # newest one that actually carries the tool wins.
+        UnityEditorRoot   = 'C:\Program Files\Unity\Hub\Editor'
+        UnityMergeRelPath = 'Editor\Data\Tools\UnityYAMLMerge.exe'
     }
 
     # Consumed by the shell phase: the Nerd Font, the Oh My Posh theme

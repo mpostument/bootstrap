@@ -2,17 +2,126 @@
 
 Versions of `linux/bootstrap.sh` and the manifest it reads.
 
-The version lives in one place, `BOOTSTRAP_VERSION` in `bootstrap.sh`. The
-release workflow refuses to publish a tag whose version disagrees with it, and
-reads the release notes from the matching section below — so an entry here is
-not optional.
+The version lives in one place, `BOOTSTRAP_VERSION` in `bootstrap.sh`,
+and its notes live here. The release workflow reads both, and refuses to
+publish a release in which this version has no section below — so an entry
+here is not optional.
 
-Tags are `linux-vX.Y.Z`. The prefix is deliberate: this repository holds more
-than one platform, and a bare `vX.Y.Z` would imply all of it had been released
-together.
+All three platforms ship in one GitHub release, tagged `vX`. That tag names the
+bundle, not a version: the platforms version independently, because a fix on
+one is not a reason to renumber the other two, and the release states which
+version of each is inside.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
+
+## [1.2.0]
+
+### Added
+
+- **A Nerd Font, which powerlevel10k has needed since day one.** The Windows
+  manifest has installed Meslo since its first release; this side installed the
+  theme that requires it and no font at all, so the prompt rendered as boxes.
+
+  Desktop machines only, and that is not a size argument: the glyphs are drawn
+  by the terminal you are typing at. SSH into a headless box from a terminal
+  that already has Meslo and the prompt is correct with no font on the server;
+  install one there and nothing anywhere looks different.
+
+- **`RELEASES`, a third category of software** alongside apt packages and git
+  clones: a single static binary from a GitHub release, into `~/.local/bin`.
+  For things that are in neither the Debian archive nor a repository you can
+  clone and run.
+
+  Unlike the `TOOLS` clones these are version-checked properly — the binary is
+  asked what it is, the newest release tag is fetched, and a run where they
+  already agree downloads nothing and says `current`.
+
+- **tflint and terraform-docs**, as the first two `RELEASES` entries. Neither
+  is packaged by Debian in any release. They are the Terraform counterpart to
+  the `ansible-lint` and `yamllint` pair that was already here.
+
+- **Claude Code**, installed once by Anthropic's script into `~/.local/bin` and
+  then left alone, because it updates itself. Reinstalling it every run would
+  be the second installer in a fight it cannot win.
+
+- **`~/.local/bin` on PATH in the managed zsh fragment.** The stock `~/.profile`
+  on Debian adds it, but zsh never reads `.profile` — so without this the three
+  things above install correctly and none of their commands exist.
+
+### Changed
+
+- **btop replaces htop** and **tmux replaces screen** in the `cli` group.
+
+- **`{UNAME_ARCH}` is substituted into release URLs**, alongside the `{ARCH}`
+  that was already there. The same machine has two names — dpkg says `amd64`
+  and `arm64`, `uname -m` says `x86_64` and `aarch64` — and upstream projects
+  are split about evenly over which they name their assets for. Both words are
+  now available to a `RELEASES` entry, off one definition that the AWS CLI
+  phase shares, so the two phases cannot drift on what the word means.
+
+  Not named `GOARCH`, which was the obvious suggestion and is wrong: Go's own
+  `GOARCH` values are `amd64` and `arm64` — the dpkg spelling — so the name
+  would have pointed at the wrong one of the two while sounding decisive.
+
+### Fixed
+
+- **The `cli` group installed the wrong `yq`.** Debian's `yq` package is
+  kislyuk/yq — the distribution's own description calls it a "jq wrapper for
+  YAML documents", a Python script that transcodes YAML and shells out to jq.
+  The Windows manifest installs `MikeFarah.yq` and Homebrew's `yq` formula is
+  mikefarah's too: the Go program, a different project that answers to the same
+  command name.
+
+  That is the whole point of the `cli` group inverted. It exists so muscle
+  memory transfers between the three shells, and a simple read is spelled
+  identically on both — `yq '.a.b' file` works either way — which is exactly
+  what let this survive unnoticed. Everything past a simple read diverges:
+  `yq eval`, `-i` in place, `-o=json`. A snippet written on the other two
+  platforms failed here in a way that reads like a typo rather than a different
+  program.
+
+  `yq` is now a `RELEASES` entry taking mikefarah's static binary, which needed
+  no new code — its asset has no extension, and `unpack_asset` already treats
+  that shape as a plain binary rather than guessing at an archive.
+
+  **Nothing uninstalls the old one.** A machine that ran an earlier manifest
+  keeps Debian's `yq` at `/usr/bin/yq`; it is shadowed rather than removed,
+  because the managed zsh fragment prepends `~/.local/bin` to `PATH`. Run
+  `sudo apt remove yq` by hand if you would rather not have both on disk.
+
+- **`set -e` inside a subshell used as an `if` condition does nothing**, and
+  the first draft of the release-binary downloader relied on it. Bash
+  suppresses the abort for the whole condition context, so a failed download
+  went on to unpack nothing, find nothing, and report whatever the last command
+  thought of being handed an empty path. Both new download paths chain their
+  steps with `&&` instead, so the exit status means what it looks like it means.
+- A release whose tag moved without its asset changing reported
+  `upgraded 0.60.0 -> 0.60.0` — an arrow saying nothing happened in the colour
+  that says something did. It reports `current` now.
+
+## [1.1.1]
+
+### Fixed
+
+- **Three lines that claimed a change on every run.** `zsh config`, `apt
+  packages` and `flatpak apps` reported `installed` or `upgraded` whether or
+  not anything had moved, which is the one thing this output exists to tell
+  you apart. A daily unattended run printed the same green lines on the day it
+  updated forty packages and on the day it updated none.
+
+  Each now decides the same way the git-clone path already did — look at the
+  state, act, look again:
+
+  - `zsh config` renders the fragment to a temp file and compares it with
+    `~/.zshrc.bootstrap`. Identical is `current`; different is `upgraded`;
+    absent is `installed`.
+  - `apt packages` counts what `apt-get --just-print upgrade` would move before
+    running anything. Zero is `current`, and the upgrade is not run at all; the
+    count is also what the `--dry-run` line reports, from the same function.
+  - `flatpak apps` compares the `active` commit of every installed ref before
+    and after the update, rather than matching a string in flatpak's output —
+    which is localised, and not a stable interface.
 
 ## [1.1.0]
 

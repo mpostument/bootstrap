@@ -198,17 +198,22 @@ reason.
 
 ## Releasing
 
-The version lives in one place, `$script:BootstrapVersion` in `bootstrap.ps1`.
-Tags are `windows-vX.Y.Z`.
+All three platforms ship in **one** GitHub release. The tag names the bundle,
+not a version — `git tag v2026.02` — and each platform keeps its own number, so
+a release states which version of each is inside.
+
+This one's version lives in `$script:BootstrapVersion` in `bootstrap.ps1`.
 
 ```sh
-# 1. bump $script:BootstrapVersion
-# 2. add the matching section to CHANGELOG.md
-# 3. commit both together, then:
-git tag windows-v1.2.3 && git push origin windows-v1.2.3
+# 1. bump $script:BootstrapVersion in whichever platform(s) changed
+# 2. add the matching section to that platform's CHANGELOG.md
+# 3. commit, then:
+git tag v2026.02 && git push origin v2026.02
 ```
 
-`.github/workflows/release.yml` publishes from there, and refuses to if the tag
-and the script disagree about the version, if the changelog has no section for
-it, or if any shipped `.ps1` fails to parse. Release notes are the changelog
-section; assets are the zip and its `.sha256`.
+`.github/workflows/release.yml` publishes from there, and refuses to if any
+platform's current version has no changelog section, if any shipped `.ps1`
+fails to parse or trips the shadowed-variable check, or if either shell script
+fails `bash -n` or shellcheck. Release notes are the three changelog sections,
+one after another; assets are a zip for Windows, a `.tar.gz` for each of Linux
+and macOS, and a `.sha256` for all three.

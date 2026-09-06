@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.1.0'
+BOOTSTRAP_VERSION='1.2.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -178,7 +178,17 @@ source "$MANIFEST"
 
 # Checked here, once, rather than discovered halfway through a run. A manifest
 # that sources cleanly is not a manifest that is complete.
-for required in PKG_GROUPS MANUAL HELD TOOLS REPOS ZSH_PLUGINS ZSH_CUSTOM_PLUGINS; do
+#
+# The *_ENABLED switches are in this list for a reason worth stating. Every one
+# of them is read as "${X_ENABLED:-no}", which means a manifest that never
+# mentions X and a manifest that deliberately sets X to no produce the same
+# output - "disabled in the manifest" - and one of those two is a bug. That is
+# not hypothetical: the Claude Code keys were dropped from this file by a bad
+# edit and the run went on reporting the phase as disabled, which is exactly
+# what it would have said if the absence had been on purpose.
+for required in PKG_GROUPS MANUAL HELD TOOLS REPOS RELEASES ZSH_PLUGINS ZSH_CUSTOM_PLUGINS \
+                DOTNET_ENABLED ZSH_ENABLED NERD_FONT_ENABLED CLAUDE_CODE_ENABLED \
+                AWSCLI_ENABLED GHOSTTY_ENABLED HISTORY_SIZE HISTORY_FILE_SIZE; do
   declare -p "$required" >/dev/null 2>&1 || die "manifest is missing \$$required: $MANIFEST"
 done
 
@@ -378,9 +388,19 @@ setup_repo() {
   local keyring="${KEYRING_DIR}/${name}.gpg"
   local sources="/etc/apt/sources.list.d/${name}.sources"
 
+  # A FLAT repository has no components, and says so by leaving COMPONENTS
+  # empty in the manifest. Kubernetes publishes one - the whole archive lives
+  # at a single path with `Suites: /` - and emitting `Components:` with nothing
+  # after it is not the same as omitting the field: apt rejects the empty value
+  # rather than reading it as "none". So the line is left out entirely.
   local want
-  want="$(printf 'Types: deb\nURIs: %s\nSuites: %s\nComponents: %s\nArchitectures: %s\nSigned-By: %s\n' \
-    "$uri" "$suites" "${!comp_var}" "$DPKG_ARCH" "$keyring")"
+  if [[ -z "${!comp_var}" ]]; then
+    want="$(printf 'Types: deb\nURIs: %s\nSuites: %s\nArchitectures: %s\nSigned-By: %s\n' \
+      "$uri" "$suites" "$DPKG_ARCH" "$keyring")"
+  else
+    want="$(printf 'Types: deb\nURIs: %s\nSuites: %s\nComponents: %s\nArchitectures: %s\nSigned-By: %s\n' \
+      "$uri" "$suites" "${!comp_var}" "$DPKG_ARCH" "$keyring")"
+  fi
 
   if [[ -f "$sources" && -s "$keyring" ]] && [[ "$(cat "$sources" 2>/dev/null)" == "$want" ]]; then
     result 'current' "repo: $desc" "$sources"
@@ -412,6 +432,14 @@ setup_repo() {
 phase 'Repositories - third-party apt sources'
 
 DPKG_ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
+# The SAME machine under two naming conventions, and upstream projects are
+# split roughly evenly between them: dpkg says amd64 and arm64, uname says
+# x86_64 and aarch64. Both are substituted into release URLs, because a
+# manifest entry cannot rename what its upstream chose to call the asset, and
+# guessing the wrong word produces a confident 404 against a release that
+# exists. Not called GOARCH: Go's own GOARCH values are amd64 and arm64, the
+# dpkg spelling, so the name would point at the wrong one of these two.
+UNAME_ARCH="$(uname -m 2>/dev/null || echo x86_64)"
 OS_ID="$(. /etc/os-release 2>/dev/null && echo "${ID:-debian}")"
 OS_CODENAME="$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-stable}")"
 
@@ -486,22 +514,55 @@ done
 # One transaction for everything, after the installs, so apt resolves the whole
 # set at once.
 
+# How many packages apt would actually move, from the local lists - no network,
+# and the same solver `apt-get upgrade` is about to run, so the number the dry
+# run prints is the number the real run acts on.
+apt_pending_count() {
+  apt-get --just-print upgrade 2>/dev/null | grep -c '^Inst ' || true
+}
+
+# Flatpak has no --just-print, so ask it what it has instead: `active` is the
+# commit each installed ref is currently running. Comparing the list before and
+# after an update is the same before/after idiom git_clone_or_update uses, it
+# costs nothing (the list is local), and it does not depend on matching an
+# English string in flatpak's output.
+flatpak_commits() {
+  flatpak list --columns=application,active 2>/dev/null | sort || true
+}
+
 if [[ "$SKIP_UPGRADE" == "yes" ]]; then
   phase 'Upgrades - skipped (--skip-upgrade)'
 elif [[ "$DRY_RUN" == "yes" ]]; then
   phase 'Upgrades'
-  pending="$(apt-get --just-print upgrade 2>/dev/null | grep -c '^Inst ' || true)"
-  result 'would-upgrade' 'apt packages' "$pending pending"
+  pending="$(apt_pending_count)"
+  if [[ "$pending" -eq 0 ]]; then
+    result 'current' 'apt packages' 'nothing pending'
+  else
+    result 'would-upgrade' 'apt packages' "$pending pending"
+  fi
+  if command -v flatpak >/dev/null 2>&1; then
+    result 'would-upgrade' 'flatpak apps' 'flatpak update'
+  fi
 else
   phase 'Upgrades'
-  if run_priv apt-get upgrade "${APT_OPTS[@]}" -qq >/dev/null 2>&1; then
-    result 'upgraded' 'apt packages' 'system-wide'
+  pending="$(apt_pending_count)"
+  if [[ "$pending" -eq 0 ]]; then
+    result 'current' 'apt packages' 'nothing pending'
+  elif run_priv apt-get upgrade "${APT_OPTS[@]}" -qq >/dev/null 2>&1; then
+    result 'upgraded' 'apt packages' "$pending package(s)"
   else
     result 'failed' 'apt packages' 'apt-get upgrade failed'
   fi
   if command -v flatpak >/dev/null 2>&1; then
+    flatpak_before="$(flatpak_commits)"
     if flatpak update -y --noninteractive >/dev/null 2>&1; then
-      result 'upgraded' 'flatpak apps' 'flathub'
+      flatpak_after="$(flatpak_commits)"
+      if [[ "$flatpak_before" == "$flatpak_after" ]]; then
+        result 'current' 'flatpak apps' 'flathub'
+      else
+        changed="$(comm -13 <(printf '%s\n' "$flatpak_before") <(printf '%s\n' "$flatpak_after") | grep -c . || true)"
+        result 'upgraded' 'flatpak apps' "$changed ref(s)"
+      fi
     else
       result 'failed' 'flatpak apps' 'flatpak update failed'
     fi
@@ -560,15 +621,20 @@ git_clone_or_update() {
   fi
 }
 
-phase 'Tools - version managers in $HOME'
-
-for tool in "${TOOLS[@]:-}"; do
-  [[ -z "$tool" ]] && continue
-  dir_var="TOOL_${tool}_DIR"
-  repo_var="TOOL_${tool}_REPO"
-  desc_var="TOOL_${tool}_DESC"
-  git_clone_or_update "${!desc_var:-$tool}" "${!dir_var}" "${!repo_var}"
-done
+# Guarded rather than unconditional: TOOLS has been empty before and will be
+# again, and a phase header printed over nothing reads like something failed.
+# git_clone_or_update is used either way - the zsh theme and every custom
+# plugin go through it.
+if [[ "${#TOOLS[@]}" -gt 0 ]]; then
+  phase 'Tools - git clones in $HOME'
+  for tool in "${TOOLS[@]:-}"; do
+    [[ -z "$tool" ]] && continue
+    dir_var="TOOL_${tool}_DIR"
+    repo_var="TOOL_${tool}_REPO"
+    desc_var="TOOL_${tool}_DESC"
+    git_clone_or_update "${!desc_var:-$tool}" "${!dir_var}" "${!repo_var}"
+  done
+fi
 
 # ============================================================
 # .NET SDK
@@ -614,6 +680,359 @@ else
       result 'failed' 'dotnet SDK' 'dotnet-install.sh failed'
     fi
     rm -f "$tmp_script"
+  fi
+fi
+
+# ============================================================
+# Release binaries
+# ============================================================
+# Static binaries from a GitHub release into ~/.local/bin, for software that is
+# in neither the Debian archive nor a git repository. See packages.conf.
+#
+# Version-checked properly rather than re-downloaded blindly: the binary is
+# asked what it is, the newest release tag is fetched, and a run where they
+# already agree transfers nothing and says `current`.
+
+# The tag of the newest release, from the API. One unauthenticated call per
+# tool, and only when the tool is actually being considered - the anonymous
+# rate limit is 60 an hour and this must not be the thing that spends it.
+github_latest_tag() {
+  curl -fsSL "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
+    | grep -m1 '"tag_name"' \
+    | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || true
+}
+
+# Whatever looks like a version in the binary's own --version output. Every
+# tool prints a different sentence around it - "TFLint version 0.53.0",
+# "terraform-docs version v0.19.0 ..." - so the number is what gets matched,
+# not the wording.
+binary_version() {
+  local bin="$1" out v a
+  # Three spellings, because these tools do not agree on one. helm has no
+  # --version at all and wants `version --short`; tflint and terraform-docs
+  # only understand --version.
+  local -a attempts=('--version' 'version --short' 'version')
+
+  for a in "${attempts[@]}"; do
+    # shellcheck disable=SC2086
+    out="$("$bin" $a 2>/dev/null || true)"
+
+    # head -1, and NOT `grep -m1`. -m1 stops grep after the first matching
+    # LINE, which is not the same as the first match - with -o, every match on
+    # that one line still prints. `aws --version` puts the CLI, Python and
+    # kernel versions on a single line, so that combination returned three
+    # versions and the extra two appeared raw under the result row.
+    v="$(printf '%s' "$out" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+
+    # The test is "did this produce a version", not "did this exit 0". A tool
+    # that exits cleanly and prints nothing would otherwise end the search on
+    # the first attempt and report no version at all - which install_release
+    # reads as "not installed" and acts on by downloading it again, every run.
+    if [[ -n "$v" ]]; then
+      printf '%s' "$v"
+      return 0
+    fi
+  done
+}
+
+# Unpack whatever the release published, chosen by extension. A shape nobody
+# listed is an error rather than a guess: silently treating an unknown archive
+# as a bare binary is how you end up with a gzip stream marked executable.
+unpack_asset() {
+  local url="$1" file="$2" binname="$3"
+  case "$url" in
+    *.zip)    unzip -q "$file" ;;
+    *.tar.gz|*.tgz) tar -xzf "$file" ;;
+    *.tar.xz) tar -xJf "$file" ;;
+    # No extension at all is the common shape for a plain static binary.
+    *[!./]) cp "$file" "$binname" ;;
+    *)        return 1 ;;
+  esac
+}
+
+install_release() {
+  local name="$1"
+  local desc_var="RELEASE_${name}_DESC" repo_var="RELEASE_${name}_REPO"
+  local bin_var="RELEASE_${name}_BIN" asset_var="RELEASE_${name}_ASSET"
+  local desc="${!desc_var:-$name}" repo="${!repo_var}"
+  local binname="${!bin_var}" asset="${!asset_var}"
+  local target="${RELEASE_BIN_DIR}/${binname}"
+
+  local have=""
+  [[ -x "$target" ]] && have="$(binary_version "$target")"
+
+  if [[ -n "$have" && "$SKIP_UPGRADE" == "yes" ]]; then
+    result 'skipped' "$desc" "$have"
+    return
+  fi
+
+  local tag want
+  tag="$(github_latest_tag "$repo")"
+  if [[ -z "$tag" ]]; then
+    # No tag means the API did not answer - rate limit, or no network. An
+    # installed copy is still fine and is reported as such rather than as a
+    # failure; only a missing one is a problem worth a red line.
+    if [[ -n "$have" ]]; then
+      result 'current' "$desc" "$have (could not reach the GitHub API)"
+    else
+      result 'failed' "$desc" "could not reach the GitHub API for $repo"
+    fi
+    return
+  fi
+  want="${tag#v}"
+
+  if [[ "$have" == "$want" ]]; then
+    result 'current' "$desc" "$have"
+    return
+  fi
+
+  if [[ "$DRY_RUN" == "yes" ]]; then
+    if [[ -n "$have" ]]; then
+      result 'would-upgrade' "$desc" "$have -> $want"
+    else
+      result 'would-install' "$desc" "$want into $RELEASE_BIN_DIR"
+    fi
+    return
+  fi
+
+  # {TAG} is the tag as published - v1.31.0 - and {VERSION} is the same thing
+  # without the leading v. Both are needed because projects disagree: helm
+  # names its asset helm-v3.16.2-linux-amd64.tar.gz and stern names its
+  # stern_1.31.0_linux_amd64.tar.gz, from tags that look identical.
+  # A GitHub release TAG does not imply GitHub-hosted BINARIES. helm is the
+  # case that proved it: its releases carry no attachments at all and the
+  # tarballs live on get.helm.sh, so building the usual download URL produced a
+  # confident 404 against a tag that existed. An entry may therefore give a
+  # whole URL of its own; the tag still comes from the API, because that is the
+  # part GitHub is being asked for.
+  local url_var="RELEASE_${name}_URL"
+  local url="${!url_var:-}"
+  [[ -z "$url" ]] && url="https://github.com/${repo}/releases/download/${tag}/${asset}"
+  url="${url//\{ARCH\}/$DPKG_ARCH}"
+  url="${url//\{UNAME_ARCH\}/$UNAME_ARCH}"
+  url="${url//\{TAG\}/$tag}"
+  url="${url//\{VERSION\}/$want}"
+
+  local tmp
+  tmp="$(mktemp -d)"
+  # A subshell with its own trap, so the temp directory goes whether the
+  # download works, the archive is corrupt, or the binary is not where the
+  # asset was supposed to put it.
+  if (
+    # Chained with && rather than `set -e`, and that is not a style choice.
+    # A subshell inside an `if` condition inherits the suppression that makes
+    # `set -e` inert there, so the abort never happens - every step runs
+    # regardless and the exit status is whatever the LAST one returned. Written
+    # the obvious way, a failed download went on to unpack nothing, find
+    # nothing, and then report whatever `install` thought of being handed an
+    # empty path. Chaining makes the status mean what it looks like it means.
+    cd "$tmp" &&
+    # -S keeps curl's reason (404, DNS, TLS) rather than swallowing it, but it
+    # goes to a file, not the terminal. One line per decision is the whole
+    # point of this output, and a raw `curl: (22) ...` printed above the result
+    # row breaks that - so the reason is folded into the result line instead.
+    curl -fsSL -o asset "$url" 2>curl.err &&
+    unpack_asset "$url" asset "$binname" &&
+    # -type f rather than a fixed path: some projects put the binary at the
+    # root of the archive and some nest it a directory down.
+    found="$(find . -type f -name "$binname" -print -quit)" &&
+    [[ -n "$found" ]] &&
+    mkdir -p "$RELEASE_BIN_DIR" &&
+    install -m 0755 "$found" "$RELEASE_BIN_DIR/$binname"
+  ); then
+    local now
+    now="$(binary_version "$target")"
+    if [[ -z "$have" ]]; then
+      result 'installed' "$desc" "${now:-$want}"
+    elif [[ "$now" == "$have" ]]; then
+      # The download worked and the binary is the version it already was. That
+      # means the release tag moved without this asset changing, and reporting
+      # `upgraded 0.60.0 -> 0.60.0` would be the arrow saying nothing happened
+      # while the colour says something did.
+      result 'current' "$desc" "$have (release $tag carries the same build)"
+    else
+      result 'upgraded' "$desc" "$have -> ${now:-$want}"
+    fi
+  else
+    # curl's own words when it has any - "The requested URL returned error:
+    # 404" says considerably more than "could not fetch", and it is the
+    # difference between a wrong URL and a network that is down.
+    local why=""
+    [[ -s "$tmp/curl.err" ]] && why="$(tail -1 "$tmp/curl.err" | sed 's/^curl: //')"
+    result 'failed' "$desc" "${why:-could not fetch or unpack}: $url"
+  fi
+  rm -rf "$tmp"
+}
+
+if [[ "${#RELEASES[@]}" -gt 0 ]]; then
+  phase 'Release binaries - static builds in ~/.local/bin'
+  for entry in "${RELEASES[@]:-}"; do
+    [[ -z "$entry" ]] && continue
+    install_release "$entry"
+  done
+fi
+
+# ============================================================
+# AWS CLI v2
+# ============================================================
+# A zip from AWS containing an installer, because that is the only way v2 is
+# published - see packages.conf. Everything lands under $HOME.
+
+if [[ "${AWSCLI_ENABLED:-no}" != "yes" ]]; then
+  phase 'AWS CLI - disabled in the manifest'
+else
+  phase 'AWS CLI v2'
+
+  aws_exe="${RELEASE_BIN_DIR}/aws"
+  aws_have=""
+  [[ -x "$aws_exe" ]] && aws_have="$("$aws_exe" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+
+  if [[ -n "$aws_have" && "$SKIP_UPGRADE" == "yes" ]]; then
+    result 'skipped' 'AWS CLI v2' "$aws_have"
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    if [[ -n "$aws_have" ]]; then
+      result 'would-upgrade' 'AWS CLI v2' "have $aws_have"
+    else
+      result 'would-install' 'AWS CLI v2' "$AWSCLI_DIR"
+    fi
+  else
+    # uname -m, not dpkg --print-architecture: AWS names its zips x86_64 and
+    # aarch64, where dpkg says amd64 and arm64. Same machine, different words.
+    # The same {UNAME_ARCH} that release URLs understand, off one definition
+    # near DPKG_ARCH, so the two phases cannot drift on what the word means.
+    aws_url="${AWSCLI_URL//\{UNAME_ARCH\}/$UNAME_ARCH}"
+    aws_tmp="$(mktemp -d)"
+    # --update is required rather than optional: the installer refuses to write
+    # over an existing install without it, and omitting it turns every run
+    # after the first into a failure.
+    aws_mode=()
+    [[ -n "$aws_have" ]] && aws_mode=(--update)
+    if (
+      cd "$aws_tmp" &&
+      curl -fsSL -o awscliv2.zip "$aws_url" &&
+      unzip -q awscliv2.zip &&
+      ./aws/install --install-dir "$AWSCLI_DIR" --bin-dir "$RELEASE_BIN_DIR" "${aws_mode[@]+"${aws_mode[@]}"}" >/dev/null 2>&1
+    ); then
+      aws_now="$("$aws_exe" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+      if [[ -z "$aws_have" ]]; then
+        result 'installed' 'AWS CLI v2' "${aws_now:-installed}"
+      elif [[ "$aws_have" == "$aws_now" ]]; then
+        result 'current' 'AWS CLI v2' "$aws_now"
+      else
+        result 'upgraded' 'AWS CLI v2' "$aws_have -> $aws_now"
+      fi
+    else
+      result 'failed' 'AWS CLI v2' "could not fetch or install $aws_url"
+    fi
+    rm -rf "$aws_tmp"
+  fi
+fi
+
+# ============================================================
+# Nerd Font
+# ============================================================
+# powerlevel10k draws its prompt from a Nerd Font's private-use area; without
+# one the prompt is boxes. Desktop machines only - the glyphs are rendered by
+# the terminal you are typing at, so a font on a headless server changes
+# nothing anywhere. See packages.conf.
+
+if [[ "${NERD_FONT_ENABLED:-no}" != "yes" ]]; then
+  phase 'Nerd Font - disabled in the manifest'
+elif [[ "$HAS_GUI" != "yes" ]]; then
+  phase 'Nerd Font'
+  result 'no-gui' "font: $NERD_FONT_NAME" 'rendered by the terminal you type at, not this machine'
+else
+  phase 'Nerd Font'
+
+  # fontconfig first, because it sees system-wide installs and packaged fonts
+  # as well as this directory - reinstalling over a font the distribution
+  # already provides would be the same bug the Windows side had, where checking
+  # only one of two font directories reinstalled Meslo on every single run.
+  font_present=no
+  if command -v fc-list >/dev/null 2>&1; then
+    fc-list 2>/dev/null | grep -qi 'MesloLG.*Nerd Font' && font_present=yes
+  fi
+  if [[ "$font_present" == "no" && -d "$NERD_FONT_DIR" ]]; then
+    compgen -G "${NERD_FONT_DIR}/${NERD_FONT_MATCH}*" >/dev/null && font_present=yes
+  fi
+
+  if [[ "$font_present" == "yes" ]]; then
+    result 'current' "font: $NERD_FONT_NAME" "$NERD_FONT_DIR"
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    result 'would-install' "font: $NERD_FONT_NAME" "$NERD_FONT_DIR"
+  else
+    # /releases/latest/download/ redirects to the newest asset, so this costs
+    # no API call on a machine that already has the font - which is every run
+    # after the first. A font does not need a version check the way a linter
+    # does; it is either there or it is not.
+    font_url="https://github.com/${NERD_FONT_REPO}/releases/latest/download/${NERD_FONT_NAME}.tar.xz"
+    font_tmp="$(mktemp -d)"
+    # && rather than `set -e`, for the reason spelled out in install_release:
+    # inside an `if` condition, even a subshell's own `set -e` is inert.
+    if (
+      cd "$font_tmp" &&
+      curl -fsSL -o font.tar.xz "$font_url" &&
+      tar -xJf font.tar.xz &&
+      mkdir -p "$NERD_FONT_DIR" &&
+      # The archive carries three widths - LGS, LGL and LGM - in every weight
+      # and in base, Mono and Propo variants. Only LGM is installed, and all of
+      # its variants: the terminal wants the Mono face (that is what the Windows
+      # manifest names as TerminalFontFace) and anything else wants the base
+      # one, so taking just the one whose name has no suffix leaves the terminal
+      # without the font it was the whole point of installing.
+      find . -type f -name "${NERD_FONT_MATCH}*.ttf" -exec cp {} "$NERD_FONT_DIR/" \; &&
+      # find succeeds having copied nothing, so the archive being the wrong
+      # shape has to be caught here rather than inferred from find's status.
+      compgen -G "${NERD_FONT_DIR}/${NERD_FONT_MATCH}*" >/dev/null
+    ); then
+      # Without this the font is on disk and invisible until the next login:
+      # fontconfig caches per-directory and does not rescan on its own.
+      command -v fc-cache >/dev/null 2>&1 && fc-cache -f "$NERD_FONT_DIR" >/dev/null 2>&1
+      result 'installed' "font: $NERD_FONT_NAME" "$NERD_FONT_DIR"
+    else
+      result 'failed' "font: $NERD_FONT_NAME" "could not fetch or unpack $font_url"
+    fi
+    rm -rf "$font_tmp"
+  fi
+fi
+
+# ============================================================
+# Claude Code
+# ============================================================
+# Anthropic's installer, once, into ~/.local/bin - and then left alone, because
+# Claude Code updates itself. Reinstalling it on every run would be the second
+# installer in a fight it cannot win, which is the same call this script makes
+# about anything owned by another updater.
+
+if [[ "${CLAUDE_CODE_ENABLED:-no}" != "yes" ]]; then
+  phase 'Claude Code - disabled in the manifest'
+else
+  phase 'Claude Code'
+  # Both the binary the installer writes and anything already on PATH: a copy
+  # installed some other way is still a copy that updates itself, and
+  # installing over it is exactly what this section exists not to do.
+  claude_exe=""
+  if command -v claude >/dev/null 2>&1; then
+    claude_exe="$(command -v claude)"
+  elif [[ -x "${HOME}/.local/bin/claude" ]]; then
+    claude_exe="${HOME}/.local/bin/claude"
+  fi
+
+  if [[ -n "$claude_exe" ]]; then
+    claude_version="$("$claude_exe" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    result 'present' 'Claude Code' "${claude_version:-installed} - self-updating, $claude_exe"
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    result 'would-install' 'Claude Code' "$CLAUDE_CODE_INSTALLER"
+  else
+    claude_script="$(mktemp)"
+    if curl -fsSL "$CLAUDE_CODE_INSTALLER" -o "$claude_script" 2>/dev/null &&
+       bash "$claude_script" >/dev/null 2>&1 &&
+       [[ -x "${HOME}/.local/bin/claude" ]]; then
+      result 'installed' 'Claude Code' "$("${HOME}/.local/bin/claude" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo 'installed')"
+    else
+      result 'failed' 'Claude Code' "installer failed: $CLAUDE_CODE_INSTALLER"
+    fi
+    rm -f "$claude_script"
   fi
 fi
 
@@ -667,12 +1086,47 @@ else
     if [[ "$DRY_RUN" == "yes" ]]; then
       result 'would-install' 'zsh config' "$FRAGMENT"
     else
+      # Rendered to a temp file first so the fragment can be compared with what
+      # is already on disk. Writing it unconditionally worked, but it reported
+      # `installed` on every run of an otherwise idempotent script, which makes
+      # the summary useless for spotting the run where something really changed.
+      # Beside the target, not in /tmp: same filesystem, so the replace below is
+      # an atomic rename rather than a copy that can be seen half-written, and
+      # the mode is set here rather than inherited from mktemp's 0600.
+      NEW_FRAGMENT="$(mktemp "${FRAGMENT}.XXXXXX")"
+      chmod 0644 "$NEW_FRAGMENT"
       {
         echo "# managed by linux/bootstrap.sh - edit the manifest, not this file"
         echo "export ZSH=\"$OMZ_DIR\""
         echo "ZSH_THEME=\"$ZSH_THEME\""
+        echo
+        echo '# Both of these have to precede oh-my-zsh.sh, because the nvm plugin'
+        echo '# reads them as it loads. NVM_DIR is where the TOOLS clone put it;'
+        echo '# lazy defers sourcing nvm.sh until the first nvm, node or npm, which'
+        echo '# keeps a few hundred milliseconds off every shell that never uses it.'
+        echo 'export NVM_DIR="$HOME/.nvm"'
+        echo "zstyle ':omz:plugins:nvm' lazy yes"
+        echo
         printf 'plugins=(%s)\n' "${ZSH_PLUGINS[*]}"
         echo 'source "$ZSH/oh-my-zsh.sh"'
+        echo
+        echo '# History, sized so a busy week does not quietly drop the command'
+        echo '# you wanted. HISTSIZE is what the running shell holds; SAVEHIST is'
+        echo '# what reaches the file, and it must not be smaller or the file is'
+        echo '# truncated on every exit - the classic way to lose history while'
+        echo '# believing it is being kept.'
+        echo 'HISTFILE="$HOME/.zsh_history"'
+        printf 'HISTSIZE=%s\n' "$HISTORY_SIZE"
+        printf 'SAVEHIST=%s\n' "$HISTORY_FILE_SIZE"
+        echo 'setopt APPEND_HISTORY        # add to the file, never replace it'
+        echo 'setopt INC_APPEND_HISTORY    # write as you go, not at exit - a'
+        echo '                             # crashed or killed shell loses nothing'
+        echo 'setopt SHARE_HISTORY         # every open terminal sees the others'
+        echo 'setopt EXTENDED_HISTORY      # timestamp and duration per entry'
+        echo 'setopt HIST_IGNORE_ALL_DUPS  # keep only the newest of a repeat'
+        echo 'setopt HIST_REDUCE_BLANKS'
+        echo 'setopt HIST_VERIFY           # expand !! for review, do not just run it'
+        echo 'setopt HIST_IGNORE_SPACE     # a leading space keeps it out of history'
         echo
         echo '# Aliases guard on command -v: these binaries are renamed on Debian'
         echo '# (fd-find -> fdfind, bat -> batcat) and absent on some releases, and a'
@@ -684,13 +1138,42 @@ else
         echo 'command -v rg     >/dev/null && alias grep="rg"'
         echo 'command -v zoxide >/dev/null && eval "$(zoxide init zsh)"'
         echo
-        echo '# Version managers, on PATH before anything the distribution ships.'
+        echo '# Where the release binaries land. The stock ~/.profile on Debian'
+        echo '# adds this when it exists, but zsh never reads .profile - so without'
+        echo '# this line tflint and terraform-docs install and are not on PATH.'
+        echo '[ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH"'
+        echo
+        echo '# Version managers, ahead of anything the platform ships, so a'
+        echo '# project pin wins over the machine default whenever there is one.'
         echo '[ -d "$HOME/.pyenv/bin" ] && export PATH="$HOME/.pyenv/bin:$PATH"'
         echo 'command -v pyenv >/dev/null && eval "$(pyenv init -)"'
         echo '[ -d "$HOME/.tfenv/bin" ] && export PATH="$HOME/.tfenv/bin:$PATH"'
+        echo
+        echo '# nvm is loaded LAZILY, by the oh-my-zsh plugin rather than by'
+        echo '# sourcing nvm.sh here. nvm is a large shell script and sourcing it'
+        echo '# eagerly is the single most common reason a zsh startup stops being'
+        echo '# instant - it is easily a few hundred milliseconds on every new'
+        echo '# terminal. Lazy means the first `nvm`, `node` or `npm` pays that'
+        echo '# cost once and no other shell pays it at all.'
+        echo '#'
+        echo '# NVM_DIR and the zstyle must both be set BEFORE oh-my-zsh.sh is'
+        echo '# sourced above, which is why they are not down here with the rest.'
+        echo
+        echo '# Not managed by any of them: the SDK installs side by side under'
+        echo '# its own directory and there is no per-project version to pick.'
         echo '[ -d "$HOME/.dotnet" ] && export PATH="$HOME/.dotnet:$PATH" && export DOTNET_ROOT="$HOME/.dotnet"'
-      } > "$FRAGMENT"
-      result 'installed' 'zsh config' "$FRAGMENT"
+      } > "$NEW_FRAGMENT"
+
+      if [[ -f "$FRAGMENT" ]] && cmp -s "$NEW_FRAGMENT" "$FRAGMENT"; then
+        rm -f "$NEW_FRAGMENT"
+        result 'current' 'zsh config' "$FRAGMENT"
+      elif [[ -f "$FRAGMENT" ]]; then
+        mv "$NEW_FRAGMENT" "$FRAGMENT"
+        result 'upgraded' 'zsh config' "$FRAGMENT"
+      else
+        mv "$NEW_FRAGMENT" "$FRAGMENT"
+        result 'installed' 'zsh config' "$FRAGMENT"
+      fi
 
       # Sourced from .zshrc rather than written into it, so re-running this
       # never has to parse or rewrite a file the user owns.
@@ -701,6 +1184,62 @@ else
         printf '\n%s\n' "$SOURCE_LINE" >> "$ZSHRC"
         result 'installed' 'zshrc hook' "appended to $ZSHRC"
       fi
+    fi
+  fi
+fi
+
+# ============================================================
+# Terminal config
+# ============================================================
+# The payoff for choosing ghostty: its config is a plain text file, so it gets
+# the same treatment as the zsh fragment - rendered, compared, and reported as
+# `current` when nothing moved.
+#
+# ~/.config/ghostty/config on both platforms. macOS also reads a path under
+# ~/Library/Application Support, but it honours the XDG one too, and one path
+# in the script beats two.
+
+if [[ "${GHOSTTY_ENABLED:-no}" != "yes" ]]; then
+  phase 'Terminal config - disabled in the manifest'
+elif ! command -v ghostty >/dev/null 2>&1 && [[ ! -d /Applications/Ghostty.app ]]; then
+  phase 'Terminal config'
+  result 'missing' 'ghostty config' 'ghostty is not installed'
+else
+  phase 'Terminal config'
+  GHOSTTY_DIR="${HOME}/.config/ghostty"
+  GHOSTTY_CONF="${GHOSTTY_DIR}/config"
+
+  if [[ "$DRY_RUN" == "yes" ]]; then
+    result 'would-install' 'ghostty config' "$GHOSTTY_CONF"
+  else
+    mkdir -p "$GHOSTTY_DIR"
+    NEW_GHOSTTY="$(mktemp "${GHOSTTY_CONF}.XXXXXX")"
+    chmod 0644 "$NEW_GHOSTTY"
+    {
+      echo "# managed by bootstrap.sh - edit the manifest, not this file"
+      echo
+      echo "# Bytes, not lines, and there is no unlimited setting - ghostty says an"
+      echo "# unlimited buffer is a planned feature, not a current one. This is"
+      echo "# 256MB, and it is PER SURFACE: every tab and split gets its own, and"
+      echo "# the buffer lives in RAM. A cap, not a preallocation, so an idle tab"
+      echo "# costs nothing."
+      echo "#"
+      echo "# Note what this does NOT cover. Scrollback belongs to the window and"
+      echo "# dies with it, and inside tmux it is bypassed entirely - tmux owns"
+      echo "# the screen and keeps its own buffer. For output you want to still"
+      echo "# have tomorrow, redirect it to a file."
+      echo "scrollback-limit = ${GHOSTTY_SCROLLBACK_BYTES}"
+    } > "$NEW_GHOSTTY"
+
+    if [[ -f "$GHOSTTY_CONF" ]] && cmp -s "$NEW_GHOSTTY" "$GHOSTTY_CONF"; then
+      rm -f "$NEW_GHOSTTY"
+      result 'current' 'ghostty config' "$GHOSTTY_CONF"
+    elif [[ -f "$GHOSTTY_CONF" ]]; then
+      mv "$NEW_GHOSTTY" "$GHOSTTY_CONF"
+      result 'upgraded' 'ghostty config' "$GHOSTTY_CONF"
+    else
+      mv "$NEW_GHOSTTY" "$GHOSTTY_CONF"
+      result 'installed' 'ghostty config' "$GHOSTTY_CONF"
     fi
   fi
 fi

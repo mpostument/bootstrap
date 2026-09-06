@@ -147,7 +147,7 @@ if (-not $ManifestPath) { $ManifestPath = Join-Path $script:ToolRoot 'packages.p
 #
 # Bump it in the same commit as the change it describes, and add a
 # windows/CHANGELOG.md entry; the release notes are read from that file.
-$script:BootstrapVersion = '1.7.0'
+$script:BootstrapVersion = '1.8.0'
 
 # Deliberately -ShowVersion and not -Version: PowerShell reserves -Version on
 # some hosts, and a parameter that silently binds to something else is a bad
@@ -240,6 +240,18 @@ function Update-SessionPath {
 # that separates "already up to date" from "the download 404'd", and getting
 # that wrong turns a clean run into a wall of red.
 $script:WingetNoop = 'No applicable upgrade|No available upgrade|No newer package|No applicable update|already installed|No installed package found'
+
+# Not a failure, and not a no-op either: winget knows the package is installed
+# but cannot read a version number out of it, so it declines to upgrade and
+# tells you --include-unknown would force it. Google.CloudSDK and
+# Ubisoft.Connect both land here, and in both cases the right answer is to
+# leave them alone - each has its own updater, and overriding that would put
+# two installers on one package.
+#
+# Reported as `skipped` rather than `failed`, because nothing went wrong. A red
+# line every single run for a package that is behaving exactly as expected is
+# how a summary stops being worth reading.
+$script:WingetUnknownVersion = "version number cannot be determined|--include-unknown"
 
 function Invoke-Winget {
     param([string[]]$WingetArgs)
@@ -395,6 +407,8 @@ function Update-Package {
         Add-Result -Group $Group -Id $Id -Action 'upgraded' -Detail $change
     } elseif ($r.Output -match $script:WingetNoop) {
         Add-Result -Group $Group -Id $Id -Action 'current' -Detail $Version
+    } elseif ($r.Output -match $script:WingetUnknownVersion) {
+        Add-Result -Group $Group -Id $Id -Action 'skipped' -Detail 'winget cannot read its version; it has its own updater'
     } else {
         Add-Result -Group $Group -Id $Id -Action 'failed' -Detail ('exit {0}: {1}' -f $r.ExitCode, (Get-LastLine $r.Output))
     }
@@ -728,7 +742,7 @@ $manifest = Import-PowerShellDataFile -Path $ManifestPath
 # because an edit to the neighbouring Mpv block took the following section
 # with it. Every test run afterwards happened to pass -SkipShell, so the one
 # phase that reads it was never exercised.
-$required = @('Groups', 'Pins', 'Managed', 'Shell', 'Mpv', 'Schedule')
+$required = @('Groups', 'Pins', 'Managed', 'Shell', 'Mpv', 'Schedule', 'Git')
 $missing = @($required | Where-Object { -not $manifest.Contains($_) })
 if ($missing.Count -gt 0) {
     throw ("Manifest is missing required section(s): {0}. Found: {1}. See {2}." -f
@@ -1369,6 +1383,103 @@ if ($SkipSchedule) {
         }
     }
 }
+# ============================================================
+# Git - LFS and Unity's merge tool
+# ============================================================
+# Two pieces of git CONFIGURATION, not two packages. Both are things a Unity
+# checkout needs and that installing software does not give you.
+
+$git = $manifest.Git
+
+if ($SkipShell) {
+    Write-Phase 'Git - skipped (-SkipShell)'
+} else {
+    Write-Phase 'Git - LFS and Unity merge tool'
+
+    $gitExe = Get-Command git -ErrorAction SilentlyContinue
+    if (-not $gitExe) {
+        Add-Result -Group 'git' -Id 'git' -Action 'missing' -Detail 'install the dev group first'
+    } else {
+
+        # --- Git LFS -------------------------------------------------------
+        if (-not $git.LfsEnabled) {
+            Add-Result -Group 'git' -Id 'git-lfs' -Action 'skipped' -Detail 'LfsEnabled is false'
+        } else {
+            $lfsVersion = (& git lfs version 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0) {
+                # Git for Windows bundles it, so absent means the installer was
+                # run with that component unticked. Reported, not worked around
+                # - a second copy from winget is the wrong fix.
+                Add-Result -Group 'git' -Id 'git-lfs' -Action 'missing' -Detail 'not bundled with this Git install; re-run the Git installer'
+            } else {
+                # The filters are the actual product of `git lfs install`.
+                # Having the binary and not the filters is the failure worth
+                # catching: checkouts silently produce pointer stubs instead of
+                # files, and a Unity project full of them will not open.
+                $filter = (& git config --global --get filter.lfs.process 2>$null)
+                if ($filter) {
+                    Add-Result -Group 'git' -Id 'git-lfs' -Action 'current' -Detail (($lfsVersion -split '\s+')[0])
+                } elseif (-not $PSCmdlet.ShouldProcess('git lfs install', 'configure')) {
+                    Add-Result -Group 'git' -Id 'git-lfs' -Action 'would-install' -Detail 'git lfs install'
+                } else {
+                    & git lfs install --skip-repo *> $null
+                    if ($LASTEXITCODE -eq 0) {
+                        Add-Result -Group 'git' -Id 'git-lfs' -Action 'installed' -Detail 'global filters configured'
+                    } else {
+                        Add-Result -Group 'git' -Id 'git-lfs' -Action 'failed' -Detail 'git lfs install failed'
+                    }
+                }
+            }
+        }
+
+        # --- UnityYAMLMerge ------------------------------------------------
+        if (-not $git.UnityMergeEnabled) {
+            Add-Result -Group 'git' -Id 'UnityYAMLMerge' -Action 'skipped' -Detail 'UnityMergeEnabled is false'
+        } else {
+            # Newest editor that actually carries the tool. Sorted as VERSIONS
+            # rather than as strings, because Unity's directory names are
+            # 6000.0.58f1 and 2022.3.9f1 and a plain string sort puts 2022
+            # after 6000. The f-suffix is trimmed so [version] can parse it.
+            $tool = $null
+            if (Test-Path $git.UnityEditorRoot) {
+                $tool = Get-ChildItem $git.UnityEditorRoot -Directory -ErrorAction SilentlyContinue |
+                    Sort-Object -Descending {
+                        $n = ($_.Name -replace '[a-zA-Z].*$', '')
+                        try { [version]$n } catch { [version]'0.0' }
+                    } |
+                    ForEach-Object { Join-Path $_.FullName $git.UnityMergeRelPath } |
+                    Where-Object { Test-Path $_ } |
+                    Select-Object -First 1
+            }
+
+            if (-not $tool) {
+                Add-Result -Group 'git' -Id 'UnityYAMLMerge' -Action 'missing' -Detail "no editor with the tool under $($git.UnityEditorRoot)"
+            } else {
+                # Unity's own documented invocation. -p is the three-way form;
+                # trustExitCode false because the tool returns non-zero for a
+                # merge it could only partly resolve, which is a result to look
+                # at rather than a failure to abort on.
+                $want = '''{0}'' merge -p "$BASE" "$REMOTE" "$LOCAL" "$MERGED"' -f $tool
+                $have = (& git config --global --get 'mergetool.unityyamlmerge.cmd' 2>$null)
+
+                if ($have -eq $want) {
+                    Add-Result -Group 'git' -Id 'UnityYAMLMerge' -Action 'current' -Detail $tool
+                } elseif (-not $PSCmdlet.ShouldProcess('mergetool.unityyamlmerge', 'git config --global')) {
+                    Add-Result -Group 'git' -Id 'UnityYAMLMerge' -Action ($have ? 'would-upgrade' : 'would-install') -Detail $tool
+                } else {
+                    & git config --global 'mergetool.unityyamlmerge.cmd' $want
+                    & git config --global 'mergetool.unityyamlmerge.trustExitCode' 'false'
+                    if ($LASTEXITCODE -eq 0) {
+                        Add-Result -Group 'git' -Id 'UnityYAMLMerge' -Action ($have ? 'upgraded' : 'installed') -Detail $tool
+                    } else {
+                        Add-Result -Group 'git' -Id 'UnityYAMLMerge' -Action 'failed' -Detail 'git config --global failed'
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 # ============================================================
 # Summary
