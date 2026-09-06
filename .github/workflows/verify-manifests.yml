@@ -112,6 +112,36 @@ jobs:
           exit "$failed"
 
       # ------------------------------------------------------------------
+      # Linux - Flathub
+      # ------------------------------------------------------------------
+      # A Flatpak reference is a reverse-DNS string with no spell check on it
+      # anywhere: org.gimp.GIMP is right and org.gimp.Gimp is not, and the only
+      # thing that tells you which is a failed install on a real machine. Same
+      # class of error as the winget id case bug, and checked the same way.
+      - name: Every Flathub reference exists
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          . linux/packages.conf
+          failed=0
+          n=0
+          for g in "${PKG_GROUPS[@]}"; do
+            declare -n _flat="GROUP_${g}_FLATPAK"
+            for ref in ${_flat[@]+"${_flat[@]}"}; do
+              n=$(( n + 1 ))
+              if curl -fsSL -o /dev/null "https://flathub.org/api/v2/appstream/${ref}"; then
+                echo "OK   $ref"
+              else
+                echo "::error file=linux/packages.conf::'$ref' is not on Flathub - check the reverse-DNS spelling, it is case sensitive"
+                failed=1
+              fi
+            done
+            unset -n _flat
+          done
+          [ "$failed" -eq 0 ] && echo "OK   all $n Flathub references resolve"
+          exit "$failed"
+
+      # ------------------------------------------------------------------
       # macOS - the Homebrew API
       # ------------------------------------------------------------------
       # formulae.brew.sh serves the whole index as JSON, so this needs no macOS

@@ -15,6 +15,26 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0]
+
+### Changed
+
+- **GIMP comes from Flathub instead of apt**, so it tracks upstream rather than
+  whatever the release froze on. Same call the `creative` group already makes
+  for Blender, and the numbers make the case rather than the principle: trixie
+  ships **3.0.4**, Flathub is on **3.2.4** — a whole minor series ahead.
+
+  The gap widens rather than closes. Debian stable freezes on release: trixie
+  will still be on the 3.0 line in two years, taking security fixes and nothing
+  else. Bookworm is a major version behind at 2.10.34.
+
+  **You will have two GIMPs until you remove one.** Nothing here uninstalls, so
+  a machine that ran an earlier manifest keeps Debian's at `/usr/bin/gimp` —
+  two entries in the desktop menu, and `gimp` at a prompt still running the apt
+  one because the Flatpak is only on `PATH` via its own exports directory. This
+  is the one package in the manifest where leaving the old copy is untidy
+  rather than harmless: `sudo apt remove gimp` finishes the move.
+
 ## [1.2.0]
 
 ### Added
