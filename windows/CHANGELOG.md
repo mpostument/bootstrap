@@ -20,6 +20,25 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.8.1]
+
+### Fixed
+
+- **`-ShowVersion` could not run anywhere but Windows**, which is a problem
+  because the release workflow runs it on a Linux runner to prove the script
+  can start at all. The check found this on its first real release, which is
+  the entire reason it exists.
+
+  The version block sat *after* the path resolution, and three lines of that
+  resolution read `$env:LOCALAPPDATA`, `$env:ProgramFiles` and `$env:WINDIR`.
+  All three are null off Windows, so `Join-Path` threw "Cannot bind argument
+  to parameter 'Path' because it is null" long before the version was printed.
+
+  The early return is now the first thing the script does after
+  `Set-StrictMode`, so nothing about the host has been assumed by the time it
+  answers. Same shape as the `$PSScriptRoot` bug the file already documents:
+  it parses, every line is right on its own, and only one invocation shows it.
+
 ## [1.8.0]
 
 ### Added

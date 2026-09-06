@@ -75,6 +75,35 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# The single source of truth for this tool's version, and the ONLY place it is
+# written down. .github/workflows/release.yml parses this exact line, so a
+# downloaded copy can never report a different number than the release it came
+# from. Keep the line shape - `$script:BootstrapVersion = '<semver>'` - or that
+# check silently stops finding it.
+#
+# Bump it in the same commit as the change it describes, and add a
+# windows/CHANGELOG.md entry; the release notes are read from that file.
+$script:BootstrapVersion = '1.8.1'
+
+# Deliberately -ShowVersion and not -Version: PowerShell reserves -Version on
+# some hosts, and a parameter that silently binds to something else is a bad
+# way to find out.
+#
+# FIRST, before any path resolution, and that position is load-bearing rather
+# than tidy. Everything below reads $env:LOCALAPPDATA, $env:ProgramFiles and
+# $env:WINDIR, all of which are NULL on a non-Windows host - so `Join-Path`
+# throws "Cannot bind argument to parameter 'Path' because it is null" before
+# reaching a version check placed after it.
+#
+# That matters because the release workflow runs exactly this on a Linux
+# runner to prove the script can start. It is the same class of bug as the
+# $PSScriptRoot note below: the script parses, every line is correct on its
+# own, and the failure only appears under one particular invocation.
+if ($ShowVersion) {
+    Write-Output $script:BootstrapVersion
+    return
+}
+
 # $PSScriptRoot is EMPTY while parameter defaults are evaluated, when an
 # ADVANCED script - one carrying [CmdletBinding()] - is launched with
 # `powershell.exe -File`. Measured in both 5.1 and 7: remove the attribute and
@@ -137,26 +166,6 @@ $script:PwshForTask = @(
     (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe')
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $ManifestPath) { $ManifestPath = Join-Path $script:ToolRoot 'packages.psd1' }
-
-# The single source of truth for this tool's version, and the ONLY place it is
-# written down. .github/workflows/release.yml parses this exact line and
-# refuses to publish when it disagrees with the git tag being released, so a
-# downloaded copy can never report a different number than the release it came
-# from. Keep the line shape - `$script:BootstrapVersion = '<semver>'` - or that
-# check silently stops finding it.
-#
-# Bump it in the same commit as the change it describes, and add a
-# windows/CHANGELOG.md entry; the release notes are read from that file.
-$script:BootstrapVersion = '1.8.0'
-
-# Deliberately -ShowVersion and not -Version: PowerShell reserves -Version on
-# some hosts, and a parameter that silently binds to something else is a bad
-# way to find out.
-if ($ShowVersion) {
-    Write-Output $script:BootstrapVersion
-    return
-}
-
 # ============================================================
 # Output helpers
 # ============================================================
