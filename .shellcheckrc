@@ -1,0 +1,60 @@
+# ============================================================
+# .shellcheckrc - the checks that are wrong about these two scripts
+# ============================================================
+# Read by shellcheck from the working directory, so this applies to both
+# linux/bootstrap.sh and macos/bootstrap.sh as the release workflow runs them.
+#
+# Three codes, disabled with a reason each. Nothing here is disabled because it
+# was noisy: every one of them is shellcheck being confident about a construct
+# these scripts use ON PURPOSE, and an unexplained disable is worse than the
+# warning it silences.
+#
+# If you add a disable, say why here. If a reason stops being true, delete the
+# line rather than leaving it - a suppression nobody can justify is a
+# suppression nobody dares remove, which is the same trap the Windows manifest
+# describes for a version pin.
+
+# ------------------------------------------------------------
+# SC2154 - "<name> is referenced but not assigned"
+# ------------------------------------------------------------
+# The group loops build their arrays through `eval`, because the variable NAME
+# is computed from the group name:
+#
+#   eval "apt_pkgs=(\"\${GROUP_${group}_APT[@]:-}\")"
+#
+# shellcheck does not execute eval, so it sees `apt_pkgs` used and never
+# assigned. It is assigned, one line above, every time. The alternative is a
+# nameref per loop, which the release-binary and repository phases do use where
+# the shape suits - this one wants array expansion with a default, which is
+# what the eval buys.
+disable=SC2154
+
+# ------------------------------------------------------------
+# SC2016 - "Expressions don't expand in single quotes"
+# ------------------------------------------------------------
+# Correct, and precisely the point. These scripts WRITE shell rather than run
+# it: the managed ~/.zshrc.bootstrap fragment is generated a line at a time,
+# and every `$HOME`, `$PATH` and `$(pyenv init -)` in it must reach the file
+# unexpanded so the login shell expands them later. Double quotes there would
+# bake this machine's values into a file meant to be read on every login - and
+# would bake THIS user's home directory into a fragment that is regenerated and
+# compared for equality on every run.
+disable=SC2016
+
+# ------------------------------------------------------------
+# SC2015 - "A && B || C is not if-then-else"
+# ------------------------------------------------------------
+# True in general, and not a hazard in the two places it fires, both of which
+# are `... || true` inside a command substitution:
+#
+#   before="$(cd "$dir" && git rev-parse --short HEAD 2>/dev/null || true)"
+#
+# There is no C-runs-when-A-succeeded case to get wrong: the fallback is
+# `true`, and the whole point is to capture an empty string rather than abort
+# when the directory is not a git repository yet.
+#
+# Note this is NOT disabled for the download paths. install_release chains its
+# steps with && for the documented reason that `set -e` is inert inside an `if`
+# condition, and that code is deliberately written so the exit status means
+# what it looks like it means.
+disable=SC2015
