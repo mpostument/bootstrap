@@ -462,6 +462,13 @@ install_cask() {
   # Everything before "artifacts" is discarded first so a .app named in a zap
   # or uninstall stanza cannot be mistaken for the thing being installed.
   local appname
+  # shellcheck disable=SC2001
+  # ${json##*'"artifacts"'} is the suggested replacement and is not used here
+  # on purpose. It is only equivalent because `.*` is greedy - it has to strip
+  # to the LAST "artifacts", not the first, or a cask mentioning the word
+  # earlier truncates in the wrong place. Writing that as a parameter expansion
+  # means remembering which of # and ## is the greedy one, in a line whose
+  # correctness already rests on greediness. sed says it once, visibly.
   appname="$(sed 's/.*"artifacts"//' <<< "$json" | grep -o '"[^"]*\.app"' | head -1 | tr -d '"' || true)"
   if [[ -n "$appname" && -d "/Applications/${appname}" ]]; then
     result 'present' "$token" "/Applications/${appname} - installed by something else"
