@@ -291,7 +291,7 @@ jobs:
           # shellcheck disable=SC1091
           . macos/packages.conf
           for required in PKG_GROUPS MANUAL HELD TOOLS TAPS ZSH_PLUGINS ZSH_CUSTOM_PLUGINS \
-                          DOTNET_ENABLED ZSH_ENABLED; do
+                          ZSH_ENABLED; do
             if ! declare -p "$required" >/dev/null 2>&1; then
               echo "::error file=macos/packages.conf::missing \$$required"
               exit 1

@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.0.0'
+BOOTSTRAP_VERSION='1.1.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -192,7 +192,7 @@ source "$MANIFEST"
 # reporting the phase as disabled, which is what it would have said if the
 # absence had been intended.
 for required in PKG_GROUPS MANUAL HELD TOOLS TAPS ZSH_PLUGINS ZSH_CUSTOM_PLUGINS \
-                DOTNET_ENABLED ZSH_ENABLED \
+                ZSH_ENABLED \
                 GHOSTTY_ENABLED HISTORY_SIZE HISTORY_FILE_SIZE; do
   declare -p "$required" >/dev/null 2>&1 || die "manifest is missing \$$required: $MANIFEST"
 done
@@ -647,53 +647,6 @@ if [[ "${#TOOLS[@]}" -gt 0 ]]; then
 fi
 
 # ============================================================
-# .NET SDK
-# ============================================================
-
-if [[ "${DOTNET_ENABLED:-no}" != "yes" ]]; then
-  phase 'dotnet - disabled in the manifest'
-else
-  phase 'dotnet - SDK from the vendor script'
-  dotnet_exe="${DOTNET_DIR}/dotnet"
-  if [[ -x "$dotnet_exe" ]]; then
-    # Every SDK on disk, not just the newest. dotnet-install.sh installs side
-    # by side, so a channel rollover leaves the previous major here forever -
-    # visible rather than silently accumulating.
-    versions="$("$dotnet_exe" --list-sdks 2>/dev/null | awk '{print $1}' | paste -sd, - || true)"
-    if [[ "$SKIP_UPGRADE" == "yes" ]]; then
-      result 'skipped' 'dotnet SDK' "${versions:-present}"
-    elif [[ "$DRY_RUN" == "yes" ]]; then
-      result 'would-upgrade' 'dotnet SDK' "channel ${DOTNET_CHANNEL}, have ${versions:-none}"
-    else
-      tmp_script="$(mktemp)"
-      if curl -fsSL https://dot.net/v1/dotnet-install.sh -o "$tmp_script" 2>/dev/null &&
-         bash "$tmp_script" --channel "$DOTNET_CHANNEL" --install-dir "$DOTNET_DIR" >/dev/null 2>&1; then
-        after="$("$dotnet_exe" --list-sdks 2>/dev/null | awk '{print $1}' | paste -sd, - || true)"
-        if [[ "$versions" == "$after" ]]; then
-          result 'current' 'dotnet SDK' "$after"
-        else
-          result 'upgraded' 'dotnet SDK' "$versions -> $after"
-        fi
-      else
-        result 'failed' 'dotnet SDK' 'dotnet-install.sh failed'
-      fi
-      rm -f "$tmp_script"
-    fi
-  elif [[ "$DRY_RUN" == "yes" ]]; then
-    result 'would-install' 'dotnet SDK' "channel ${DOTNET_CHANNEL} into ${DOTNET_DIR}"
-  else
-    tmp_script="$(mktemp)"
-    if curl -fsSL https://dot.net/v1/dotnet-install.sh -o "$tmp_script" 2>/dev/null &&
-       bash "$tmp_script" --channel "$DOTNET_CHANNEL" --install-dir "$DOTNET_DIR" >/dev/null 2>&1; then
-      result 'installed' 'dotnet SDK' "$("$dotnet_exe" --list-sdks 2>/dev/null | awk '{print $1}' | paste -sd, - || true)"
-    else
-      result 'failed' 'dotnet SDK' 'dotnet-install.sh failed'
-    fi
-    rm -f "$tmp_script"
-  fi
-fi
-
-# ============================================================
 # zsh
 # ============================================================
 # oh-my-zsh, powerlevel10k and the plugins, matching the Linux script and the
@@ -730,9 +683,13 @@ else
     fi
   fi
 
+  # ZSH_CUSTOM_PLUGINS is empty on macOS and the theme is a formula, so in
+  # practice this loop does nothing here - every one of them comes from
+  # Homebrew and is sourced by path in the fragment below. The loop stays
+  # because the category has not stopped existing: an oh-my-zsh plugin with no
+  # formula would still be cloned, and the Linux script uses the same shape.
   if [[ -d "$OMZ_DIR" || "$DRY_RUN" == "yes" ]]; then
-    git_clone_or_update 'powerlevel10k' "${OMZ_CUSTOM}/themes/powerlevel10k" "$ZSH_THEME_REPO"
-    for entry in "${ZSH_CUSTOM_PLUGINS[@]:-}"; do
+    for entry in ${ZSH_CUSTOM_PLUGINS[@]+"${ZSH_CUSTOM_PLUGINS[@]}"}; do
       [[ -z "$entry" ]] && continue
       git_clone_or_update "plugin: ${entry%%|*}" "${OMZ_CUSTOM}/plugins/${entry%%|*}" "${entry#*|}"
     done
@@ -764,15 +721,47 @@ else
       echo "export ZSH=\"$OMZ_DIR\""
       echo "ZSH_THEME=\"$ZSH_THEME\""
       echo
-      echo '# Both of these have to precede oh-my-zsh.sh, because the nvm plugin'
-      echo '# reads them as it loads. NVM_DIR is where the TOOLS clone put it;'
-      echo '# lazy defers sourcing nvm.sh until the first nvm, node or npm, which'
-      echo '# keeps a few hundred milliseconds off every shell that never uses it.'
-      echo 'export NVM_DIR="$HOME/.nvm"'
-      echo "zstyle ':omz:plugins:nvm' lazy yes"
+      echo '# zsh-completions ships completion FUNCTIONS, not a plugin to'
+      echo '# source, so its directory has to be on fpath before compinit runs'
+      echo '# - and oh-my-zsh runs compinit inside oh-my-zsh.sh. Adding it'
+      echo '# afterwards is the classic way to install this and see no new'
+      echo '# completions at all.'
+      echo "fpath+=(\"${BREW_PREFIX}/share/zsh-completions\")"
       echo
+      # No NVM_DIR or nvm zstyle here any more. The oh-my-zsh nvm plugin is not
+      # in the macOS plugin list at all - see packages.conf for why - so there
+      # is nothing left that has to be set before oh-my-zsh.sh is sourced. nvm
+      # is configured further down with the other version managers instead.
       printf 'plugins=(%s)\n' "${ZSH_PLUGINS[*]}"
       echo 'source "$ZSH/oh-my-zsh.sh"'
+      echo
+      echo '# The theme and the four add-on plugins, sourced by path because'
+      echo '# Homebrew installed them and oh-my-zsh only finds things under'
+      echo '# $ZSH_CUSTOM. On the Linux side these are clones there and are'
+      echo '# named in plugins=() instead; this is the same set, loaded'
+      echo '# differently.'
+      echo '#'
+      echo '# ORDER IS LOAD-BEARING and it is the same set of rules the plugin'
+      echo '# list used to encode, now that nothing else enforces them:'
+      echo '#'
+      echo '#   fzf-tab must come AFTER compinit, which oh-my-zsh.sh just ran,'
+      echo '#   and BEFORE anything that wraps ZLE widgets.'
+      echo '#'
+      echo '#   zsh-syntax-highlighting must be LAST but one. It wraps every ZLE'
+      echo '#   widget that exists when it loads, so a plugin sourced after it'
+      echo '#   defines its widgets outside that wrapping and goes unhighlighted.'
+      echo '#'
+      echo '#   history-substring-search is the documented exception and must'
+      echo '#   come after the highlighter, which is why it is last.'
+      echo "[ -r \"${BREW_PREFIX}/share/powerlevel10k/powerlevel10k.zsh-theme\" ] && source \"${BREW_PREFIX}/share/powerlevel10k/powerlevel10k.zsh-theme\""
+      echo "# fzf-tab.zsh, NOT fzf-tab.plugin.zsh. The upstream repository names"
+      echo "# it the second way and every oh-my-zsh guide says so; the Homebrew"
+      echo "# formula installs it as the first. Getting this wrong fails the -r"
+      echo "# guard and loads nothing, with no error anywhere."
+      echo "[ -r \"${BREW_PREFIX}/share/fzf-tab/fzf-tab.zsh\" ] && source \"${BREW_PREFIX}/share/fzf-tab/fzf-tab.zsh\""
+      echo "[ -r \"${BREW_PREFIX}/share/zsh-autosuggestions/zsh-autosuggestions.zsh\" ] && source \"${BREW_PREFIX}/share/zsh-autosuggestions/zsh-autosuggestions.zsh\""
+      echo "[ -r \"${BREW_PREFIX}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh\" ] && source \"${BREW_PREFIX}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh\""
+      echo "[ -r \"${BREW_PREFIX}/share/zsh-history-substring-search/zsh-history-substring-search.zsh\" ] && source \"${BREW_PREFIX}/share/zsh-history-substring-search/zsh-history-substring-search.zsh\""
       echo
       echo '# History, sized so a busy week does not quietly drop the command'
       echo '# you wanted. HISTSIZE is what the running shell holds; SAVEHIST is'
@@ -814,23 +803,51 @@ else
       echo
       echo '# Version managers, ahead of anything the platform ships, so a'
       echo '# project pin wins over the machine default whenever there is one.'
-      echo '[ -d "$HOME/.pyenv/bin" ] && export PATH="$HOME/.pyenv/bin:$PATH"'
-      echo 'command -v pyenv >/dev/null && eval "$(pyenv init -)"'
-      echo '[ -d "$HOME/.tfenv/bin" ] && export PATH="$HOME/.tfenv/bin:$PATH"'
-      echo
-      echo '# nvm is loaded LAZILY, by the oh-my-zsh plugin rather than by'
-      echo '# sourcing nvm.sh here. nvm is a large shell script and sourcing it'
-      echo '# eagerly is the single most common reason a zsh startup stops being'
-      echo '# instant - it is easily a few hundred milliseconds on every new'
-      echo '# terminal. Lazy means the first `nvm`, `node` or `npm` pays that'
-      echo '# cost once and no other shell pays it at all.'
       echo '#'
-      echo '# NVM_DIR and the zstyle must both be set BEFORE oh-my-zsh.sh is'
-      echo '# sourced above, which is why they are not down here with the rest.'
+      echo '# All four come from Homebrew here, so none of them needs a PATH'
+      echo '# entry of its own - brew shellenv above already put its bin'
+      echo '# directory in front. The Linux fragment prepends $HOME/.pyenv/bin'
+      echo '# and $HOME/.tfenv/bin because there they are git clones.'
+      echo 'command -v pyenv >/dev/null && eval "$(pyenv init -)"'
+      echo '# pyenv-virtualenv is a separate init and a separate formula. Without'
+      echo '# this line the plugin is installed and does nothing: `pyenv'
+      echo '# virtualenv` still creates environments, but none of them ever'
+      echo '# activate on cd.'
+      echo 'command -v pyenv-virtualenv-init >/dev/null && eval "$(pyenv virtualenv-init -)"'
       echo
-      echo '# Not managed by any of them: the SDK installs side by side under'
-      echo '# its own directory and there is no per-project version to pick.'
-      echo '[ -d "$HOME/.dotnet" ] && export PATH="$HOME/.dotnet:$PATH" && export DOTNET_ROOT="$HOME/.dotnet"'
+      echo '# nvm, and the two halves of it are deliberately different places.'
+      echo '#'
+      echo '# NVM_DIR is the DATA directory - where installed node versions'
+      echo '# live - and it must NOT be the brew prefix. Homebrew says so'
+      echo '# itself: leaving it at the Cellar path "will destroy any'
+      echo '# nvm-installed Node installations upon upgrade/reinstall", because'
+      echo '# `brew upgrade nvm` replaces that directory wholesale. ~/.nvm'
+      echo '# survives, and is also where the Linux side keeps the same data.'
+      echo '#'
+      echo '# nvm.sh itself comes from the brew prefix, since that is the copy'
+      echo '# brew installed. The oh-my-zsh nvm plugin cannot express this split'
+      echo '# - it sources $NVM_DIR/nvm.sh and nothing else - which is why the'
+      echo '# plugin is not in the list and this is written out by hand.'
+      echo 'export NVM_DIR="$HOME/.nvm"'
+      echo '[ -d "$NVM_DIR" ] || mkdir -p "$NVM_DIR"'
+      echo
+      echo '# LAZY, for the reason the plugin was lazy: nvm is a large shell'
+      echo '# script and sourcing it eagerly is the single most common reason a'
+      echo '# zsh startup stops being instant - easily a few hundred'
+      echo '# milliseconds on every new terminal. These stubs replace themselves'
+      echo '# with the real thing on first use, so the first `nvm`, `node` or'
+      echo '# `npm` pays that cost once and no other shell pays it at all.'
+      echo "_bootstrap_load_nvm() {"
+      echo "  unfunction nvm node npm npx _bootstrap_load_nvm 2>/dev/null"
+      echo "  [ -s \"${BREW_PREFIX}/opt/nvm/nvm.sh\" ] && . \"${BREW_PREFIX}/opt/nvm/nvm.sh\""
+      echo "  [ -s \"${BREW_PREFIX}/opt/nvm/etc/bash_completion.d/nvm\" ] && . \"${BREW_PREFIX}/opt/nvm/etc/bash_completion.d/nvm\""
+      echo "}"
+      echo "if [ -s \"${BREW_PREFIX}/opt/nvm/nvm.sh\" ]; then"
+      echo '  for _cmd in nvm node npm npx; do'
+      echo '    eval "${_cmd}() { _bootstrap_load_nvm; ${_cmd} \"\$@\"; }"'
+      echo '  done'
+      echo '  unset _cmd'
+      echo 'fi'
     } > "$NEW_FRAGMENT"
 
     if [[ -f "$FRAGMENT" ]] && cmp -s "$NEW_FRAGMENT" "$FRAGMENT"; then

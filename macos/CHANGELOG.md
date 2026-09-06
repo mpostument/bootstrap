@@ -15,6 +15,90 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0]
+
+### Changed
+
+- **pyenv, pyenv-virtualenv, tfenv and nvm are Homebrew formulae**, not git
+  clones under `$HOME`. `TOOLS` is now empty on macOS, and the four moved into
+  the `dev` group where brew version-checks, upgrades and reports them with
+  everything else.
+
+  What it costs is worth naming: `$HOME/.pyenv` is the same path on Linux and
+  macOS, so the two managed fragments used to say the same thing about it and
+  no longer do. What it buys is one owner and one upgrade transaction instead
+  of four `git pull`s that can each fail differently.
+
+  None of the four needs a `PATH` line any more — `brew shellenv` already puts
+  them in front. The Linux fragment still prepends `$HOME/.pyenv/bin` and
+  `$HOME/.tfenv/bin`, because there they really are clones.
+
+- **`pyenv virtualenv-init` is now run**, which the clone-based setup never
+  did. Without it the plugin is installed and inert: `pyenv virtualenv` still
+  creates environments and none of them ever activate on `cd`.
+
+### Fixed
+
+- **nvm would have broken silently under Homebrew**, and avoiding that is why
+  the `nvm` oh-my-zsh plugin is no longer in the macOS plugin list.
+
+  The plugin only falls back to a Homebrew nvm when `NVM_DIR` is *empty*, and
+  when it does it points `NVM_DIR` at the Cellar — which is exactly the
+  configuration Homebrew's own caveat warns "will destroy any nvm-installed
+  Node installations upon upgrade/reinstall", because `brew upgrade nvm`
+  replaces that directory wholesale. Set `NVM_DIR` correctly instead and the
+  plugin finds no `nvm.sh` there and quietly does nothing at all.
+
+  So the fragment splits the two halves by hand, as Homebrew documents:
+  `NVM_DIR` at `~/.nvm` for the data, `nvm.sh` sourced from the brew prefix.
+  The lazy loading the plugin provided is written out explicitly rather than
+  lost — stubs for `nvm`, `node`, `npm` and `npx` that replace themselves on
+  first use, so a shell that never runs node still starts instantly.
+
+- **The .NET SDK is the `dotnet-sdk` cask**, not Microsoft's install script
+  into `$HOME/.dotnet`. The phase is gone, `DOTNET_ENABLED`, `DOTNET_CHANNEL`
+  and `DOTNET_DIR` with it, and so are the fragment's `PATH` and `DOTNET_ROOT`
+  exports — the cask installs to `/usr/local/share/dotnet` and links `dotnet`
+  and `dnx` from a directory already on `PATH`, so there is nothing left for
+  the shell to arrange.
+
+- **The zsh theme and the four add-on plugins are Homebrew formulae** rather
+  than git clones into oh-my-zsh's custom directory. `ZSH_CUSTOM_PLUGINS` is
+  now empty and `ZSH_THEME` is now blank; nothing is cloned on macOS at all.
+
+  Both blanks are load-bearing rather than tidy. oh-my-zsh resolves a name in
+  `plugins=()` and `ZSH_THEME` against its own directories only, so naming a
+  brew-installed plugin there finds nothing, and naming the theme there makes
+  oh-my-zsh report it missing and fall back to its default. They are sourced by
+  path after `oh-my-zsh.sh` instead.
+
+  **The ordering rules moved with them.** They used to be encoded in the order
+  of `ZSH_PLUGINS`; nothing enforces them now except the fragment, so they are
+  written where the sourcing happens: `fzf-tab` after compinit, then
+  autosuggestions, then `zsh-syntax-highlighting` last but one because it wraps
+  every ZLE widget in existence when it loads, then history-substring-search,
+  the documented exception that must follow it.
+
+  `zsh-completions` is the odd one and goes the other way: it ships completion
+  functions rather than a script to source, so its directory joins `fpath`
+  *before* `oh-my-zsh.sh` runs compinit. Adding it afterwards is the classic
+  way to install it and see no new completions at all.
+
+- **The `fzf-tab` path is `fzf-tab.zsh`, not `fzf-tab.plugin.zsh`.** Upstream
+  names it the second way and so does every oh-my-zsh guide; the Homebrew
+  formula installs the first. The wrong name fails the readability guard and
+  loads nothing, silently — the same shape as every other bug in this release.
+
+### Notes
+
+- **oh-my-zsh itself is the one thing here not from Homebrew**, and not by
+  choice: there is no formula for it, so the framework is still installed by
+  its own script. Everything that plugs into it now comes from brew.
+
+- **helm is 4.2.4 on all three platforms** — winget `Helm.Helm`, the `helm`
+  formula, and the Linux `RELEASES` entry that tracks the newest tag. No pin
+  was needed; all three were already there.
+
 ## [1.0.0]
 
 First release. A Homebrew counterpart to the Windows and Linux bootstraps,
