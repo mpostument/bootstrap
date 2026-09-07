@@ -15,6 +15,73 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0]
+
+The macOS side found these first; this is the same audit run against the Linux
+fragment. Not everything carried over - see the note on
+`history-substring-search` below - so the two scripts are deliberately not
+identical here.
+
+### Fixed
+
+- **`fzf-tab` was sourced and inert.** Without `zstyle ':completion:*' menu
+  no`, zsh's own menu selection owns the completion UI and fzf-tab is never
+  invoked. It is cloned, named first in `plugins=()`, sourced, working, and
+  never reached — naming it in the plugin list was never enough.
+
+  The fragment now writes that, the `fzf-tab:*` settings, `list-colors`, and
+  binds Tab to `fzf-tab-complete` — guarded on the widget existing, so a failed
+  clone leaves Tab doing the normal thing rather than nothing.
+
+- **`history-substring-search` was bound only for terminfo sequences.** Unlike
+  macOS, this one is *not* broken: Linux uses the plugin oh-my-zsh bundles,
+  which does bind keys. But it binds `$terminfo[kcuu1]`/`kcud1` only, so a
+  terminal outside application cursor mode sends the raw escape and reaches
+  nothing — the "works locally, not over SSH" report. Both spellings are now
+  bound, plus vi `k`/`j`, guarded on the widget.
+
+- **`alias find="fd"` tested an alias, not a binary.** Added in the same pass
+  as the macOS one, and initially placed after `alias fd="fdfind"` — which
+  makes `command -v fd` succeed on a box with no `fd` binary at all. It would
+  have worked, since zsh expands an alias to an alias, but by accident. The
+  `find` pair is now emitted before the `fd` alias.
+
+- **Insecure completion directories.** zsh treats a group- or world-writable
+  `fpath` entry as untrusted and oh-my-zsh responds by loading **no**
+  completions at all. The trigger differs from macOS, where it is Homebrew
+  creating `<prefix>/share` group-writable: here the directories are clones in
+  `$HOME`, so the cause is the umask that made them — a 002 umask with
+  `USERGROUPS_ENAB` makes every directory git creates group-writable.
+
+  A new `completion perms` step chmods `g-w,o-w` on the oh-my-zsh directories
+  and cloned plugins, including `zsh-completions/src`, which is the path
+  actually added to `fpath`. Only what is on `fpath` is touched.
+
+### Added
+
+- **The powerlevel10k instant prompt**, at the top of the fragment. It was
+  never emitted, so the headline feature of the theme this script clones was
+  off unless you had written the block yourself.
+
+  It only works if it runs before everything else, so the script now reports
+  `zshrc hook order` when the `source` line has executable code above it. It
+  does not rewrite `~/.zshrc` to fix that — that file is the user's. The check
+  matches a line that actually sources the fragment, not any mention of it.
+
+- **`~/.p10k.zsh` is sourced** after oh-my-zsh. Without it powerlevel10k runs
+  its configuration wizard on every new shell until you answer it, and then the
+  answers it writes are never read back.
+
+- **`alias find="fd"`/`fdfind`**, which was the one member of the cli bundle
+  with no `find`-shaped alias.
+
+### Changed
+
+- **`cat` and `ls` aliases now behave like the commands they replace.** `bat`
+  pages by default and `cat` does not, hence `--paging=never`; `eza --icons`
+  emits icons into a pipe where they become mojibake in whatever reads them,
+  hence `--icons=auto`, which ties them to stdout being a terminal.
+
 ## [1.3.0]
 
 ### Changed

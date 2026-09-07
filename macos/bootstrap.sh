@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.1.0'
+BOOTSTRAP_VERSION='1.4.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -695,6 +695,50 @@ else
     done
   fi
 
+  # Completion directory permissions, and this is here because the fragment
+  # below is what causes the problem. Adding <prefix>/share/zsh-completions to
+  # fpath brings it, and its parents, into what oh-my-zsh audits at startup.
+  #
+  # Homebrew creates <prefix>/share group-writable for the admin group. zsh
+  # treats a group-writable directory on fpath as untrusted, and oh-my-zsh
+  # turns that into a refusal: it prints "Insecure completion-dependent
+  # directories detected" and then loads NO completions at all - not merely the
+  # ones from the offending directory. So installing zsh-completions can leave
+  # you with fewer completions than before it, which is a memorable afternoon.
+  #
+  # Fixed rather than reported, because this script created the condition. It
+  # is the same chmod the zsh-completions formula prints in its own caveat.
+  # Note that `brew` may recreate the group bit on a later install into share/;
+  # a re-run puts it back.
+  COMPFIX_DIRS=(
+    "${BREW_PREFIX}/share"
+    "${BREW_PREFIX}/share/zsh"
+    "${BREW_PREFIX}/share/zsh/site-functions"
+    "${BREW_PREFIX}/share/zsh-completions"
+  )
+  INSECURE_DIRS=()
+  for d in "${COMPFIX_DIRS[@]}"; do
+    [[ -d "$d" ]] || continue
+    # stat -f is the BSD spelling; %Sp gives the symbolic mode, so the group
+    # write bit is character 6 and the other write bit is character 9.
+    perms="$(stat -f '%Sp' "$d" 2>/dev/null)" || continue
+    if [[ "${perms:5:1}" == "w" || "${perms:8:1}" == "w" ]]; then
+      INSECURE_DIRS+=("$d")
+    fi
+  done
+
+  if [[ ${#INSECURE_DIRS[@]} -eq 0 ]]; then
+    result 'current' 'completion perms' 'nothing group- or world-writable on fpath'
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    result 'would-install' 'completion perms' "chmod g-w,o-w on ${#INSECURE_DIRS[@]}: ${INSECURE_DIRS[*]##*/}"
+  else
+    if chmod g-w,o-w "${INSECURE_DIRS[@]}" 2>/dev/null; then
+      result 'installed' 'completion perms' "chmod g-w,o-w ${INSECURE_DIRS[*]##*/}"
+    else
+      result 'failed' 'completion perms' "run by hand: chmod g-w,o-w ${INSECURE_DIRS[*]}"
+    fi
+  fi
+
   # The managed fragment, not the whole .zshrc. Anything else in that file is
   # somebody's own work; this writes one clearly-marked block and leaves the
   # rest alone, the same rule the Windows profile and the Linux script follow.
@@ -711,6 +755,22 @@ else
     chmod 0644 "$NEW_FRAGMENT"
     {
       echo "# managed by macos/bootstrap.sh - edit the manifest, not this file"
+      echo
+      echo '# The powerlevel10k instant prompt, and it is FIRST for a reason: it'
+      echo '# replays a cached prompt before the rest of this file runs, so the'
+      echo '# terminal is usable immediately instead of after every eval below.'
+      echo '# Anything that writes to the console above it corrupts the replay,'
+      echo '# which is why it precedes even brew shellenv.'
+      echo '#'
+      echo '# The consequence for ~/.zshrc is that the line sourcing THIS file'
+      echo '# has to be near the top of it. Code that prompts for input - a'
+      echo '# password, a [y/n] - is the one thing that must go above it.'
+      echo '#'
+      echo '# The cache does not exist on the first run, so the guard fails and'
+      echo '# the prompt is simply not instant that once.'
+      echo 'if [ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]; then'
+      echo '  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"'
+      echo 'fi'
       echo
       echo '# Homebrew first, and unconditional: nothing below can find a brew-'
       echo '# installed binary until the prefix is on PATH. The prefix differs by'
@@ -763,6 +823,63 @@ else
       echo "[ -r \"${BREW_PREFIX}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh\" ] && source \"${BREW_PREFIX}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh\""
       echo "[ -r \"${BREW_PREFIX}/share/zsh-history-substring-search/zsh-history-substring-search.zsh\" ] && source \"${BREW_PREFIX}/share/zsh-history-substring-search/zsh-history-substring-search.zsh\""
       echo
+      echo '# Sourcing history-substring-search is not enough to USE it. The'
+      echo '# plugin ships no keybindings at all - upstream leaves that to the'
+      echo '# caller - so without these lines it loads, defines its widgets, and'
+      echo '# nothing you press ever reaches them. oh-my-zsh bundles a copy that'
+      echo '# does bind keys, which is exactly why this is easy to miss: drop the'
+      echo '# omz plugin for the newer standalone one and the feature silently'
+      echo '# stops working.'
+      echo '#'
+      echo '# Both spellings of up/down are bound. A terminal in application'
+      echo '# cursor mode sends the terminfo sequence and a terminal outside it'
+      echo '# sends the raw escape, and which one you get varies by terminal and'
+      echo '# by whether zle has started - so binding one of the two works'
+      echo '# everywhere except where it does not.'
+      echo 'zmodload zsh/terminfo 2>/dev/null'
+      echo 'if (( $+widgets[history-substring-search-up] )); then'
+      echo "  bindkey '^[[A' history-substring-search-up"
+      echo "  bindkey '^[[B' history-substring-search-down"
+      echo '  [ -n "${terminfo[kcuu1]}" ] && bindkey "${terminfo[kcuu1]}" history-substring-search-up'
+      echo '  [ -n "${terminfo[kcud1]}" ] && bindkey "${terminfo[kcud1]}" history-substring-search-down'
+      echo "  bindkey -M vicmd 'k' history-substring-search-up"
+      echo "  bindkey -M vicmd 'j' history-substring-search-down"
+      echo 'fi'
+      echo
+      echo '# The prompt configuration itself, which is NOT part of the formula.'
+      echo '# powerlevel10k without it runs its configuration wizard on every new'
+      echo '# shell until you answer it, and answering writes ~/.p10k.zsh - which'
+      echo '# then has to be sourced or the answers do nothing. This file is'
+      echo '# yours, not managed here; the theme has to come first, above.'
+      echo '[ -r "$HOME/.p10k.zsh" ] && source "$HOME/.p10k.zsh"'
+      echo
+      echo '# Completion styling, and the fzf-tab settings without which fzf-tab'
+      echo '# is inert. `menu no` is the load-bearing one: zsh menu selection and'
+      echo '# fzf-tab both want to own the completion UI, and if zsh has it,'
+      echo '# fzf-tab is sourced, working, and never invoked - the same silent'
+      echo '# nothing as the keybindings above.'
+      echo 'zstyle '"'"':completion:*'"'"' list-colors "${(s.:.)LS_COLORS}"'
+      echo "bindkey -M menuselect '^[[Z' reverse-menu-complete"
+      echo 'if command -v fzf >/dev/null; then'
+      echo "  zstyle ':completion:*' menu no"
+      echo "  zstyle ':completion:*:*:*:*:*' menu no"
+      echo "  zstyle ':fzf-tab:*' fzf-flags --height=60% --layout=reverse --border --cycle"
+      echo "  zstyle ':fzf-tab:*' switch-group ',' '.'"
+      echo '  # git checkout offers refs in a meaningful order already; sorting'
+      echo "  # them alphabetically buries the branch you just left."
+      echo "  zstyle ':completion:*:git-checkout:*' sort false"
+      echo "  zstyle ':fzf-tab:complete:cd:*'         fzf-preview 'eza -1 --color=always -- \"\$realpath\" 2>/dev/null || ls -1 \"\$realpath\"'"
+      echo "  zstyle ':fzf-tab:complete:__zoxide_z:*' fzf-preview 'eza -1 --color=always -- \"\$realpath\" 2>/dev/null || ls -1 \"\$realpath\"'"
+      echo '  # Bound only if the widget exists, so a failed fzf-tab install'
+      echo '  # leaves Tab doing the normal thing rather than nothing.'
+      echo '  if (( $+functions[fzf-tab-complete] )); then'
+      echo "    bindkey -M emacs '^I' fzf-tab-complete"
+      echo "    bindkey -M viins '^I' fzf-tab-complete"
+      echo '  fi'
+      echo 'else'
+      echo "  bindkey '^I' menu-select"
+      echo 'fi'
+      echo
       echo '# History, sized so a busy week does not quietly drop the command'
       echo '# you wanted. HISTSIZE is what the running shell holds; SAVEHIST is'
       echo '# what reaches the file, and it must not be smaller or the file is'
@@ -785,9 +902,16 @@ else
       echo '# where one of these failed to install - a blind alias to a missing'
       echo '# binary breaks the normal command entirely. Unlike Debian, Homebrew'
       echo '# does not rename bat or fd, so there is no batcat/fdfind dance here.'
-      echo 'command -v bat    >/dev/null && alias cat="bat"'
-      echo 'command -v eza    >/dev/null && alias ls="eza --icons --group-directories-first"'
+      echo '#'
+      echo '# Two of the flags are about behaving like the command being'
+      echo '# replaced rather than like the replacement. `bat` pages by default'
+      echo '# and `cat` does not, so --paging=never; `eza --icons` emits icons'
+      echo '# even into a pipe, where they become mojibake in whatever reads'
+      echo '# them, so --icons=auto ties them to stdout being a terminal.'
+      echo 'command -v bat    >/dev/null && alias cat="bat --paging=never"'
+      echo 'command -v eza    >/dev/null && alias ls="eza --icons=auto --group-directories-first"'
       echo 'command -v rg     >/dev/null && alias grep="rg"'
+      echo 'command -v fd     >/dev/null && alias find="fd"'
       echo 'command -v zoxide >/dev/null && eval "$(zoxide init zsh)"'
       echo
       echo '# GNU make arrives as gmake because /usr/bin/make is BSD make and'
@@ -869,6 +993,26 @@ else
     else
       printf '\n%s\n' "$SOURCE_LINE" >> "$ZSHRC"
       result 'installed' 'zshrc hook' "appended to $ZSHRC"
+    fi
+
+    # Appending is safe but not always right, and the difference is visible
+    # rather than silent, so it is reported instead of guessed at. The fragment
+    # now opens with the powerlevel10k instant prompt, which only does anything
+    # if it runs before the rest of the file - so a hook sitting under 80 lines
+    # of somebody's own config is a working shell with a feature quietly
+    # switched off. Rewriting a file the user owns to fix that is not this
+    # script's call to make; saying so is.
+    if [[ -f "$ZSHRC" ]]; then
+      # Matched on a line that actually SOURCES the fragment, not on any
+      # mention of it. A comment naming the file - and this script encourages
+      # writing one - is not the hook, and counting from it measures nothing.
+      HOOK_LINE="$(grep -nE '^[^#]*(source|\.)[[:space:]].*\.zshrc\.bootstrap' "$ZSHRC" | head -1 | cut -d: -f1)"
+      [[ -z "$HOOK_LINE" ]] && HOOK_LINE=1
+      CODE_ABOVE="$(head -n "$(( HOOK_LINE - 1 ))" "$ZSHRC" | grep -cvE '^[[:space:]]*(#|$)')"
+      if [[ "${CODE_ABOVE:-0}" -gt 0 ]]; then
+        result 'missing' 'zshrc hook order' \
+          "$CODE_ABOVE lines run before it - move the source line to the top for the instant prompt"
+      fi
     fi
   fi
 fi

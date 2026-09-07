@@ -15,6 +15,102 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0]
+
+### Removed
+
+- **`zoom` and `stolendata-mpv` are no longer installed.** Neither is wrong to
+  want; neither is something a fresh machine needs before its owner asks. `vlc`
+  stays and covers the same ground as mpv for the case this manifest is for.
+
+  The comment `stolendata-mpv` carried is kept, moved up to the group preamble
+  where it applies to every token rather than to one departed package. The
+  lesson is not about mpv: Homebrew renames casks and keeps the old name
+  resolving for a while, so a stale token can install a SECOND copy that `brew
+  list` reports under a name this file never mentions. `gcloud-cli` was
+  `google-cloud-sdk` and does exactly this. Check `old_tokens` before adding a
+  cask; CI checks it too.
+
+## [1.3.0]
+
+### Fixed
+
+- **`zsh-history-substring-search` was sourced and inert.** The formula ships
+  no keybindings — upstream leaves that to the caller — so the fragment loaded
+  it, its widgets were defined, and nothing you pressed ever reached them. The
+  fragment now binds up/down and vi `k`/`j`.
+
+  Easy to miss because oh-my-zsh bundles a copy that *does* bind keys: moving
+  from the bundled plugin to the newer standalone formula silently turns the
+  feature off. Both spellings of the arrow keys are bound — the terminfo
+  sequence and the raw escape — because which one a terminal sends depends on
+  application cursor mode.
+
+- **`fzf-tab` was sourced and inert for the same class of reason.** Without
+  `zstyle ':completion:*' menu no`, zsh's own menu selection owns the
+  completion UI and fzf-tab is never invoked. The fragment now writes that,
+  the `fzf-tab:*` settings, `list-colors`, and binds Tab to `fzf-tab-complete`
+  — guarded on the widget existing, so a failed install leaves Tab doing the
+  normal thing rather than nothing.
+
+- **Installing `zsh-completions` could leave you with fewer completions than
+  before it.** The fragment puts `<prefix>/share/zsh-completions` on `fpath`,
+  which brings it and its parents into oh-my-zsh's startup audit. Homebrew
+  creates `<prefix>/share` group-writable, zsh treats a group-writable `fpath`
+  entry as untrusted, and oh-my-zsh responds by loading **no** completions at
+  all and printing "Insecure completion-dependent directories detected".
+
+  A new `completion perms` step chmods `g-w,o-w` on the affected directories —
+  the same fix the formula prints in its own caveat. It is fixed rather than
+  reported because this script creates the condition. `brew` may recreate the
+  group bit on a later install into `share/`; a re-run puts it back.
+
+### Added
+
+- **The powerlevel10k instant prompt**, at the top of the fragment. It was
+  never emitted, so the headline feature of the theme the manifest installs
+  was off unless you had written the block yourself.
+
+  It only works if it runs before everything else, so the fragment now reports
+  `zshrc hook order` when the `source` line has executable code above it. It
+  does not rewrite `~/.zshrc` to fix that — that file is the user's.
+
+- **`~/.p10k.zsh` is sourced** after the theme. Without it powerlevel10k runs
+  its configuration wizard on every new shell until you answer it, and then
+  the answers it writes are never read back.
+
+- **`alias find="fd"`**, which was the one member of the cli bundle with no
+  alias while `bat`, `eza` and `ripgrep` all had one.
+
+### Changed
+
+- **`cat` and `ls` aliases now behave like the commands they replace.** `bat`
+  pages by default and `cat` does not, hence `--paging=never`; `eza --icons`
+  emits icons into a pipe where they become mojibake in whatever reads them,
+  hence `--icons=auto`, which ties them to stdout being a terminal.
+
+  The Linux fragment has the same two aliases and has not been changed.
+
+## [1.2.0]
+
+### Removed
+
+- **`curl` is no longer installed.** Homebrew marks it `keg_only
+  :provided_by_macos`, so it is never linked into `<prefix>/bin`. Installing it
+  left a newer curl in `<prefix>/opt/curl/bin` that nothing on `PATH` reached,
+  and `curl` in a shell stayed the system one — the manifest claimed an upgrade
+  it was not delivering.
+
+  `git` stays, and the contrast is the whole point: git is not keg-only, so
+  Homebrew's really does shadow `/usr/bin/git`. Same reasoning, opposite answer.
+
+  What is given up is an OpenSSL backend instead of SecureTransport, and
+  HTTP/3. A machine that needs either wants `<prefix>/opt/curl/bin` prepended
+  in the managed fragment, which is a deliberate change and not a line in an
+  array. `bootstrap.sh` still calls the system `curl` to fetch the Homebrew and
+  oh-my-zsh installers, which is what it always did — neither can wait for a
+  package manager that is not there yet.
+
 ## [1.1.0]
 
 ### Changed
