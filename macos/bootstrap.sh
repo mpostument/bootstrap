@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.5.0'
+BOOTSTRAP_VERSION='1.6.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -852,6 +852,16 @@ else
       echo '# then has to be sourced or the answers do nothing. This file is'
       echo '# yours, not managed here; the theme has to come first, above.'
       echo '[ -r "$HOME/.p10k.zsh" ] && source "$HOME/.p10k.zsh"'
+      echo
+      echo '# The right prompt - kube context, node version, clock - earns its'
+      echo '# place while you type and is noise the moment the command scrolls'
+      echo '# away: it sits at the far right of every line in the scrollback, so'
+      echo '# selecting a command to copy drags "system kube-ctx 17:17" along'
+      echo '# with it. TRANSIENT_RPROMPT erases it when the line is accepted, so'
+      echo '# only the prompt you are typing at carries it. The left side is the'
+      echo '# same idea under POWERLEVEL9K_TRANSIENT_PROMPT, which lives in'
+      echo '# ~/.p10k.zsh - yours, not managed here.'
+      echo 'setopt TRANSIENT_RPROMPT'
       echo
       echo '# Completion styling, and the fzf-tab settings without which fzf-tab'
       echo '# is inert. `menu no` is the load-bearing one: zsh menu selection and'

@@ -15,6 +15,20 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0]
+
+### Added
+
+- **`setopt TRANSIENT_RPROMPT` in the zsh fragment.** The right prompt carries
+  what is worth a glance while you type - nvm's `system`, the kube context,
+  the clock - and then stays on that line forever. Those columns are real
+  characters, so copying a command out of the scrollback drags
+  `system ⎈ prod-blue 17:17:25` along with it. With this option zsh erases
+  the right prompt the moment the line is accepted, leaving it only on the
+  prompt being typed at. The left half of the same idea,
+  `POWERLEVEL9K_TRANSIENT_PROMPT`, is powerlevel10k's own and lives in
+  `~/.p10k.zsh` - that file is the user's, not managed here.
+
 ## [1.5.0]
 
 ### Fixed
