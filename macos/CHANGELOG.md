@@ -15,6 +15,87 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0]
+
+### Fixed
+
+- **The script silently exited before the Terminal config phase on some
+  `.zshrc` shapes.** The zshrc-hook-order check has two pipelines inside
+  `$(...)` command substitutions: one finds the source-line's line number,
+  the other counts non-comment lines above it. Both can legitimately end in
+  a grep with zero matches - a `.zshrc` that names the file only in a
+  comment, or one whose header above the hook is entirely comments and
+  blanks. `grep` exits 1 in both cases, `set -euo pipefail` propagates that
+  to the assignment, and the whole script exits from *inside* `$(...)`
+  without a diagnostic. Both pipelines now end in `|| true`, and the count
+  is defaulted to 0.
+
+  The bug was there since the hook-order check landed and only fired for
+  specific `.zshrc` shapes, so the run reported `current zshrc hook` and
+  stopped without an error line. Terminal config, Manual, and Summary never
+  ran.
+
+### Added
+
+- **The ghostty config is more than one line now.** `scrollback-limit` was all
+  it had, which meant every other decision - font, palette, Option-key
+  handling, window state - was ghostty's default rather than this manifest's.
+  Seven new knobs, each in the manifest with a paragraph of why, rendered into
+  `~/.config/ghostty/config` the same way scrollback already was.
+
+  - `theme = Catppuccin Mocha`. A name that matches a row from
+    `ghostty +list-themes`; ghostty ships 463 of them, so changing palette is
+    a one-line edit to the manifest and nothing else. Ghostty's own default
+    on macOS is a plain dark; Catppuccin Mocha is the widely used dark across
+    dev tooling in 2026.
+  - `font-family = MesloLGM Nerd Font Mono`. The Meslo Nerd Font this
+    manifest has installed since the first release, matched by its face-table
+    name (spaces) rather than the ttf filename. Ghostty's default is empty
+    which falls back to SF Mono, so p10k's glyphs were rendering from a
+    different font than the one the manifest ships.
+  - `font-size = 16`. Ghostty's default is 13; 16 matches the iTerm2 profile
+    this manifest replaces and is comfortable at a normal seating distance
+    on a Retina display.
+  - `macos-option-as-alt = true`. Option-f/b/arrows produce the word-wise
+    escape sequences readline, zsh and vim recognise. macOS's default keeps
+    the typographic bindings (Option-e for é, and the rest), which nobody
+    uses at a terminal - the shortcut half of that keyboard is what
+    everything on the command line actually uses.
+  - `window-save-state = always`. Restores tabs and splits across a plain
+    Cmd-Q and relaunch. The default `default` only restores when the OS asks
+    (login-item restart, or a reboot with "Reopen windows" ticked); it drops
+    the state on a hand quit, which is the case anyone not running tmux was
+    silently losing.
+  - `copy-on-select = clipboard`. Selecting text puts it on the clipboard
+    Cmd-V pastes from. **Not `true`**, which Ghostty documents as valid and
+    is not the same thing - `true` copies to the X11-style primary selection,
+    a separate buffer on macOS that nothing reaches with Cmd-V. The trade-off
+    is a stray selection replaces whatever was on the clipboard.
+  - `quit-after-last-window-closed = true`. Match CLI-tool convention. macOS's
+    default is to keep the app alive with no visible window, which is right
+    for a mail client and wrong for a terminal - the Dock icon lingers and
+    Cmd-Q is the only way out.
+  - `shell-integration-features = cursor,sudo,title,ssh-env,ssh-terminfo`.
+    Ghostty auto-installs the shell hooks; this opts INTO the extras.
+    `cursor` follows zsh vi-mode with a bar/block change, `sudo` preserves
+    the prompt state through sudo, `title` keeps the terminal title tracking
+    cwd. `ssh-env` carries `TERM=xterm-ghostty` and `COLORTERM=truecolor`
+    through ssh, and `ssh-terminfo` pipes `infocmp -x xterm-ghostty` through
+    `tic -x -` on the remote on first connect - installing the entry under
+    the remote user's `~/.terminfo`, cached locally afterwards. Together
+    they solve the caveat this manifest carried in a comment since 1.0.0:
+    "a Debian box that has never heard of that terminfo entry will complain
+    until you use ghostty's SSH integration or force TERM=xterm-256color."
+    The two features go together - adding `ssh-env` alone actually makes
+    the problem worse on hosts without the entry, because the remote now
+    thinks it can drive an xterm-ghostty it does not understand.
+  - `keybind = global:cmd+\`=toggle_quick_terminal`. Quake-style drop-down
+    terminal summoned from any app, including full-screen ones. `global:`
+    scopes the binding to the OS rather than a ghostty window, so it fires
+    even when ghostty is not focused. Blank in the manifest disables it.
+  - `window-padding-x = 10`, `window-padding-y = 10`. Ghostty's default 2/2
+    is visually cramped at 16pt - the prompt sits right against the frame.
+
 ## [1.4.0]
 
 ### Removed

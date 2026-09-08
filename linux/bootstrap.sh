@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.4.0'
+BOOTSTRAP_VERSION='1.5.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -1328,9 +1328,19 @@ else
       # of it. A comment naming the file is not the hook, and counting from it
       # measures nothing.
       if [[ -f "$ZSHRC" ]]; then
-        HOOK_LINE="$(grep -nE '^[^#]*(source|\.)[[:space:]].*\.zshrc\.bootstrap' "$ZSHRC" | head -1 | cut -d: -f1)"
+        # grep exits 1 with no match, which under pipefail would kill the script
+        # from inside `$(...)`. That is a real path here: the outer if guarded
+        # only on a literal filename mention, so a `.zshrc` that names the file
+        # in a comment but never sources it reaches this line with no match.
+        # `|| true` on the pipeline, and the intended fallback below still runs.
+        HOOK_LINE="$(grep -nE '^[^#]*(source|\.)[[:space:]].*\.zshrc\.bootstrap' "$ZSHRC" | head -1 | cut -d: -f1 || true)"
         [[ -z "$HOOK_LINE" ]] && HOOK_LINE=1
-        CODE_ABOVE="$(head -n "$(( HOOK_LINE - 1 ))" "$ZSHRC" | grep -cvE '^[[:space:]]*(#|$)')"
+        # grep -c exits 1 when the count is zero - the case where the file above
+        # the hook is entirely comments and blanks, which is exactly the shape a
+        # tidy .zshrc has. Under `set -euo pipefail` that kills the script mid-
+        # phase, so the pipeline is guarded and the count defaulted to 0.
+        CODE_ABOVE="$(head -n "$(( HOOK_LINE - 1 ))" "$ZSHRC" | grep -cvE '^[[:space:]]*(#|$)' || true)"
+        CODE_ABOVE="${CODE_ABOVE:-0}"
         if [[ "${CODE_ABOVE:-0}" -gt 0 ]]; then
           result 'missing' 'zshrc hook order' \
             "$CODE_ABOVE lines run before it - move the source line to the top for the instant prompt"
@@ -1353,7 +1363,7 @@ fi
 
 if [[ "${GHOSTTY_ENABLED:-no}" != "yes" ]]; then
   phase 'Terminal config - disabled in the manifest'
-elif ! command -v ghostty >/dev/null 2>&1 && [[ ! -d /Applications/Ghostty.app ]]; then
+elif ! command -v ghostty >/dev/null 2>&1; then
   phase 'Terminal config'
   result 'missing' 'ghostty config' 'ghostty is not installed'
 else
@@ -1381,6 +1391,35 @@ else
       echo "# the screen and keeps its own buffer. For output you want to still"
       echo "# have tomorrow, redirect it to a file."
       echo "scrollback-limit = ${GHOSTTY_SCROLLBACK_BYTES}"
+      echo
+      echo "# A name that matches a row from \`ghostty +list-themes\`. Ghostty ships"
+      echo "# 463 of them; changing this line is the whole change of palette."
+      echo "theme = ${GHOSTTY_THEME}"
+      echo
+      echo "# The Meslo Nerd Font the manifest installs. Family name from the face"
+      echo "# table (spaces), not the ttf filename. Blank leaves ghostty's default."
+      [[ -n "${GHOSTTY_FONT_FAMILY:-}" ]] && echo "font-family = ${GHOSTTY_FONT_FAMILY}"
+      echo "font-size = ${GHOSTTY_FONT_SIZE}"
+      echo
+      echo "# Select-to-copy. Ctrl-Shift-C still works and is unaffected; this is"
+      echo "# the extra convenience, at the cost of a stray selection replacing"
+      echo "# whatever was on the clipboard."
+      echo "copy-on-select = ${GHOSTTY_COPY_ON_SELECT}"
+      echo
+      echo "# Ghostty auto-installs the shell hooks; this opts INTO the extras."
+      echo "# \`cursor\` follows zsh vi-mode, \`sudo\` preserves prompt state through"
+      echo "# sudo, \`title\` tracks cwd in the terminal title."
+      echo "shell-integration-features = ${GHOSTTY_SHELL_INTEGRATION_FEATURES}"
+      echo
+      echo "# Quake-style drop-down terminal on Ctrl-\`, global so it fires from any"
+      echo "# app. Wayland compositors need the GlobalShortcuts portal for this to"
+      echo "# reach ghostty. Blank in the manifest disables it."
+      [[ -n "${GHOSTTY_QUICK_TERMINAL_KEYBIND:-}" ]] && echo "keybind = ${GHOSTTY_QUICK_TERMINAL_KEYBIND}"
+      echo
+      echo "# Padding between content and window edge. Ghostty's default of 2/2 is"
+      echo "# visually cramped at 16pt - the prompt sits right against the frame."
+      echo "window-padding-x = ${GHOSTTY_WINDOW_PADDING_X}"
+      echo "window-padding-y = ${GHOSTTY_WINDOW_PADDING_Y}"
     } > "$NEW_GHOSTTY"
 
     if [[ -f "$GHOSTTY_CONF" ]] && cmp -s "$NEW_GHOSTTY" "$GHOSTTY_CONF"; then

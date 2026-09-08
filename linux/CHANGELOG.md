@@ -15,6 +15,80 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0]
+
+Same expansion of the ghostty config the macOS side got, minus three knobs
+that ghostty documents as macOS-only (`macos-option-as-alt`, `window-save-state`,
+`quit-after-last-window-closed`). Also fixes one macOS-ism that got copied
+across from the macOS script.
+
+### Added
+
+- **The ghostty config is more than one line now.** `scrollback-limit` was all
+  it had, which meant every other decision - font, palette - was ghostty's
+  default rather than this manifest's. Five new knobs, each in the manifest
+  with a paragraph of why, rendered into `~/.config/ghostty/config` the same
+  way scrollback already was.
+
+  - `theme = Catppuccin Mocha`. A name that matches a row from
+    `ghostty +list-themes`; ghostty ships 463 of them, so changing palette is
+    a one-line edit to the manifest and nothing else. Catppuccin Mocha is the
+    widely used dark across dev tooling in 2026.
+  - `font-family = MesloLGM Nerd Font Mono`. The Meslo Nerd Font this manifest
+    has installed since the first release, matched by its face-table name
+    (spaces) rather than the ttf filename. Ghostty's default is empty which
+    falls back to the bundled font, so p10k's glyphs were rendering from a
+    different font than the one the manifest ships.
+  - `font-size = 16`. Ghostty's default is 13; 16 matches the macOS manifest
+    so a fleet running both feels the same on either side.
+  - `copy-on-select = clipboard`. Selecting text puts it on the clipboard
+    Ctrl-V and the GUI paste both reach. **Not `true`**, which Ghostty
+    documents as valid and is not the same thing - `true` copies to the X11
+    primary selection, a separate buffer only reachable via middle-click or
+    Ctrl-Shift-V. `clipboard` is the intuitive one on both X11 and Wayland.
+  - `shell-integration-features = cursor,sudo,title,ssh-env,ssh-terminfo`.
+    Ghostty auto-installs the shell hooks; this opts INTO the extras.
+    `cursor` follows zsh vi-mode with a bar/block change, `sudo` preserves
+    the prompt state through sudo, `title` keeps the terminal title tracking
+    cwd. `ssh-env` carries `TERM=xterm-ghostty` and `COLORTERM=truecolor`
+    through ssh, and `ssh-terminfo` pipes `infocmp -x xterm-ghostty` through
+    `tic -x -` on the remote on first connect - installing the entry under
+    the remote user's `~/.terminfo`, cached locally afterwards. The two
+    features go together - adding `ssh-env` alone actually makes the
+    problem worse on hosts without the entry, because the remote now
+    thinks it can drive an xterm-ghostty it does not understand.
+  - `keybind = global:ctrl+\`=toggle_quick_terminal`. Quake-style drop-down
+    terminal summoned from any app with one hotkey. `global:` scopes the
+    binding to the desktop; on Wayland this needs the GlobalShortcuts XDG
+    portal (KDE and GNOME ship it, most tiling WMs do not). Blank disables.
+  - `window-padding-x = 10`, `window-padding-y = 10`. Ghostty's default 2/2
+    is visually cramped at 16pt - the prompt sits right against the frame.
+
+### Fixed
+
+- **The script silently exited before the Terminal config phase on some
+  `.zshrc` shapes.** The zshrc-hook-order check has two pipelines inside
+  `$(...)` command substitutions: one finds the source-line's line number,
+  the other counts non-comment lines above it. Both can legitimately end in
+  a grep with zero matches - a `.zshrc` that names the file only in a
+  comment, or one whose header above the hook is entirely comments and
+  blanks. `grep` exits 1 in both cases, `set -euo pipefail` propagates that
+  to the assignment, and the whole script exits from *inside* `$(...)`
+  without a diagnostic. Both pipelines now end in `|| true`, and the count
+  is defaulted to 0.
+
+  The bug was there since the hook-order check landed and only fired for
+  specific `.zshrc` shapes, so the run reported `current zshrc hook` and
+  stopped without an error line. Terminal config, Manual, and Summary never
+  ran.
+
+- **The "ghostty not installed" guard checked `/Applications/Ghostty.app`.** A
+  macOS path in the Linux script, copied across when the phase was ported.
+  Harmless in practice - the directory is absent on a Linux box, so the AND
+  never changed the answer - but the intent was nonsense and it survived
+  because it never fired. Now just `command -v ghostty`, which is what the
+  check was always trying to be.
+
 ## [1.4.0]
 
 The macOS side found these first; this is the same audit run against the Linux

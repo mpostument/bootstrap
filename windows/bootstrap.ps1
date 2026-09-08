@@ -83,7 +83,7 @@ $ErrorActionPreference = 'Stop'
 #
 # Bump it in the same commit as the change it describes, and add a
 # windows/CHANGELOG.md entry; the release notes are read from that file.
-$script:BootstrapVersion = '1.8.1'
+$script:BootstrapVersion = '1.9.0'
 
 # Deliberately -ShowVersion and not -Version: PowerShell reserves -Version on
 # some hosts, and a parameter that silently binds to something else is a bad
@@ -1214,8 +1214,18 @@ foreach (`$name in `$want) {
     # A copy would overwrite the whole settings.json and destroy every
     # customisation in it; the merge script touches only the font default and
     # one profile entry. See merge-terminal-settings.ps1.
-    if ($PSCmdlet.ShouldProcess('Windows Terminal settings.json', 'merge font + PowerShell 7 profile')) {
-        $out = (& $script:MergeScript -FontFace $shell.TerminalFontFace -Pwsh7Guid $shell.TerminalPwshGuid | Out-String).Trim()
+    if ($PSCmdlet.ShouldProcess('Windows Terminal settings.json', 'merge font, size, scheme, padding, copyOnSelect, scrollback, PowerShell 7 profile')) {
+        $mergeArgs = @{
+            FontFace        = $shell.TerminalFontFace
+            FontSize        = $shell.TerminalFontSize
+            ColorScheme     = $shell.TerminalColorScheme
+            ColorSchemeDef  = $shell.TerminalColorSchemeDef
+            CopyOnSelect    = $shell.TerminalCopyOnSelect
+            Padding         = $shell.TerminalPadding
+            HistorySize     = $shell.TerminalHistorySize
+            Pwsh7Guid       = $shell.TerminalPwshGuid
+        }
+        $out = (& $script:MergeScript @mergeArgs | Out-String).Trim()
         $action = if ($out -match 'CHANGED') { 'installed' } elseif ($out -match 'SKIPPED') { 'skipped' } else { 'current' }
         Add-Result -Group 'shell' -Id 'windows terminal' -Action $action -Detail $out
     } else {

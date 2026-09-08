@@ -48,9 +48,11 @@ Set-PSReadLineOption -HistoryNoDuplicates
 Set-PSReadLineOption -HistorySearchCursorMovesToEnd
 # Default is 4096 lines, which on a daily-driver machine rolls over in weeks
 # and quietly takes the older half of both the ListView and the Up-arrow
-# history search with it. 10000 matches the Linux side, where oh-my-zsh's
-# lib/history.zsh floors SAVEHIST at the same number.
-Set-PSReadLineOption -MaximumHistoryCount 10000
+# history search with it. 1000000 matches HISTORY_SIZE / HISTORY_FILE_SIZE
+# on the Unix side - what the running shell keeps and what reaches the file
+# are both this - so history lasts the life of the machine rather than a
+# busy quarter, on all three platforms.
+Set-PSReadLineOption -MaximumHistoryCount 1000000
 Set-PSReadLineOption -Colors @{ InlinePrediction = '#5A5A5A' }
 
 # Up/Down arrows: search history matching what's already typed

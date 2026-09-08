@@ -20,6 +20,56 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.9.0]
+
+Windows Terminal `settings.json` gets the same treatment ghostty already has
+on the Unix side: knobs declared in the manifest, merged into the live file,
+never a wholesale overwrite. Also brings the PowerShell history size up to
+match the Unix side, which had drifted apart quietly.
+
+### Added
+
+- **Windows Terminal is more than a font default now.** The merge script had
+  been rewriting exactly two things - `profiles.defaults.font.face` and one
+  `profiles.list[]` entry - and everything else was WT's default. Ghostty
+  gets 14 knobs on the Unix side, so five of the ones that carry across land
+  here too, each in `Shell = @{ ... }` in `packages.psd1` and each written
+  into `settings.json` by an idempotent merge that never overwrites a value
+  the user has hand-set to something different:
+
+  - `TerminalFontSize = 16`. WT's default is 12; matches the ghostty side,
+    which matches the iTerm2 profile before that.
+  - `TerminalColorScheme = 'Catppuccin Mocha'` + the full palette under
+    `TerminalColorSchemeDef`. The name is written into
+    `profiles.defaults.colorScheme`; the palette is added to `schemes[]` on
+    first run if no scheme by that name is already defined. **NEVER**
+    overwritten - somebody's hand-tuned Catppuccin Mocha survives every
+    subsequent run. Matches ghostty's `theme = Catppuccin Mocha`.
+  - `TerminalCopyOnSelect = $true`. Selecting text copies to the clipboard
+    Ctrl-V pastes from. WT has no separate primary-selection buffer the way
+    ghostty does, so there is only one thing this means and no
+    `clipboard`-vs-`true` trap of the kind the ghostty side had.
+  - `TerminalPadding = '10, 10'`. WT's default is 8; matches ghostty's 10/10.
+  - `TerminalHistorySize = 100000` (lines, WT's unit). WT's default is 9001,
+    which is small on a machine that runs long log tails. Rough intent-match
+    for ghostty's 256MB per surface without asking for `-1 = unlimited` and
+    the memory it never gives back.
+
+  The merge script never rewrites an existing value to itself, so a run that
+  changes nothing reports `current` rather than claiming an install - same
+  shape as the ghostty phase on Unix.
+
+### Fixed
+
+- **`Set-PSReadLineOption -MaximumHistoryCount 10000` was a tenth of what the
+  Unix side keeps.** The profile said the number matched Linux, and it did
+  at the time it was written, but the Unix side moved to 1000000 -
+  `HISTORY_SIZE` and `HISTORY_FILE_SIZE` on both platforms - and this line
+  never followed. So a busy user hit the ceiling on Windows weeks before
+  they hit it on Linux, and the ListView / Up-arrow search silently forgot
+  the older half. Comment rewritten to name the Unix variables it is
+  tracking now.
+
 ## [1.8.1]
 
 ### Fixed

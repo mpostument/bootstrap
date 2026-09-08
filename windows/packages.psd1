@@ -351,11 +351,63 @@
     }
 
     # Consumed by the shell phase: the Nerd Font, the Oh My Posh theme
-    # directory, the modules installed per PowerShell edition, and the two
-    # Windows Terminal settings the merge script patches.
+    # directory, the modules installed per PowerShell edition, and the Windows
+    # Terminal settings the merge script patches - font face and size, the
+    # colour scheme, copy-on-select, padding and scrollback. Kept in step with
+    # the Ghostty knobs on the Unix side so a fleet running both feels the
+    # same on either terminal.
     Shell = @{
         NerdFont          = 'Meslo'
         TerminalFontFace  = 'MesloLGM Nerd Font Mono'
+        # 16pt across all three platforms; ghostty's default is 13, WT's is 12.
+        TerminalFontSize  = 16
+        # A name that also has to appear in the schemes[] array of the merged
+        # settings.json. The merge script writes both together: the reference
+        # here, and the palette itself below, so a change to the name lands
+        # atomically. Catppuccin Mocha is the widely used dark across dev
+        # tooling in 2026, matching the ghostty side.
+        TerminalColorScheme = 'Catppuccin Mocha'
+        # The colours the merge script writes into settings.json under
+        # schemes[] when the named scheme is missing. Values are the official
+        # Catppuccin Mocha palette; changing them here changes what gets
+        # written, but never overwrites a scheme somebody has hand-edited
+        # under the same name - the merge is name-keyed on ADD, not replace.
+        TerminalColorSchemeDef = @{
+            name                = 'Catppuccin Mocha'
+            background          = '#1E1E2E'
+            foreground          = '#CDD6F4'
+            cursorColor         = '#F5E0DC'
+            selectionBackground = '#585B70'
+            black               = '#45475A'
+            red                 = '#F38BA8'
+            green               = '#A6E3A1'
+            yellow              = '#F9E2AF'
+            blue                = '#89B4FA'
+            purple              = '#F5C2E7'
+            cyan                = '#94E2D5'
+            white               = '#BAC2DE'
+            brightBlack         = '#585B70'
+            brightRed           = '#F38BA8'
+            brightGreen         = '#A6E3A1'
+            brightYellow        = '#F9E2AF'
+            brightBlue          = '#89B4FA'
+            brightPurple        = '#F5C2E7'
+            brightCyan          = '#94E2D5'
+            brightWhite         = '#A6ADC8'
+        }
+        # $true copies the selection to the actual clipboard - Ctrl-V pastes
+        # it. Windows Terminal has no separate primary-selection buffer the
+        # way X11 or ghostty do, so there is only one thing this can mean.
+        TerminalCopyOnSelect = $true
+        # Padding between the terminal content and the window edge, in the
+        # "left,top" / "left,top,right,bottom" string form settings.json takes.
+        # WT's default is 8; 10 matches the ghostty side.
+        TerminalPadding    = '10, 10'
+        # Scrollback in LINES (WT's unit, not bytes). WT's default is 9001,
+        # which is small on a machine that runs long log tails. 100000 is the
+        # rough intent-match for ghostty's 256MB per surface without asking
+        # for `-1 = unlimited` and the leaks that go with it.
+        TerminalHistorySize = 100000
         # Fixed GUID for the Windows Terminal "PowerShell 7" profile entry,
         # kept stable across runs so the merge script can find it again.
         TerminalPwshGuid  = '{574e775e-4f2a-5b96-ac1e-a2962a402336}'
