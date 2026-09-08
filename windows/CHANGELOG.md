@@ -20,6 +20,27 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.10.1]
+
+### Fixed
+
+- **The whole script failed to parse under Windows PowerShell 5.1 - not just
+  a feature, the entire file.** Two spots in the Git/UnityYAMLMerge step used
+  the `?:` ternary operator, which is PowerShell 7.0+ only. PowerShell parses
+  a script file in full before running a single line of it, so this wasn't a
+  runtime error somebody could hit by using that feature - `.\bootstrap.ps1`
+  under 5.1 (`powershell.exe`, not `pwsh`) failed at parse time before
+  anything ran, including `-ShowVersion`. That is the exact invocation
+  README.md documents (`powershell.exe -ExecutionPolicy Bypass -File
+  .\bootstrap.ps1`) for a script that Windows has marked as downloaded, so it
+  broke a path the docs call out as supported, for anyone not already on
+  PS7. Introduced in the commit that added the Unity merge-tool step; shipped
+  in v2026.09 through v2026.09.3 before anyone using 5.1 noticed, because the
+  release workflow's parse check only runs under `pwsh` (7), which accepts
+  the ternary fine. Replaced both with the `$(if(){}else{})` form already
+  used elsewhere in this file for the same 5.1-compat reason - see the
+  comment at the first site.
+
 ## [1.10.0]
 
 Two additions to the `shell` phase: a real `sudo` for Windows, and git

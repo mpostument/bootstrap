@@ -83,7 +83,7 @@ $ErrorActionPreference = 'Stop'
 #
 # Bump it in the same commit as the change it describes, and add a
 # windows/CHANGELOG.md entry; the release notes are read from that file.
-$script:BootstrapVersion = '1.10.0'
+$script:BootstrapVersion = '1.10.1'
 
 # Deliberately -ShowVersion and not -Version: PowerShell reserves -Version on
 # some hosts, and a parameter that silently binds to something else is a bad
@@ -1484,12 +1484,20 @@ if ($SkipShell) {
                 if ($have -eq $want) {
                     Add-Result -Group 'git' -Id 'UnityYAMLMerge' -Action 'current' -Detail $tool
                 } elseif (-not $PSCmdlet.ShouldProcess('mergetool.unityyamlmerge', 'git config --global')) {
-                    Add-Result -Group 'git' -Id 'UnityYAMLMerge' -Action ($have ? 'would-upgrade' : 'would-install') -Detail $tool
+                    # Not the `?:` ternary - that's PowerShell 7.0+ only, and
+                    # this script has to parse under Windows PowerShell 5.1
+                    # too (README documents `powershell.exe -File` as a
+                    # supported invocation). $(if(){}else{}) is the 5.1-safe
+                    # equivalent, same as the pattern already used above for
+                    # UPGRADED|name vs INSTALLED|name.
+                    $action = if ($have) { 'would-upgrade' } else { 'would-install' }
+                    Add-Result -Group 'git' -Id 'UnityYAMLMerge' -Action $action -Detail $tool
                 } else {
                     & git config --global 'mergetool.unityyamlmerge.cmd' $want
                     & git config --global 'mergetool.unityyamlmerge.trustExitCode' 'false'
                     if ($LASTEXITCODE -eq 0) {
-                        Add-Result -Group 'git' -Id 'UnityYAMLMerge' -Action ($have ? 'upgraded' : 'installed') -Detail $tool
+                        $action = if ($have) { 'upgraded' } else { 'installed' }
+                        Add-Result -Group 'git' -Id 'UnityYAMLMerge' -Action $action -Detail $tool
                     } else {
                         Add-Result -Group 'git' -Id 'UnityYAMLMerge' -Action 'failed' -Detail 'git config --global failed'
                     }
