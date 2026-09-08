@@ -20,6 +20,24 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.11.0]
+
+### Added
+
+- **`prompt-theme.omp.json`, our own fork of Oh My Posh's stock
+  `jandedobbeleer.omp.json`, deployed alongside it and now what `profile.ps1`
+  actually points at.** The stock theme rendered the full multi-segment bar
+  (user, path, git, duration, shell, time...) for every past command, and
+  left every one of those renders sitting in the scrollback - so copying a
+  few lines out of the terminal dragged one full bar per line along with
+  them. The fork adds a `transient_prompt` block, which Oh My Posh picks up
+  automatically (no `Enable-*` call needed, confirmed against the installed
+  v31.2.0): once a command is submitted, that now-historical prompt
+  collapses to a single arrow, and only the live prompt at the bottom keeps
+  the full bar. Deployed under its own filename so the existing stock-theme
+  sync (which walks names out of the `ohmyposh.cli` appx package) never
+  overwrites it.
+
 ## [1.10.1]
 
 ### Fixed

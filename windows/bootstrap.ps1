@@ -83,7 +83,7 @@ $ErrorActionPreference = 'Stop'
 #
 # Bump it in the same commit as the change it describes, and add a
 # windows/CHANGELOG.md entry; the release notes are read from that file.
-$script:BootstrapVersion = '1.10.1'
+$script:BootstrapVersion = '1.11.0'
 
 # Deliberately -ShowVersion and not -Version: PowerShell reserves -Version on
 # some hosts, and a parameter that silently binds to something else is a bad
@@ -136,6 +136,7 @@ if (-not $script:ToolRoot) { $script:ToolRoot = Split-Path -Parent $MyInvocation
 # name 'Raw'", a message that points at the wrong line, the wrong parameter,
 # and says nothing whatsoever about a clobbered variable.
 $script:ProfileSource = Join-Path $script:ToolRoot 'profile.ps1'
+$script:PromptThemeSource = Join-Path $script:ToolRoot 'prompt-theme.omp.json'
 $script:MergeScript = Join-Path $script:ToolRoot 'merge-terminal-settings.ps1'
 $script:MpvSource = Join-Path $script:ToolRoot 'mpv'
 
@@ -1026,6 +1027,18 @@ if ($SkipShell) {
             Add-Result -Group 'shell' -Id 'oh-my-posh themes' -Action 'installed' -Detail ('{0} of {1} themes -> {2}' -f $stale.Count, $themeSource.Count, $themesDir)
         }
     }
+
+    # --- Prompt theme: our own fork of jandedobbeleer, not the stock copy ---
+    # Deployed under a filename the sync loop above never touches (it only
+    # walks names it finds in the appx package), so the fork survives every
+    # theme resync instead of being overwritten back to stock. Adds a
+    # transient_prompt block: without it, Oh My Posh leaves the full
+    # multi-segment bar for every past command sitting in the scrollback, so
+    # copying a few lines out of the terminal drags one full prompt bar per
+    # line along with them - transient_prompt collapses each old prompt to a
+    # single arrow once the command is submitted.
+    Deploy-ManagedFile -Source $script:PromptThemeSource -Target (Join-Path $themesDir 'prompt-theme.omp.json') `
+        -Group 'shell' -Label 'prompt theme'
 
     # --- PowerShell modules, once per edition ---
     # PS7 and Windows PowerShell 5.1 do not share a module folder unless PS7 is

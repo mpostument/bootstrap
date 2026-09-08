@@ -170,10 +170,22 @@ Import-Module posh-git -ErrorAction SilentlyContinue
 # Oh My Posh themes step in bootstrap.ps1. Resolved directly, rather than
 # trusted to $env:POSH_THEMES_PATH alone, since a freshly-set user env var
 # does not reach processes started before the next sign-in.
-# Change this to any file in that themes directory to restyle the prompt.
-$ompTheme = 'jandedobbeleer.omp.json'
+# Change this to any file in that themes directory to restyle the prompt --
+# 'prompt-theme.omp.json' (deployed alongside the stock themes) is our own
+# fork of jandedobbeleer.omp.json; edit windows/prompt-theme.omp.json in the
+# repo, not the deployed copy, for the same reason as this profile itself.
+$ompTheme = 'prompt-theme.omp.json'
 if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
     $ompThemes = if ($env:POSH_THEMES_PATH) { $env:POSH_THEMES_PATH } else { "$env:LOCALAPPDATA\oh-my-posh\themes" }
+
+    # Our fork adds a "transient_prompt" block. Oh My Posh reads that
+    # straight out of the config -- no separate Enable-* call needed -- and
+    # once a command is submitted it collapses that now-historical prompt
+    # line to a single arrow instead of leaving the full multi-segment bar
+    # (user, path, git, duration, shell, time...) sitting in the scrollback.
+    # Only the live prompt at the bottom keeps the full theme, so scrolling
+    # back -- or copying several lines out of the terminal -- carries one
+    # short line per command instead of one full bar per command.
     oh-my-posh init pwsh --config (Join-Path $ompThemes $ompTheme) | Invoke-Expression
 }
 
