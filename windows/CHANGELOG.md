@@ -20,6 +20,38 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.10.0]
+
+Two additions to the `shell` phase: a real `sudo` for Windows, and git
+tab-completion in the profile.
+
+### Added
+
+- **`gsudo` (`gerardog.gsudo`), added to the `shell` group.** Elevates one
+  command without spawning a whole separate admin window/profile the way
+  `Start-Process -Verb RunAs` does. Not added to the `cli` group: it is a
+  shell-elevation tool, not part of the modern-CLI bundle, and Linux/macOS
+  need no equivalent package - `sudo` already ships there. See
+  `tools/cli-parity.conf` for how a platform-specific tool like this gets
+  written down deliberately rather than just added quietly.
+- **`posh-git`, added to `Modules51` and `Modules7`.** Tab-completion for git
+  subcommands, branches and remotes in PSReadLine's menu - a different
+  feature from Oh My Posh's git segment, which shows status *in* the prompt
+  rather than completing anything. Imported in `profile.ps1` **before**
+  Oh My Posh's `init`, deliberately: posh-git also defines its own `prompt`
+  function, and whichever import runs last wins that fight. Oh My Posh
+  already owns the prompt line, so it has to load second.
+
+### Changed
+
+- **`TerminalFontSize` is `14`, not `16`.** Deliberately not matching the 16
+  ghostty/iTerm2 use on the other two platforms - 14 is the size actually
+  used on Windows. `merge-terminal-settings.ps1`'s own `-FontSize` default
+  stays at 16: it exists only as a standalone-invocation fallback (nothing
+  in the real call path from `bootstrap.ps1` ever reads it, since every
+  value is always passed explicitly from `packages.psd1`), so it mirrors the
+  general 16pt intent rather than this platform's specific override.
+
 ## [1.9.0]
 
 Windows Terminal `settings.json` gets the same treatment ghostty already has

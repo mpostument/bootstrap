@@ -151,6 +151,17 @@ if (Get-Command rg -ErrorAction SilentlyContinue) {
 }
 
 # ============================================================
+# posh-git -- tab-completion for git subcommands, branches and remotes
+# https://github.com/dahlbyk/posh-git
+# ============================================================
+# Imported for its argument completers only, and imported BEFORE oh-my-posh
+# below on purpose: posh-git also defines its own `prompt` function to show
+# git status, and oh-my-posh's `init` redefines `prompt` again right after
+# this - so whichever runs last wins. Oh My Posh already shows git status in
+# the prompt itself; this block would otherwise fight it for the same line.
+Import-Module posh-git -ErrorAction SilentlyContinue
+
+# ============================================================
 # Oh My Posh
 # https://ohmyposh.dev/
 # ============================================================

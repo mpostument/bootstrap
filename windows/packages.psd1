@@ -33,6 +33,13 @@
                 'Microsoft.PowerShell'
                 'Microsoft.WindowsTerminal'
                 'JanDeDobbeleer.OhMyPosh'
+                # A working `sudo` for Windows - elevate one command without
+                # spawning a whole separate admin window/profile the way
+                # `Start-Process -Verb RunAs` does. Not in the `cli` group:
+                # it is a shell-elevation tool, not part of the modern-CLI
+                # bundle, and Linux/macOS need no equivalent package since
+                # `sudo` already ships there - see tools/cli-parity.conf.
+                'gerardog.gsudo'
             )
         }
 
@@ -359,8 +366,9 @@
     Shell = @{
         NerdFont          = 'Meslo'
         TerminalFontFace  = 'MesloLGM Nerd Font Mono'
-        # 16pt across all three platforms; ghostty's default is 13, WT's is 12.
-        TerminalFontSize  = 16
+        # WT's default is 12. Deliberately not the 16 ghostty/iTerm2 use on
+        # the other two platforms - 14 is the size actually used on Windows.
+        TerminalFontSize  = 14
         # A name that also has to appear in the schemes[] array of the merged
         # settings.json. The merge script writes both together: the reference
         # here, and the palette itself below, so a change to the name lands
@@ -412,12 +420,16 @@
         # kept stable across runs so the merge script can find it again.
         TerminalPwshGuid  = '{574e775e-4f2a-5b96-ac1e-a2962a402336}'
         OmpThemesDir      = 'oh-my-posh\themes'
-        Modules51         = @('PSReadLine', 'Terminal-Icons', 'PSFzf')
+        # posh-git: tab-completion for git subcommands, branches and remotes.
+        # Not for its prompt - profile.ps1 imports it before oh-my-posh's
+        # `init`, so oh-my-posh's own `prompt` function overwrites posh-git's
+        # and wins; only the argument completers it registers survive.
+        Modules51         = @('PSReadLine', 'Terminal-Icons', 'PSFzf', 'posh-git')
         # CompletionPredictor is PS7-only: it plugs into the predictor
         # subsystem, which does not exist in Windows PowerShell 5.1.
         # profile.ps1 imports it with -ErrorAction SilentlyContinue and falls
         # back to PredictionSource History, which is exactly the 5.1 case.
-        Modules7          = @('PSReadLine', 'Terminal-Icons', 'PSFzf', 'CompletionPredictor')
+        Modules7          = @('PSReadLine', 'Terminal-Icons', 'PSFzf', 'CompletionPredictor', 'posh-git')
         PSReadLineMinimum = '2.4.5'
     }
 
