@@ -15,6 +15,30 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0]
+
+The Linux side of the Windows manifest's Schedule phase: a daily unattended
+run, so a machine takes updates without anyone remembering to ask for them.
+
+### Added
+
+- **Schedule phase**, registering a `systemd` system timer + service
+  (`bootstrap-linux.timer`/`.service` by default). Driven by three new
+  manifest keys: `SCHEDULE_ENABLED`, `SCHEDULE_UNIT_NAME`, `SCHEDULE_TIME`.
+  New `--skip-schedule` flag mirrors `-SkipSchedule` on Windows.
+
+  A timer rather than cron, for the one thing cron cannot do: `Persistent=true`
+  catches up a run the machine was asleep for, the same job Task Scheduler's
+  `StartWhenAvailable` does on Windows. Skipped (not failed) when `systemd` is
+  not PID 1 — stock WSL is the real case this guards, since the rest of this
+  script runs fine there.
+
+  Logging is not reinvented the way the Windows phase has to reinvent it:
+  Task Scheduler captures nothing on its own, so that phase pipes output into
+  hand-rolled dated files and prunes them itself. A systemd service's
+  stdout/stderr goes to the journal by default — `journalctl -u
+  bootstrap-linux` is the log, and there is no file for this script to manage.
+
 ## [1.5.0]
 
 Same expansion of the ghostty config the macOS side got, minus three knobs

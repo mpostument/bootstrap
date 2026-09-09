@@ -58,6 +58,9 @@ Override it with `--gui` or `--no-gui` when you know better.
 9. **Claude Code** — Anthropic's script, once, into `~/.local/bin`.
 10. **zsh** — oh-my-zsh, powerlevel10k and the plugins, plus a managed
     `~/.zshrc.bootstrap` fragment sourced from your own `.zshrc`.
+11. **Schedule** — a systemd system timer that re-runs this script daily,
+    unattended, so updates arrive on their own. The Linux side of the same job
+    the Windows manifest gives Task Scheduler.
 
 ## Options
 
@@ -66,6 +69,7 @@ Override it with `--gui` or `--no-gui` when you know better.
 --groups a,b       Limit to named groups. Default is every group.
 --list-groups      Print the groups in the manifest and exit.
 --skip-upgrade     Install what is missing, leave installed versions alone.
+--skip-schedule    Leave the systemd timer alone.
 --gui / --no-gui   Override desktop detection instead of probing for it.
 --yes              Pass -y to apt. Implied when not attached to a terminal.
 --version          Print the version and exit.
@@ -127,6 +131,29 @@ Plugin **order** is load-bearing, not alphabetical:
 Your `.zshrc` is not rewritten. The managed block lives in
 `~/.zshrc.bootstrap`, and a single `source` line is appended to `.zshrc` if it
 is not already there.
+
+## Schedule
+
+A `systemd` **system** timer (`bootstrap-linux.timer` by default, see
+`SCHEDULE_UNIT_NAME` in the manifest) re-runs this script daily at
+`SCHEDULE_TIME`, unattended — the Linux side of the daily Task Scheduler job
+the Windows manifest registers.
+
+- **Needs root**, same as any step here that calls `sudo` — registering a
+  system unit is one of them, not a special case.
+- **Skipped, not failed**, on a machine where `systemd` is not PID 1 (stock
+  WSL is the real example) or where `SCHEDULE_ENABLED` is `no` in the
+  manifest. `--skip-schedule` does the same for one run.
+- **Catches up a missed run.** `Persistent=true` on the timer is systemd's
+  equivalent of Task Scheduler's "start when available" — a trigger the
+  machine slept through fires as soon as it wakes, instead of waiting for
+  tomorrow.
+- **No log file to find.** Unlike Windows, where Task Scheduler captures
+  nothing on its own, a systemd service's output goes to the journal by
+  default: `journalctl -u bootstrap-linux` is the log.
+
+Disable it with `SCHEDULE_ENABLED=no` in the manifest, or remove it from a
+machine entirely with `sudo systemctl disable --now bootstrap-linux.timer`.
 
 ## Releases
 

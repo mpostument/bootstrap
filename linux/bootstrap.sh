@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.5.0'
+BOOTSTRAP_VERSION='1.6.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,6 +18,7 @@ MANIFEST="${SCRIPT_DIR}/packages.conf"
 
 DRY_RUN=no
 SKIP_UPGRADE=no
+SKIP_SCHEDULE=no
 ASSUME_YES=no
 GUI_OVERRIDE=auto
 ONLY_GROUPS=""
@@ -142,6 +143,7 @@ Usage: bootstrap.sh [options]
   --groups a,b       Limit to named groups. Default is every group.
   --list-groups      Print the groups in the manifest and exit.
   --skip-upgrade     Install what is missing, leave installed versions alone.
+  --skip-schedule    Leave the systemd timer alone.
   --gui / --no-gui   Override desktop detection instead of probing for it.
   --yes              Pass -y to apt. Implied when not attached to a terminal.
   --version          Print the version and exit.
@@ -151,17 +153,18 @@ USAGE
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --dry-run)      DRY_RUN=yes ;;
-    --skip-upgrade) SKIP_UPGRADE=yes ;;
-    --yes|-y)       ASSUME_YES=yes ;;
-    --gui)          GUI_OVERRIDE=yes ;;
-    --no-gui)       GUI_OVERRIDE=no ;;
-    --groups)       shift; ONLY_GROUPS="${1:-}" ;;
-    --groups=*)     ONLY_GROUPS="${1#*=}" ;;
-    --list-groups)  LIST_GROUPS=yes ;;
-    --version)      echo "$BOOTSTRAP_VERSION"; exit 0 ;;
-    -h|--help)      usage; exit 0 ;;
-    *)              die "unknown option: $1 (try --help)" ;;
+    --dry-run)       DRY_RUN=yes ;;
+    --skip-upgrade)  SKIP_UPGRADE=yes ;;
+    --skip-schedule) SKIP_SCHEDULE=yes ;;
+    --yes|-y)        ASSUME_YES=yes ;;
+    --gui)           GUI_OVERRIDE=yes ;;
+    --no-gui)        GUI_OVERRIDE=no ;;
+    --groups)        shift; ONLY_GROUPS="${1:-}" ;;
+    --groups=*)      ONLY_GROUPS="${1#*=}" ;;
+    --list-groups)   LIST_GROUPS=yes ;;
+    --version)       echo "$BOOTSTRAP_VERSION"; exit 0 ;;
+    -h|--help)       usage; exit 0 ;;
+    *)               die "unknown option: $1 (try --help)" ;;
   esac
   shift
 done
@@ -188,7 +191,7 @@ source "$MANIFEST"
 # what it would have said if the absence had been on purpose.
 for required in PKG_GROUPS MANUAL HELD TOOLS REPOS RELEASES ZSH_PLUGINS ZSH_CUSTOM_PLUGINS \
                 DOTNET_ENABLED ZSH_ENABLED NERD_FONT_ENABLED CLAUDE_CODE_ENABLED \
-                AWSCLI_ENABLED GHOSTTY_ENABLED HISTORY_SIZE HISTORY_FILE_SIZE; do
+                AWSCLI_ENABLED GHOSTTY_ENABLED SCHEDULE_ENABLED HISTORY_SIZE HISTORY_FILE_SIZE; do
   declare -p "$required" >/dev/null 2>&1 || die "manifest is missing \$$required: $MANIFEST"
 done
 
@@ -1431,6 +1434,117 @@ else
     else
       mv "$NEW_GHOSTTY" "$GHOSTTY_CONF"
       result 'installed' 'ghostty config' "$GHOSTTY_CONF"
+    fi
+  fi
+fi
+
+# ============================================================
+# Schedule
+# ============================================================
+# Same job as the Windows manifest's Schedule phase: a daily unattended run,
+# so this machine takes updates without anyone remembering to ask for them.
+# Every phase above reports `current` when it changes nothing, so a daily run
+# costs almost nothing and its log is only worth reading on the days it is
+# not all `current`.
+#
+# A systemd unit rather than cron, for the one thing cron cannot do: catch up
+# a run the machine slept through. Persistent=true below is systemd's
+# equivalent of Task Scheduler's StartWhenAvailable - the trigger this machine
+# missed at 04:20 asleep still fires the moment it wakes, instead of silently
+# waiting for tomorrow.
+#
+# Logging is deliberately NOT reinvented here the way the Windows phase has
+# to reinvent it. Task Scheduler captures nothing on its own, so that phase
+# pipes output through Tee-Object into hand-rolled dated files and prunes them
+# itself. A systemd service's stdout/stderr goes to the journal by default,
+# with its own retention already configured on every one of these machines -
+# `journalctl -u bootstrap-linux` is the log, and there is no file for this
+# script to create or prune.
+
+phase 'Schedule'
+
+if [[ "$SKIP_SCHEDULE" == "yes" ]]; then
+  result 'skipped' 'schedule' '--skip-schedule'
+elif [[ "${SCHEDULE_ENABLED:-no}" != "yes" ]]; then
+  result 'skipped' 'schedule' 'disabled in the manifest'
+elif [[ ! -d /run/systemd/system ]]; then
+  # The test the systemd docs recommend for "is this machine's PID 1 actually
+  # systemd": a running service manager creates this directory itself, so its
+  # absence means something else is init. WSL is the real case - this script
+  # otherwise runs fine there, but plenty of installs never turn systemd on.
+  result 'skipped' 'schedule' 'systemd is not running as init (e.g. WSL without systemd enabled)'
+else
+  SERVICE_UNIT="/etc/systemd/system/${SCHEDULE_UNIT_NAME}.service"
+  TIMER_UNIT="/etc/systemd/system/${SCHEDULE_UNIT_NAME}.timer"
+
+  NEW_SERVICE="$(mktemp)"
+  {
+    echo '# managed by linux/bootstrap.sh - edit the manifest, not this file'
+    echo '[Unit]'
+    echo "Description=Runs $SCRIPT_DIR/bootstrap.sh unattended, taking package and script updates"
+    echo
+    echo '[Service]'
+    echo 'Type=oneshot'
+    echo "WorkingDirectory=$SCRIPT_DIR"
+    echo "ExecStart=$SCRIPT_DIR/bootstrap.sh --yes"
+  } > "$NEW_SERVICE"
+
+  NEW_TIMER="$(mktemp)"
+  {
+    echo '# managed by linux/bootstrap.sh - edit the manifest, not this file'
+    echo '[Unit]'
+    echo "Description=Daily trigger for ${SCHEDULE_UNIT_NAME}.service"
+    echo
+    echo '[Timer]'
+    echo "OnCalendar=*-*-* ${SCHEDULE_TIME}:00"
+    # Catches up a run the machine was asleep for, same reasoning as above.
+    echo 'Persistent=true'
+    # Nothing here to stagger across a fleet - this is one machine - but it
+    # costs nothing and means a reboot at exactly 04:20 does not race apt.
+    echo 'RandomizedDelaySec=5m'
+    echo
+    echo '[Install]'
+    echo 'WantedBy=timers.target'
+  } > "$NEW_TIMER"
+
+  # Unlike the Windows Task Scheduler object - which carries registration
+  # timestamps that never compare equal, forcing that phase to hand-pick which
+  # fields actually matter - a unit file has no such incidental metadata. A
+  # plain byte comparison against what's on disk already answers "did anything
+  # that matters change".
+  if [[ -f "$SERVICE_UNIT" ]] && cmp -s "$NEW_SERVICE" "$SERVICE_UNIT"; then
+    SERVICE_CHANGED=no
+  else
+    SERVICE_CHANGED=yes
+  fi
+  if [[ -f "$TIMER_UNIT" ]] && cmp -s "$NEW_TIMER" "$TIMER_UNIT"; then
+    TIMER_CHANGED=no
+  else
+    TIMER_CHANGED=yes
+  fi
+  TIMER_ACTIVE=no
+  if systemctl is-active --quiet "${SCHEDULE_UNIT_NAME}.timer" 2>/dev/null; then
+    TIMER_ACTIVE=yes
+  fi
+
+  if [[ "$SERVICE_CHANGED" == "no" && "$TIMER_CHANGED" == "no" && "$TIMER_ACTIVE" == "yes" ]]; then
+    rm -f "$NEW_SERVICE" "$NEW_TIMER"
+    result 'current' "$SCHEDULE_UNIT_NAME" "daily at $SCHEDULE_TIME"
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    rm -f "$NEW_SERVICE" "$NEW_TIMER"
+    action='would-install'
+    [[ -f "$SERVICE_UNIT" ]] && action='would-upgrade'
+    result "$action" "$SCHEDULE_UNIT_NAME" "daily at $SCHEDULE_TIME"
+  else
+    action='installed'
+    [[ -f "$SERVICE_UNIT" ]] && action='upgraded'
+    run_priv install -m 0644 "$NEW_SERVICE" "$SERVICE_UNIT"
+    run_priv install -m 0644 "$NEW_TIMER" "$TIMER_UNIT"
+    rm -f "$NEW_SERVICE" "$NEW_TIMER"
+    if run_priv systemctl daemon-reload && run_priv systemctl enable --now "${SCHEDULE_UNIT_NAME}.timer" >/dev/null; then
+      result "$action" "$SCHEDULE_UNIT_NAME" "daily at $SCHEDULE_TIME"
+    else
+      result 'failed' "$SCHEDULE_UNIT_NAME" 'systemctl daemon-reload/enable failed'
     fi
   fi
 fi
