@@ -123,14 +123,6 @@ if (Get-Command zoxide -ErrorAction SilentlyContinue) {
 }
 
 # ============================================================
-# direnv -- per-directory environment variables
-# https://direnv.net/
-# ============================================================
-if (Get-Command direnv -ErrorAction SilentlyContinue) {
-    Invoke-Expression "$(direnv hook pwsh)"
-}
-
-# ============================================================
 # Modern CLI bundle -- nicer cat/ls/find/grep
 # bat: https://github.com/sharkdp/bat | eza: https://github.com/eza-community/eza
 # fd:  https://github.com/sharkdp/fd  | ripgrep: https://github.com/BurntSushi/ripgrep

@@ -20,6 +20,17 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.16.0]
+
+### Removed
+
+- **`chmln.sd`, `sharkdp.hyperfine`, `Fastfetch-cli.Fastfetch` and
+  `direnv.direnv`, all reverting 1.15.0.** Added without asking first;
+  taken back out at the user's request rather than kept because they
+  happened to already be there. The direnv hook in `profile.ps1` is
+  removed with it. Same reversion in linux/CHANGELOG.md and
+  macos/CHANGELOG.md.
+
 ## [1.15.0]
 
 ### Added
