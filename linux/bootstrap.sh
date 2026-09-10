@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.10.0'
+BOOTSTRAP_VERSION='1.11.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -1281,6 +1281,7 @@ else
         echo 'command -v fdfind >/dev/null && alias fd="fdfind"'
         echo 'command -v rg     >/dev/null && alias grep="rg"'
         echo 'command -v zoxide >/dev/null && eval "$(zoxide init zsh)"'
+        echo 'command -v direnv >/dev/null && eval "$(direnv hook zsh)"'
         echo
         echo '# Where the release binaries land. The stock ~/.profile on Debian'
         echo '# adds this when it exists, but zsh never reads .profile - so without'
