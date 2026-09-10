@@ -20,6 +20,14 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.13.0]
+
+### Added
+
+- **`DBeaver.DBeaver.Community` in the `apps` group.** A DB client, fully
+  open source rather than a free tier of a paid app like TablePlus. Added
+  to all three manifests - see linux/CHANGELOG.md and macos/CHANGELOG.md.
+
 ## [1.12.0]
 
 ### Added

@@ -208,6 +208,9 @@
                 # API client. Bruno over Postman: collections are plain-text
                 # files that diff in git, not a vendor account.
                 'Bruno.Bruno'
+                # DB client. DBeaver Community - fully open source, not a
+                # free tier of a paid app like TablePlus.
+                'DBeaver.DBeaver.Community'
                 'VideoLAN.VLC'
                 # VLC and mpv both, on purpose. VLC opens anything and is the
                 # one to hand somebody else; mpv is the one configured for
