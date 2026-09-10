@@ -15,6 +15,16 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0]
+
+### Added
+
+- **`procs`, `dust`, `duf` and `glow` in the `cli` group.** Modern
+  replacements for `ps`, `du`, `df`, and a markdown reader for the
+  terminal - same "modern CLI bundle" as bat/eza/fd. Same four land in
+  windows/CHANGELOG.md and linux/CHANGELOG.md; `tools/cli-parity.conf`
+  updated to match.
+
 ## [1.9.0]
 
 ### Added
