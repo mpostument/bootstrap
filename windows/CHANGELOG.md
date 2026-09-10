@@ -20,6 +20,22 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.12.0]
+
+### Added
+
+- **`Bruno.Bruno` in the `apps` group.** An API client, chosen over Postman:
+  collections are plain-text files that diff in git, not a vendor account.
+  Added to all three manifests - see linux/CHANGELOG.md and
+  macos/CHANGELOG.md.
+
+### Changed
+
+- **`OpenTofu.Tofu` in the `dev` group, replacing `Hashicorp.Terraform`.**
+  HashiCorp's 2023 BSL relicensing and its 2025 acquisition by IBM; OpenTofu
+  is the actively maintained open fork. `tofu` on PATH instead of
+  `terraform`. Same swap in linux/CHANGELOG.md and macos/CHANGELOG.md.
+
 ## [1.11.0]
 
 ### Added

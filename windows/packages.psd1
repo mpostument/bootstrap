@@ -115,10 +115,10 @@
                 # one that matches what the Linux side gets from the
                 # distribution's default-jdk.
                 'Microsoft.OpenJDK.21'
-                # Plain id, not .Alpha / .Beta / .RC - winget publishes all
-                # four, they share the `terraform` moniker, and a prerelease
-                # is not what you want a routine update run installing.
-                'Hashicorp.Terraform'
+                # OpenTofu, not Terraform: HashiCorp's BSL relicensing and its
+                # 2025 IBM acquisition are the same case as Bruno over
+                # Postman. `tofu` on PATH instead of `terraform`.
+                'OpenTofu.Tofu'
             )
         }
 
@@ -205,6 +205,9 @@
                 # this group it raises no UAC prompt and works on an
                 # unelevated run.
                 'Anthropic.Claude'
+                # API client. Bruno over Postman: collections are plain-text
+                # files that diff in git, not a vendor account.
+                'Bruno.Bruno'
                 'VideoLAN.VLC'
                 # VLC and mpv both, on purpose. VLC opens anything and is the
                 # one to hand somebody else; mpv is the one configured for
