@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.11.0'
+BOOTSTRAP_VERSION='1.12.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -982,7 +982,6 @@ else
       echo 'command -v rg     >/dev/null && alias grep="rg"'
       echo 'command -v fd     >/dev/null && alias find="fd"'
       echo 'command -v zoxide >/dev/null && eval "$(zoxide init zsh)"'
-      echo 'command -v direnv >/dev/null && eval "$(direnv hook zsh)"'
       echo
       echo '# GNU make arrives as gmake because /usr/bin/make is BSD make and'
       echo '# Homebrew will not shadow the system one. Almost every Makefile worth'
