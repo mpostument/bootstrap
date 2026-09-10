@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.6.0'
+BOOTSTRAP_VERSION='1.7.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -736,6 +736,65 @@ else
       result 'installed' 'completion perms' "chmod g-w,o-w ${INSECURE_DIRS[*]##*/}"
     else
       result 'failed' 'completion perms' "run by hand: chmod g-w,o-w ${INSECURE_DIRS[*]}"
+    fi
+  fi
+
+  # ~/.zshenv, and it is here because it is the only file zsh reads on EVERY
+  # invocation - login, interactive, script, `zsh -c`, and the one-shot shell
+  # an editor or a GUI app spawns to run a command. Neither place this script
+  # already writes `brew shellenv` covers that: ~/.zprofile is login-only and
+  # the fragment below is interactive-only. So `zsh -c 'bat file'` ran with no
+  # Homebrew on PATH and failed on a binary the manifest had just installed.
+  #
+  # What may go in this file is therefore narrow. It must be silent, because
+  # anything printed here corrupts the output of every script; and it must be
+  # fast, because every zsh pays for it. `brew shellenv` only exports
+  # variables, so it qualifies - and almost nothing else does.
+  #
+  # The .zprofile line stays as well, and is not redundant: shellenv PREPENDS,
+  # so re-running it in a login shell re-asserts the prefix ahead of anything
+  # that reordered PATH in between. The duplicate entry is one a modern
+  # shellenv dedupes.
+  #
+  # Fragment plus a source line, the same shape as .zshrc below and for the
+  # same reason: a .zshenv that already exists is somebody's own work.
+  ZSHENV="${HOME}/.zshenv"
+  ZSHENV_FRAGMENT="${HOME}/.zshenv.bootstrap"
+  if [[ "$DRY_RUN" == "yes" ]]; then
+    result 'would-install' 'zshenv config' "$ZSHENV_FRAGMENT"
+  else
+    NEW_ZSHENV="$(mktemp "${ZSHENV_FRAGMENT}.XXXXXX")"
+    chmod 0644 "$NEW_ZSHENV"
+    {
+      echo "# managed by macos/bootstrap.sh - edit the manifest, not this file"
+      echo '#'
+      echo '# Sourced from ~/.zshenv, which zsh reads on every invocation - scripts'
+      echo '# included. Keep it silent and cheap: no echo, no prompts, nothing slow.'
+      echo
+      echo "[ -x \"${BREW_PREFIX}/bin/brew\" ] && eval \"\$(${BREW_PREFIX}/bin/brew shellenv)\""
+    } > "$NEW_ZSHENV"
+
+    if [[ -f "$ZSHENV_FRAGMENT" ]] && cmp -s "$NEW_ZSHENV" "$ZSHENV_FRAGMENT"; then
+      rm -f "$NEW_ZSHENV"
+      result 'current' 'zshenv config' "$ZSHENV_FRAGMENT"
+    elif [[ -f "$ZSHENV_FRAGMENT" ]]; then
+      mv "$NEW_ZSHENV" "$ZSHENV_FRAGMENT"
+      result 'upgraded' 'zshenv config' "$ZSHENV_FRAGMENT"
+    else
+      mv "$NEW_ZSHENV" "$ZSHENV_FRAGMENT"
+      result 'installed' 'zshenv config' "$ZSHENV_FRAGMENT"
+    fi
+
+    # Matched on a line that actually sources the fragment, not on any mention
+    # of the name, so a comment about this file is not mistaken for the hook.
+    # grep's exit 1 is the `if` condition here, not inside a command
+    # substitution, so pipefail has nothing to kill.
+    ZSHENV_SOURCE_LINE='[ -f "$HOME/.zshenv.bootstrap" ] && source "$HOME/.zshenv.bootstrap"'
+    if [[ -f "$ZSHENV" ]] && grep -qE '^[^#]*(source|\.)[[:space:]].*\.zshenv\.bootstrap' "$ZSHENV"; then
+      result 'current' 'zshenv hook' "$ZSHENV"
+    else
+      printf '\n%s\n' "$ZSHENV_SOURCE_LINE" >> "$ZSHENV"
+      result 'installed' 'zshenv hook' "appended to $ZSHENV"
     fi
   fi
 

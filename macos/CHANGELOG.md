@@ -15,6 +15,30 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0]
+
+### Added
+
+- **`~/.zshenv`, so Homebrew is on PATH in non-interactive shells.** The two
+  places this script put `brew shellenv` both miss the case: `~/.zprofile` runs
+  for login shells only, and the `~/.zshrc.bootstrap` fragment for interactive
+  ones. `.zshenv` is the only file zsh reads on *every* invocation, so without
+  it `zsh -c 'bat file'` - and anything an editor, a GUI app, or a coding agent
+  spawns to run one command - started with no Homebrew prefix on PATH and
+  failed on binaries the manifest had installed. The symptom is easy to
+  misread, because the aliases survive: the fragment defines `cat` as `bat
+  --paging=never` behind a `command -v bat` guard, so a shell that loaded the
+  rc and then had PATH replaced keeps an alias pointing at a binary it can no
+  longer resolve.
+
+  Written as `~/.zshenv.bootstrap` plus a source line in `~/.zshenv`, the same
+  fragment-and-hook shape as `.zshrc`, so an existing `.zshenv` is left alone.
+  The fragment holds `brew shellenv` and nothing else on purpose: `.zshenv` is
+  read by scripts too, so anything that prints there corrupts their output and
+  anything slow is paid for by every zsh. The `.zprofile` line stays - shellenv
+  prepends, so a login shell re-asserts the prefix ahead of anything that
+  reordered PATH, and the duplicate entry is one modern shellenv dedupes.
+
 ## [1.6.0]
 
 ### Added
