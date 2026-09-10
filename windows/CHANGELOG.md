@@ -20,6 +20,20 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.15.0]
+
+### Added
+
+- **`sd`, `hyperfine` and `fastfetch` in the `cli` group.** A sed
+  alternative, a benchmarking tool, and a fast neofetch replacement -
+  neofetch itself has been unmaintained since 2024.
+- **`direnv.direnv` in the `cli` group, hooked in `profile.ps1`** next to
+  zoxide (`direnv hook pwsh`), not just installed - per-directory
+  environment variables need the shell hook to do anything.
+
+Same additions land in linux/CHANGELOG.md and macos/CHANGELOG.md;
+`tools/cli-parity.conf` updated to match.
+
 ## [1.14.0]
 
 ### Added

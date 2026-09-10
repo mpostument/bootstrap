@@ -68,6 +68,11 @@
                 'bootandy.dust'
                 'muesli.duf'
                 'charmbracelet.glow'
+                'chmln.sd'
+                'sharkdp.hyperfine'
+                'Fastfetch-cli.Fastfetch'
+                # Hooked in profile.ps1 next to zoxide.
+                'direnv.direnv'
             )
         }
 
