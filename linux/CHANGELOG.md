@@ -15,6 +15,15 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0]
+
+### Added
+
+- **`lnav` in the `cli` group.** Log file navigator - auto-detects format
+  and timestamps, highlights ERROR/WARN levels; in the official Debian
+  archive. Same addition in windows/CHANGELOG.md and macos/CHANGELOG.md;
+  `tools/cli-parity.conf` updated to match.
+
 ## [1.12.0]
 
 ### Removed
