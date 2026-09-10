@@ -15,6 +15,20 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0]
+
+### Added
+
+- **`sd`, `hyperfine` and `fastfetch` in the `cli` group.** A sed
+  alternative, a benchmarking tool, and a fast neofetch replacement -
+  neofetch itself has been unmaintained since 2024.
+- **`direnv` in the `cli` group, hooked in the zsh fragment** next to
+  zoxide (`eval "$(direnv hook zsh)"`), not just installed - per-directory
+  environment variables need the shell hook to do anything.
+
+Same additions land in windows/CHANGELOG.md and linux/CHANGELOG.md;
+`tools/cli-parity.conf` updated to match.
+
 ## [1.10.0]
 
 ### Added
