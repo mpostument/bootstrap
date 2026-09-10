@@ -64,6 +64,10 @@
                 '7zip.7zip'
                 'yt-dlp.yt-dlp'
                 'yt-dlp.FFmpeg'
+                'dalance.procs'
+                'bootandy.dust'
+                'muesli.duf'
+                'charmbracelet.glow'
             )
         }
 

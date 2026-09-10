@@ -20,6 +20,16 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.14.0]
+
+### Added
+
+- **`procs`, `dust`, `duf` and `glow` in the `cli` group.** Modern
+  replacements for `ps`, `du`, `df`, and a markdown reader for the
+  terminal - same "modern CLI bundle" bundle as bat/eza/fd. Same four land
+  in linux/CHANGELOG.md and macos/CHANGELOG.md; `tools/cli-parity.conf`
+  updated to match.
+
 ## [1.13.0]
 
 ### Added
