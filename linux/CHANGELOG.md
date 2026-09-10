@@ -15,6 +15,26 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0]
+
+### Added
+
+- **`com.usebruno.Bruno` in the `apps` group's Flathub list.** An API client,
+  chosen over Postman: collections are plain-text files that diff in git,
+  not a vendor account. Added to all three manifests - see
+  windows/CHANGELOG.md and macos/CHANGELOG.md.
+
+### Changed
+
+- **`7zip` in the `cli` group, replacing `p7zip-full`.** p7zip is unmaintained
+  upstream and was dropped from Debian unstable in 2025; `7zip` is trixie's
+  own successor, same `/usr/bin/7z`. `tools/cli-parity.conf` updated to
+  match.
+- **`tofuenv` in `TOOLS`, replacing `tfenv`.** Manages OpenTofu instead of
+  Terraform - HashiCorp's 2023 BSL relicensing and its 2025 acquisition by
+  IBM pushed this manifest to the open fork. `tofu` on PATH instead of
+  `terraform`. Same swap in windows/CHANGELOG.md and macos/CHANGELOG.md.
+
 ## [1.7.0]
 
 One zsh option, so the right prompt stops following commands into the

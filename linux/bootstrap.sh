@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.7.0'
+BOOTSTRAP_VERSION='1.8.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -1291,7 +1291,7 @@ else
         echo '# project pin wins over the machine default whenever there is one.'
         echo '[ -d "$HOME/.pyenv/bin" ] && export PATH="$HOME/.pyenv/bin:$PATH"'
         echo 'command -v pyenv >/dev/null && eval "$(pyenv init -)"'
-        echo '[ -d "$HOME/.tfenv/bin" ] && export PATH="$HOME/.tfenv/bin:$PATH"'
+        echo '[ -d "$HOME/.tofuenv/bin" ] && export PATH="$HOME/.tofuenv/bin:$PATH"'
         echo
         echo '# nvm is loaded LAZILY, by the oh-my-zsh plugin rather than by'
         echo '# sourcing nvm.sh here. nvm is a large shell script and sourcing it'

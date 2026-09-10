@@ -49,8 +49,8 @@ Override it with `--gui` or `--no-gui` when you know better.
    with GUI groups gated on the desktop check.
 4. **Upgrades** — one apt transaction for the whole system, plus `flatpak
    update` — and only when something is actually outdated.
-5. **Tools** — `pyenv`, `pyenv-virtualenv`, `tfenv` and `nvm`, git clones under
-   `$HOME`.
+5. **Tools** — `pyenv`, `pyenv-virtualenv`, `tofuenv` and `nvm`, git clones
+   under `$HOME`.
 6. **.NET SDK** — Microsoft's install script, into `$HOME/.dotnet`.
 7. **Release binaries** — `tflint` and `terraform-docs`, static builds from
    GitHub into `~/.local/bin`, for software Debian does not package.
