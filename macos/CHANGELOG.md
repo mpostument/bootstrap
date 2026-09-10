@@ -15,6 +15,14 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0]
+
+### Added
+
+- **`fx` in the `cli` group.** Interactive JSON viewer/processor - macOS
+  only, since it has no winget package and is not in the Debian archive.
+  `tools/cli-parity.conf` records the gap.
+
 ## [1.12.0]
 
 ### Removed
