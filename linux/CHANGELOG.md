@@ -15,6 +15,16 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0]
+
+### Added
+
+- **`io.dbeaver.DBeaverCommunity` in the `apps` group's Flathub list.** A DB
+  client, fully open source rather than a free tier of a paid app like
+  TablePlus. Its Flathub listing is community-maintained, not published by
+  DBeaver Corp. Added to all three manifests - see windows/CHANGELOG.md and
+  macos/CHANGELOG.md.
+
 ## [1.8.0]
 
 ### Added
