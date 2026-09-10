@@ -15,6 +15,17 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0]
+
+### Removed
+
+- **`sd`, `hyperfine`, `fastfetch` and `direnv`, all reverting 1.11.0.**
+  Added without asking first; taken back out at the user's request rather
+  than kept because they happened to already be there. The direnv hook in
+  the zsh fragment is removed with it, and the four rows in
+  `tools/cli-parity.conf` too. Same reversion in windows/CHANGELOG.md and
+  macos/CHANGELOG.md.
+
 ## [1.11.0]
 
 ### Added
