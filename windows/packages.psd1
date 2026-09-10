@@ -68,6 +68,7 @@
                 'bootandy.dust'
                 'muesli.duf'
                 'charmbracelet.glow'
+                'tstack.lnav'
             )
         }
 

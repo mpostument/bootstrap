@@ -20,6 +20,15 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.17.0]
+
+### Added
+
+- **`tstack.lnav` in the `cli` group.** Log file navigator - auto-detects
+  format and timestamps, highlights ERROR/WARN levels. Same addition in
+  linux/CHANGELOG.md and macos/CHANGELOG.md; `tools/cli-parity.conf`
+  updated to match.
+
 ## [1.16.0]
 
 ### Removed
