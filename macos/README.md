@@ -76,7 +76,7 @@ with it on a headless run.
 3. **Package groups** — formulae and casks, with GUI groups gated on `--no-gui`.
 4. **Upgrades** — `brew upgrade` for formulae and casks, but only when
    something is actually outdated.
-5. **Tools** — empty here. `pyenv`, `pyenv-virtualenv`, `tfenv` and `nvm` are
+5. **Tools** — empty here. `pyenv`, `pyenv-virtualenv`, `tofuenv` and `nvm` are
    Homebrew formulae in the `dev` group, not git clones under `$HOME` the way
    the Linux script installs them.
 6. *(no .NET phase — the `dotnet-sdk` cask covers it, in the `dev` group.)*

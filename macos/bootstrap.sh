@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.7.0'
+BOOTSTRAP_VERSION='1.8.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -1000,7 +1000,7 @@ else
       echo '# All four come from Homebrew here, so none of them needs a PATH'
       echo '# entry of its own - brew shellenv above already put its bin'
       echo '# directory in front. The Linux fragment prepends $HOME/.pyenv/bin'
-      echo '# and $HOME/.tfenv/bin because there they are git clones.'
+      echo '# and $HOME/.tofuenv/bin because there they are git clones.'
       echo 'command -v pyenv >/dev/null && eval "$(pyenv init -)"'
       echo '# pyenv-virtualenv is a separate init and a separate formula. Without'
       echo '# this line the plugin is installed and does nothing: `pyenv'
