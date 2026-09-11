@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.16.0'
+BOOTSTRAP_VERSION='1.17.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -1009,6 +1009,25 @@ else
       echo 'command -v dust   >/dev/null && alias du="dust"'
       echo 'command -v duf    >/dev/null && alias df="duf"'
       echo 'command -v zoxide >/dev/null && eval "$(zoxide init zsh)"'
+      echo
+      echo '# `tools` prints every package this bootstrap manages, grouped the same'
+      echo '# way `--list-packages` does. Baked in at THIS run, same as the aliases'
+      echo '# above - it goes stale exactly the way they would if the manifest'
+      echo '# changed and the script did not run again since.'
+      echo 'tools() {'
+      echo '  echo'
+      for g in "${PKG_GROUPS[@]}"; do
+        declare -n _form="GROUP_${g}_FORMULA"
+        declare -n _cask="GROUP_${g}_CASK"
+        printf "  echo '  %s'\n" "$g"
+        for pkg in "${_form[@]:-}" "${_cask[@]:-}"; do
+          [[ -z "$pkg" ]] && continue
+          printf "  echo '    %s'\n" "$pkg"
+        done
+        unset -n _form _cask
+      done
+      echo '  echo'
+      echo '}'
       echo
       echo '# GNU make arrives as gmake because /usr/bin/make is BSD make and'
       echo '# Homebrew will not shadow the system one. Almost every Makefile worth'

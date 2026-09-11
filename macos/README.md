@@ -104,6 +104,11 @@ instead, because it is not in the Debian archive.
 There is no `--yes`. Homebrew does not prompt for confirmation on an install,
 so there is nothing to answer.
 
+For a quick check from any prompt without touching the repo, type `tools` -
+a zsh function baked into the managed `.zshrc` fragment on every run, listing
+every package as of the last run. `--list-packages` above is the live
+version, read straight from `packages.conf`.
+
 ## The manifest
 
 `packages.conf` is sourced as bash, so it can use arrays and comments freely.
