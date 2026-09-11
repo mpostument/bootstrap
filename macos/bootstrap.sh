@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.14.0'
+BOOTSTRAP_VERSION='1.15.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -981,6 +981,13 @@ else
       echo 'command -v eza    >/dev/null && alias ls="eza --icons=auto --group-directories-first"'
       echo 'command -v rg     >/dev/null && alias grep="rg"'
       echo 'command -v fd     >/dev/null && alias find="fd"'
+      echo '#'
+      echo '# du/df to dust/duf are a bigger change of shape than the pairs above:'
+      echo '# dust prints a tree with bars, duf a table with different columns, and'
+      echo '# neither is a drop-in for a script parsing `du -sh` or `df -h` output -'
+      echo '# that script should keep calling the real binary, not this alias.'
+      echo 'command -v dust   >/dev/null && alias du="dust"'
+      echo 'command -v duf    >/dev/null && alias df="duf"'
       echo 'command -v zoxide >/dev/null && eval "$(zoxide init zsh)"'
       echo
       echo '# GNU make arrives as gmake because /usr/bin/make is BSD make and'

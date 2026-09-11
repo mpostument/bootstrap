@@ -15,6 +15,25 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0]
+
+### Added
+
+- **`du`/`df` aliases in the zsh fragment, to `dust`/`duf`.** Same
+  muscle-memory idea as cat/ls/find/grep above, requested explicitly rather
+  than assumed - dust prints a tree with bars and duf a table with
+  different columns, so neither is a drop-in for a script parsing
+  traditional du/df output; that script should keep calling the real
+  binary. Same pair added in windows/CHANGELOG.md and linux/CHANGELOG.md.
+
+### Fixed
+
+- **The DBeaver Community comment overstated what it covers.** It has no
+  driver at all for MongoDB, Cassandra, Redis or InfluxDB - those need the
+  paid Lite/Enterprise/Ultimate editions - rather than a limited one.
+  Comment corrected; same fix in windows/CHANGELOG.md and
+  linux/CHANGELOG.md.
+
 ## [1.14.0]
 
 ### Added
