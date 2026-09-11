@@ -221,3 +221,13 @@ if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
 # does not exist in Windows PowerShell 5.1. Guarded rather than branched, so
 # 5.1 simply skips it the same way it skips CompletionPredictor above.
 Import-Module -Name Microsoft.WinGet.CommandNotFound -ErrorAction SilentlyContinue
+
+# ============================================================
+# tools -- list every package this fleet's bootstrap manages
+# ============================================================
+# Generated next to this profile by bootstrap.ps1's shell phase, from
+# packages.psd1 as of the LAST run - same idea as the cat/ls/find/grep
+# functions above, baked in rather than looked up live. Absent until the
+# first run that reaches the shell phase, hence the guard.
+$toolsList = Join-Path $PSScriptRoot 'tools-list.ps1'
+if (Test-Path $toolsList) { . $toolsList }

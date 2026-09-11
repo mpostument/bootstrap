@@ -20,6 +20,19 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.20.0]
+
+### Added
+
+- **`tools`, a shell function always available at a prompt, no repo needed.**
+  Same muscle-memory idea as `cat`/`ls`/`find`/`grep` above: the shell phase
+  writes `tools-list.ps1` next to the profile on every run, from
+  `packages.psd1` as of that run, and `profile.ps1` dot-sources it if
+  present. Stale exactly the way the other aliases are if the manifest
+  changes and this script does not run again - `-ListPackages` is the live
+  version for when that matters. Same command in linux/CHANGELOG.md and
+  macos/CHANGELOG.md.
+
 ## [1.19.0]
 
 ### Added

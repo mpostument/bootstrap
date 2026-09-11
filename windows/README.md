@@ -169,6 +169,11 @@ reason.
 
 `-WhatIf` and `-Confirm` work throughout.
 
+For a quick check from any prompt without touching the repo, type `tools` -
+a function the shell phase writes next to your PowerShell profile on every
+run, listing every package as of the last run. `-ListPackages` above is the
+live version, read straight from `packages.psd1`.
+
 ## What it deliberately does not do
 
 - **Enable Windows optional features.** `Microsoft.WSL` and `Canonical.Ubuntu`

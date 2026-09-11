@@ -93,7 +93,7 @@ $ErrorActionPreference = 'Stop'
 #
 # Bump it in the same commit as the change it describes, and add a
 # windows/CHANGELOG.md entry; the release notes are read from that file.
-$script:BootstrapVersion = '1.19.0'
+$script:BootstrapVersion = '1.20.0'
 
 # Deliberately -ShowVersion and not -Version: PowerShell reserves -Version on
 # some hosts, and a parameter that silently binds to something else is a bad
@@ -470,6 +470,42 @@ function Deploy-ManagedFile {
     # a file PowerShell refuses to load - silently, in the profile's case.
     Unblock-File $Target -ErrorAction SilentlyContinue
     Add-Result -Group $Group -Id $Label -Action 'installed' -Detail $detail
+}
+
+# Regenerated fresh from the manifest every run, unlike Deploy-ManagedFile's
+# copy of a static source file - so a package added or removed shows up in
+# `tools` on the next run with no separate step to remember. profile.ps1 dot-
+# sources this file if it exists next to it; it is silent when absent, so an
+# older profile.ps1 deployed before this existed does not error.
+function Deploy-ToolsList {
+    param([string]$Target)
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add('# managed by windows/bootstrap.ps1 - regenerated every run, edits here do not stick')
+    $lines.Add('function tools {')
+    $lines.Add('    Write-Host ""')
+    foreach ($g in $manifest.Groups) {
+        $lines.Add("    Write-Host '  $($g.Name.Replace("'", "''"))' -ForegroundColor Cyan")
+        foreach ($p in $g.Packages) {
+            $lines.Add("    Write-Host '    $($p.Replace("'", "''"))' -ForegroundColor DarkGray")
+        }
+    }
+    $lines.Add('    Write-Host ""')
+    $lines.Add('}')
+    $content = ($lines -join "`r`n") + "`r`n"
+
+    $label = 'tools list: ' + (Split-Path (Split-Path $Target -Parent) -Leaf)
+    $existing = if (Test-Path $Target) { Get-Content $Target -Raw } else { $null }
+    if ($existing -eq $content) {
+        Add-Result -Group 'shell' -Id $label -Action 'current'
+        return
+    }
+    if (-not $PSCmdlet.ShouldProcess($Target, 'write tools list')) {
+        Add-Result -Group 'shell' -Id $label -Action 'would-install'
+        return
+    }
+    New-Item -ItemType Directory -Path (Split-Path $Target -Parent) -Force | Out-Null
+    Set-Content -Path $Target -Value $content -NoNewline
+    Add-Result -Group 'shell' -Id $label -Action 'installed'
 }
 
 # ============================================================
@@ -1205,6 +1241,7 @@ foreach (`$name in `$want) {
     foreach ($target in $profileTargets) {
         Deploy-ManagedFile -Source $script:ProfileSource -Target $target -Group 'shell' `
             -Label ('profile: ' + (Split-Path (Split-Path $target -Parent) -Leaf))
+        Deploy-ToolsList -Target (Join-Path (Split-Path $target -Parent) 'tools-list.ps1')
     }
 
     # --- Execution policy: without this the profile silently does not load ---
