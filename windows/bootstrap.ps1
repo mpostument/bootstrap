@@ -19,6 +19,11 @@
     Limit to named groups from the manifest, e.g. -Groups shell,cli.
     Default is every group. -ListGroups prints what is available.
 
+.PARAMETER ListPackages
+    Print every package id in every group and exit, touching nothing - for
+    when you know something is in here somewhere but not which group. See
+    -ListGroups for the shorter, count-only version.
+
 .PARAMETER SkipUpgrade
     Install what is missing, but leave installed versions alone.
 
@@ -57,6 +62,10 @@
 .EXAMPLE
     .\bootstrap.ps1 -Groups cli,dev -SkipShell
     Just the command-line and development packages.
+
+.EXAMPLE
+    .\bootstrap.ps1 -ListPackages
+    Print every package id, by group, and exit - touches nothing.
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
@@ -68,6 +77,7 @@ param(
     [switch]$IncludeUnknown,
     [switch]$Silent,
     [switch]$ListGroups,
+    [switch]$ListPackages,
     [switch]$ShowVersion,
     [string]$ManifestPath
 )
@@ -83,7 +93,7 @@ $ErrorActionPreference = 'Stop'
 #
 # Bump it in the same commit as the change it describes, and add a
 # windows/CHANGELOG.md entry; the release notes are read from that file.
-$script:BootstrapVersion = '1.18.0'
+$script:BootstrapVersion = '1.19.0'
 
 # Deliberately -ShowVersion and not -Version: PowerShell reserves -Version on
 # some hosts, and a parameter that silently binds to something else is a bad
@@ -765,6 +775,18 @@ if ($ListGroups) {
         Write-Host ('  {0,-10}' -f $g.Name) -ForegroundColor Cyan -NoNewline
         Write-Host ('{0,-3} packages   ' -f $g.Packages.Count) -NoNewline
         Write-Host $g.Description -ForegroundColor DarkGray
+    }
+    Write-Host ''
+    return
+}
+
+if ($ListPackages) {
+    Write-Host ''
+    foreach ($g in $manifest.Groups) {
+        Write-Host ('  {0}' -f $g.Name) -ForegroundColor Cyan
+        foreach ($p in $g.Packages) {
+            Write-Host ('    {0}' -f $p) -ForegroundColor DarkGray
+        }
     }
     Write-Host ''
     return

@@ -20,6 +20,16 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.19.0]
+
+### Added
+
+- **`-ListPackages`, printing every package id in every group and exiting
+  without touching anything.** Requested directly: the manifest has grown
+  past the point of remembering what is in it. `-ListGroups` still gives
+  the short, count-only version. Same flag added in linux/CHANGELOG.md
+  and macos/CHANGELOG.md.
+
 ## [1.18.0]
 
 ### Added

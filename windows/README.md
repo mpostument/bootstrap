@@ -158,6 +158,7 @@ reason.
 
 ```powershell
 .\bootstrap.ps1 -ListGroups              # what groups exist
+.\bootstrap.ps1 -ListPackages            # every package id, by group
 .\bootstrap.ps1 -Groups cli,dev          # only those groups
 .\bootstrap.ps1 -SkipUpgrade             # install missing, freeze versions
 .\bootstrap.ps1 -SkipShell               # packages only
