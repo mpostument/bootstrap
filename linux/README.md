@@ -52,13 +52,17 @@ Override it with `--gui` or `--no-gui` when you know better.
 5. **Tools** — `pyenv`, `pyenv-virtualenv`, `tofuenv` and `nvm`, git clones
    under `$HOME`.
 6. **.NET SDK** — Microsoft's install script, into `$HOME/.dotnet`.
-7. **Release binaries** — `tflint` and `terraform-docs`, static builds from
-   GitHub into `~/.local/bin`, for software Debian does not package.
-8. **Nerd Font** — Meslo, on desktop machines, because powerlevel10k needs it.
+7. **Release binaries** — `tflint`, `terraform-docs` and `starship`, static
+   builds from GitHub into `~/.local/bin`, for software Debian does not
+   package.
+8. **Nerd Font** — Meslo, on desktop machines, because the prompt needs it.
 9. **Claude Code** — Anthropic's script, once, into `~/.local/bin`.
-10. **zsh** — oh-my-zsh, powerlevel10k and the plugins, plus a managed
+10. **zsh** — oh-my-zsh, Starship and the plugins, plus a managed
     `~/.zshrc.bootstrap` fragment sourced from your own `.zshrc`.
-11. **Schedule** — a systemd system timer that re-runs this script daily,
+11. **Prompt config** — `starship.toml` at the repo root, copied to
+    `~/.config/starship.toml` unchanged. The same file Windows and macOS
+    deploy too - one prompt config for every shell on every platform.
+12. **Schedule** — a systemd system timer that re-runs this script daily,
     unattended, so updates arrive on their own. The Linux side of the same job
     the Windows manifest gives Task Scheduler.
 
@@ -126,7 +130,7 @@ breaks the normal command entirely.
 ## zsh
 
 The shell setup matches the fleet's Ansible role, so a shell is the same
-wherever you land: oh-my-zsh, powerlevel10k, and the plugin list in the
+wherever you land: oh-my-zsh, Starship, and the plugin list in the
 manifest.
 
 Plugin **order** is load-bearing, not alphabetical:

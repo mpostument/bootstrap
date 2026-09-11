@@ -15,6 +15,50 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.0]
+
+powerlevel10k replaced with Starship, matching the same move on the macOS
+and Windows sides. The reason: powerlevel10k is "basically unmaintained" as
+of 2026, in its own maintainer's words - and Starship reads the exact same
+`starship.toml` on all three platforms instead of a separate theme per
+shell.
+
+### Changed
+
+- **`starship` replaces `powerlevel10k` in `RELEASES`**, not as a git
+  clone the way the theme used to be - Starship is not in the Debian
+  archive (its own install docs point at `curl | sh`, which this manifest
+  avoids for the same reason it avoids a vendor apt repository) and has no
+  oh-my-zsh theme form at all; it is a static binary, `{UNAME_ARCH}`-named
+  per Starship's own Rust-target asset convention rather than Debian's.
+  `starship.toml` at the repo root - not a per-platform file - is copied
+  to `~/.config/starship.toml` unchanged.
+- **The release-binaries PATH export moved to the TOP of the zsh
+  fragment**, ahead of oh-my-zsh, because `starship init zsh` now runs
+  before oh-my-zsh finishes and needs the `starship` binary already on
+  PATH - previously this line only had to precede the aliases further
+  down, not the theme.
+- **The instant-prompt cache read is gone from the top of the zsh
+  fragment**, and with it the `zshrc hook order` check that existed
+  specifically to warn when that feature was not getting the early
+  sourcing it needed. Starship has no instant-prompt equivalent, so
+  neither the feature nor the warning about it applies any more.
+- **Transient prompt is now a real Starship feature** (`[profiles]` in
+  `starship.toml`, wired through a `zle-line-finish` hook - the
+  community-standard implementation Starship's own docs point to for zsh,
+  which has no first-class transient-prompt hook the way PowerShell and
+  Fish do) **rather than `setopt TRANSIENT_RPROMPT` plus
+  `POWERLEVEL9K_TRANSIENT_PROMPT` living in your own untracked
+  `~/.p10k.zsh`.**
+
+### Removed
+
+- **The `~/.p10k.zsh` sourcing line.** That file is not read by the
+  managed fragment any more; anything you want to keep from it belongs in
+  `starship.toml` now, in Starship's own config shape. The file itself is
+  not deleted - it is yours, was never managed here, and this script has
+  never deleted anything it did not put there itself.
+
 ## [1.18.0]
 
 ### Changed
