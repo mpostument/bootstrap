@@ -15,6 +15,24 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0]
+
+### Added
+
+- **`tools` now shows what to actually type and what it does, for the `cli`
+  group.** Requested directly. Sourced from `tools/cli-parity.conf`'s new
+  `cmd`/`desc` columns, matched by the exact apt package name. Everything
+  outside `cli` is unaffected - an apt/RELEASES/REPOS package name already
+  is the run command for the rest of the manifest.
+
+### Changed
+
+- **`tools/cli-parity.conf` gained `cmd` and `desc` columns**, trailing
+  after `note`. `parity.sh` reads and ignores them - it only checks the
+  first four fields - but its `read` line now names them explicitly so
+  they do not run on into the note field it does check. Same change in
+  windows/CHANGELOG.md and macos/CHANGELOG.md.
+
 ## [1.16.0]
 
 ### Added

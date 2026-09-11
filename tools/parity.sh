@@ -14,6 +14,11 @@
 # undeclared decision - which is the shape the yq bug had, so it is an error
 # here rather than a warning.
 #
+# cli-parity.conf also carries `cmd` and `desc` columns, trailing after
+# `note`. Read into _cmd/_desc below so they do not run on into _note, but
+# never checked here - they exist for the `tools` shell command, not for
+# this script.
+#
 # Exit 0 when they agree, 1 when they do not.
 
 set -euo pipefail
@@ -86,7 +91,7 @@ echo 'Checking the cli group against tools/cli-parity.conf'
 echo
 
 rows=0
-while IFS='|' read -r canonical lx mac win _note; do
+while IFS='|' read -r canonical lx mac win _note _cmd _desc; do
   # Trim. Comments and blank lines are not rows.
   canonical="$(printf '%s' "$canonical" | tr -d '[:space:]')"
   [[ -z "$canonical" || "$canonical" == \#* ]] && continue
