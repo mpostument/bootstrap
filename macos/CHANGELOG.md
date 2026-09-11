@@ -15,6 +15,17 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.18.0]
+
+### Added
+
+- **`tools` now shows what to actually type and what it does, for the `cli`
+  group.** Requested directly. Sourced from `tools/cli-parity.conf`'s new
+  `cmd`/`desc` columns, matched by the exact Homebrew formula/cask name.
+  Everything outside `cli` is unaffected - a formula or cask name already
+  is the run command for the rest of the manifest, or is not a CLI thing
+  at all. Same change in windows/CHANGELOG.md and linux/CHANGELOG.md.
+
 ## [1.17.0]
 
 ### Added

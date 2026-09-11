@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.17.0'
+BOOTSTRAP_VERSION='1.18.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -1014,6 +1014,25 @@ else
       echo '# way `--list-packages` does. Baked in at THIS run, same as the aliases'
       echo '# above - it goes stale exactly the way they would if the manifest'
       echo '# changed and the script did not run again since.'
+      echo
+      echo '# The cli group additionally gets what to actually type and what the'
+      echo '# thing does, from tools/cli-parity.conf - the package NAME already'
+      echo '# doubles as the command for everything in this group, but a fresh'
+      echo '# machine should not have to already know that.'
+      declare -A _cli_cmd=() _cli_desc=()
+      if [[ -r "$SCRIPT_DIR/../tools/cli-parity.conf" ]]; then
+        while IFS='|' read -r _pty_can _pty_lx _pty_mac _pty_win _pty_note _pty_cmd _pty_desc; do
+          _pty_can="$(printf '%s' "$_pty_can" | tr -d '[:space:]')"
+          [[ -z "$_pty_can" || "$_pty_can" == \#* ]] && continue
+          _pty_mac="$(printf '%s' "$_pty_mac" | tr -d '[:space:]')"
+          [[ -z "$_pty_mac" || "$_pty_mac" == '-' ]] && continue
+          # Free text, unlike the id fields above - trim ends only.
+          _pty_cmd="$(printf '%s' "$_pty_cmd" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          _pty_desc="$(printf '%s' "$_pty_desc" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          _cli_cmd["$_pty_mac"]="$_pty_cmd"
+          _cli_desc["$_pty_mac"]="$_pty_desc"
+        done < "$SCRIPT_DIR/../tools/cli-parity.conf"
+      fi
       echo 'tools() {'
       echo '  echo'
       for g in "${PKG_GROUPS[@]}"; do
@@ -1022,7 +1041,11 @@ else
         printf "  echo '  %s'\n" "$g"
         for pkg in "${_form[@]:-}" "${_cask[@]:-}"; do
           [[ -z "$pkg" ]] && continue
-          printf "  echo '    %s'\n" "$pkg"
+          if [[ "$g" == cli && -n "${_cli_cmd[$pkg]:-}" ]]; then
+            printf "  echo '    %-12s  %-10s  %s'\n" "$pkg" "${_cli_cmd[$pkg]}" "${_cli_desc[$pkg]}"
+          else
+            printf "  echo '    %s'\n" "$pkg"
+          fi
         done
         unset -n _form _cask
       done
