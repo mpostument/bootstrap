@@ -20,6 +20,26 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.24.0]
+
+### Added
+
+- **`starship.toml` (repo root, shared with Linux and macOS) now shows AWS
+  profile, Azure subscription, gcloud project, and the active
+  Terraform/OpenTofu workspace** - requested directly, after the initial
+  Starship migration turned out not to carry these over from the old
+  Oh My Posh/p10k prompts. The `terraform` module recognises `tofu
+  version` as well as `terraform version` out of the box, so the OpenTofu
+  switch elsewhere in this manifest needed no extra config here. AWS in
+  particular only shows when real credentials resolve (`~/.aws/...` or the
+  AWS env vars), not merely because `AWS_PROFILE` is set to a name that
+  might not exist - Starship's own default, left as-is on purpose rather
+  than forced on.
+- **`$username`/`$hostname` in the same file**, shown only when it is not
+  the obvious case: username when root or over SSH, hostname only over
+  SSH - both Starship defaults, so a normal local prompt is unaffected and
+  an SSH session gets `user@host` for free.
+
 ## [1.23.0]
 
 Oh My Posh replaced with Starship, matching the same move on the Linux and
