@@ -166,39 +166,39 @@ if (Get-Command duf -ErrorAction SilentlyContinue) {
 # posh-git -- tab-completion for git subcommands, branches and remotes
 # https://github.com/dahlbyk/posh-git
 # ============================================================
-# Imported for its argument completers only, and imported BEFORE oh-my-posh
+# Imported for its argument completers only, and imported BEFORE Starship
 # below on purpose: posh-git also defines its own `prompt` function to show
-# git status, and oh-my-posh's `init` redefines `prompt` again right after
-# this - so whichever runs last wins. Oh My Posh already shows git status in
+# git status, and Starship's `init` redefines `prompt` again right after
+# this - so whichever runs last wins. Starship already shows git status in
 # the prompt itself; this block would otherwise fight it for the same line.
 Import-Module posh-git -ErrorAction SilentlyContinue
 
 # ============================================================
-# Oh My Posh
-# https://ohmyposh.dev/
+# Starship
+# https://starship.rs/
 # ============================================================
-# Theme files live in a stable copy outside the versioned WindowsApps
-# package dir (which changes on every Oh My Posh update) -- see the
-# Oh My Posh themes step in bootstrap.ps1. Resolved directly, rather than
-# trusted to $env:POSH_THEMES_PATH alone, since a freshly-set user env var
-# does not reach processes started before the next sign-in.
-# Change this to any file in that themes directory to restyle the prompt --
-# 'prompt-theme.omp.json' (deployed alongside the stock themes) is our own
-# fork of jandedobbeleer.omp.json; edit windows/prompt-theme.omp.json in the
-# repo, not the deployed copy, for the same reason as this profile itself.
-$ompTheme = 'prompt-theme.omp.json'
-if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
-    $ompThemes = if ($env:POSH_THEMES_PATH) { $env:POSH_THEMES_PATH } else { "$env:LOCALAPPDATA\oh-my-posh\themes" }
+# The SAME starship.toml the Linux and macOS zsh fragments read - see
+# bootstrap.ps1's Prompt config step, which deploys it here from the repo
+# root, not from a per-platform copy. Set explicitly rather than trusted to
+# Starship's own Windows default ({FOLDERID_RoamingAppData}\starship\
+# config.toml, a different path than the ~/.config one the other two
+# platforms use) - one path on every platform, matching one file.
+$env:STARSHIP_CONFIG = Join-Path $env:USERPROFILE '.config\starship.toml'
+if (Get-Command starship -ErrorAction SilentlyContinue) {
+    Invoke-Expression (&starship init powershell)
 
-    # Our fork adds a "transient_prompt" block. Oh My Posh reads that
-    # straight out of the config -- no separate Enable-* call needed -- and
-    # once a command is submitted it collapses that now-historical prompt
-    # line to a single arrow instead of leaving the full multi-segment bar
-    # (user, path, git, duration, shell, time...) sitting in the scrollback.
-    # Only the live prompt at the bottom keeps the full theme, so scrolling
-    # back -- or copying several lines out of the terminal -- carries one
-    # short line per command instead of one full bar per command.
-    oh-my-posh init pwsh --config (Join-Path $ompThemes $ompTheme) | Invoke-Expression
+    # Once a command is submitted, collapse that now-historical prompt line
+    # to a single arrow instead of leaving the full bar - path, git branch/
+    # status, language versions, clock - sitting in the scrollback forever.
+    # Same job the old prompt-theme.omp.json fork did for Oh My Posh, but a
+    # real Starship feature now rather than something forked in to get it:
+    # `[profiles] transient` in starship.toml is what the character below
+    # renders. Function name and the Enable- call are both fixed by
+    # Starship's own PowerShell integration, not a choice made here.
+    function Invoke-Starship-TransientFunction {
+        &starship module character
+    }
+    Enable-TransientPrompt
 }
 
 # ============================================================

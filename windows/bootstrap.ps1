@@ -93,7 +93,7 @@ $ErrorActionPreference = 'Stop'
 #
 # Bump it in the same commit as the change it describes, and add a
 # windows/CHANGELOG.md entry; the release notes are read from that file.
-$script:BootstrapVersion = '1.22.0'
+$script:BootstrapVersion = '1.23.0'
 
 # Deliberately -ShowVersion and not -Version: PowerShell reserves -Version on
 # some hosts, and a parameter that silently binds to something else is a bad
@@ -146,7 +146,9 @@ if (-not $script:ToolRoot) { $script:ToolRoot = Split-Path -Parent $MyInvocation
 # name 'Raw'", a message that points at the wrong line, the wrong parameter,
 # and says nothing whatsoever about a clobbered variable.
 $script:ProfileSource = Join-Path $script:ToolRoot 'profile.ps1'
-$script:PromptThemeSource = Join-Path $script:ToolRoot 'prompt-theme.omp.json'
+# Repo root, not windows/ - starship.toml is shared with the Linux and
+# macOS sides, which is the entire reason this fleet moved to Starship.
+$script:StarshipTomlSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'starship.toml'
 $script:MergeScript = Join-Path $script:ToolRoot 'merge-terminal-settings.ps1'
 $script:MpvSource = Join-Path $script:ToolRoot 'mpv'
 
@@ -470,6 +472,101 @@ function Deploy-ManagedFile {
     # a file PowerShell refuses to load - silently, in the profile's case.
     Unblock-File $Target -ErrorAction SilentlyContinue
     Add-Result -Group $Group -Id $Label -Action 'installed' -Detail $detail
+}
+
+# Downloads and installs a Nerd Font per-user - no admin, no reboot, no
+# logoff needed. Independent of any prompt tool, on purpose: this fleet's
+# font install has never depended on a prompt engine's own installer on the
+# Linux/macOS side (there it is a plain GitHub-release fetch, see
+# NERD_FONT_REPO in packages.conf), and it does not need to here either.
+# Before this it did, though - oh-my-posh's own `font install` subcommand
+# was the only thing that ever put Meslo on a Windows machine, which is
+# what made oh-my-posh un-removable even after Starship took over the
+# prompt itself. This function is what makes it removable.
+function Install-NerdFont {
+    param(
+        [string]$Name,   # e.g. 'Meslo' - the release asset name
+        [string]$Repo,   # e.g. 'ryanoasis/nerd-fonts'
+        [string]$Match   # face-table match, e.g. 'MesloLGMNerdFont'
+    )
+    # The per-user store, not %WINDIR%\Fonts - that one needs admin, and
+    # per-user is where a font actually needs to land for an unelevated
+    # PowerShell/Windows Terminal to find it without a machine-wide install.
+    $fontDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
+    $already = (Test-Path $fontDir) -and
+        @(Get-ChildItem $fontDir -Filter "$Match*" -ErrorAction SilentlyContinue).Count -gt 0
+    $label = 'font: {0}' -f $Name
+    if ($already) {
+        Add-Result -Group 'shell' -Id $label -Action 'current'
+        return
+    }
+    if (-not $PSCmdlet.ShouldProcess($Name, 'install Nerd Font')) {
+        Add-Result -Group 'shell' -Id $label -Action 'would-install'
+        return
+    }
+
+    $tmp = Join-Path $env:TEMP ('nerdfont-{0}-{1}' -f $Name, [guid]::NewGuid())
+    New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+    try {
+        $archive = Join-Path $tmp "$Name.zip"
+        # /releases/latest/download/ redirects to the newest asset, the same
+        # URL shape the Linux side's own font fetch uses - no GitHub API
+        # call needed on a machine that already has the font, which is
+        # every run after the first.
+        Invoke-WebRequest -Uri "https://github.com/$Repo/releases/latest/download/$Name.zip" `
+            -OutFile $archive -UseBasicParsing
+        Expand-Archive -Path $archive -DestinationPath $tmp -Force
+
+        # The archive carries three widths (LGS/LGL/LGM) in every weight and
+        # in base/Mono/Propo variants; $Match narrows to the one this fleet
+        # actually uses - see NERD_FONT_MATCH in the Linux/macOS manifests
+        # for the same filter applied there.
+        $fonts = @(Get-ChildItem $tmp -Filter "$Match*.ttf" -Recurse)
+        if ($fonts.Count -eq 0) {
+            Add-Result -Group 'shell' -Id $label -Action 'failed' -Detail 'archive carried no matching .ttf files'
+            return
+        }
+
+        New-Item -ItemType Directory -Path $fontDir -Force | Out-Null
+        Add-Type -AssemblyName System.Drawing
+        $regPath = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+        foreach ($font in $fonts) {
+            $destPath = Join-Path $fontDir $font.Name
+            Copy-Item $font.FullName -Destination $destPath -Force
+
+            # The registry value NAME has to be the font's own family name
+            # read out of its face table, not guessed from the filename -
+            # Windows enumerates installed fonts by this key, and a wrong
+            # name here means the file sits in the fonts directory doing
+            # nothing, including for this same presence check on the next
+            # run, which would then try to reinstall it forever.
+            $pfc = New-Object System.Drawing.Text.PrivateFontCollection
+            $pfc.AddFontFile($destPath)
+            $familyName = $pfc.Families[0].Name
+            $pfc.Dispose()
+
+            New-ItemProperty -Path $regPath -Name "$familyName (TrueType)" `
+                -Value $font.Name -PropertyType String -Force | Out-Null
+        }
+
+        # Broadcasts WM_FONTCHANGE to every top-level window (HWND_BROADCAST,
+        # 0xffff) so already-running applications - this very console host
+        # included - pick up the new font without a logoff. The documented
+        # Win32 pattern for exactly this; SendMessageTimeout rather than
+        # SendMessage so a hung window cannot block this script.
+        if (-not ('Win32.FontBroadcast' -as [type])) {
+            Add-Type -Namespace Win32 -Name FontBroadcast -MemberDefinition '
+                [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+                public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, IntPtr lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+            '
+        }
+        $broadcastResult = [UIntPtr]::Zero
+        [void][Win32.FontBroadcast]::SendMessageTimeout([IntPtr]0xffff, 0x001D, [UIntPtr]::Zero, [IntPtr]::Zero, 2, 1000, [ref]$broadcastResult)
+
+        Add-Result -Group 'shell' -Id $label -Action 'installed' -Detail ('{0} face(s) -> {1}' -f $fonts.Count, $fontDir)
+    } finally {
+        Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # tools/cli-parity.conf's windows column names the SAME winget id
@@ -1062,78 +1159,24 @@ if ($SkipShell) {
     $shell = $manifest.Shell
 
     # --- Nerd Font ---
-    # BOTH font directories, not just the machine one. `oh-my-posh font
-    # install` writes to the per-user store when it is not running elevated,
-    # and that is usually where the Meslo faces actually live.
-    # Checking only %WINDIR%\Fonts reinstalls the font on every single run.
-    $fontDirs = @(
-        Join-Path $env:WINDIR 'Fonts'
-        Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
-    )
-    $fontPresent = @(
-        $fontDirs | Where-Object { Test-Path $_ } | ForEach-Object {
-            Get-ChildItem $_ -Filter 'MesloLGM*NerdFont*' -ErrorAction SilentlyContinue
-        }
-    ).Count -gt 0
-    $fontLabel = 'font: {0}' -f $shell.NerdFont
-    if ($fontPresent) {
-        Add-Result -Group 'shell' -Id $fontLabel -Action 'current'
-    } elseif (-not $PSCmdlet.ShouldProcess($shell.NerdFont, 'oh-my-posh font install')) {
-        Add-Result -Group 'shell' -Id $fontLabel -Action 'would-install'
-    } elseif (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
-        & oh-my-posh font install $shell.NerdFont
-        Add-Result -Group 'shell' -Id $fontLabel -Action 'installed'
-    } else {
-        Add-Result -Group 'shell' -Id $fontLabel -Action 'failed' -Detail 'oh-my-posh not on PATH'
-    }
+    # Independent of any prompt tool - see Install-NerdFont's own comment
+    # for why that is worth stating; it used not to be true here.
+    Install-NerdFont -Name $shell.NerdFont -Repo 'ryanoasis/nerd-fonts' -Match 'MesloLGMNerdFont'
 
-    # --- Oh My Posh themes, copied out of the versioned MSIX directory ---
-    # The package folder is renamed on every Oh My Posh update
-    # (ohmyposh.cli_<version>_x64__...), so a profile pointing straight at it
-    # would break on each upgrade. The profile reads this stable copy instead.
-    #
-    # Compared before copying, not copied and then declared done. The old code
-    # ran Copy-Item -Force unconditionally and reported 'installed' every time,
-    # so a run that changed nothing still claimed ~90 theme files as a change -
-    # which makes the summary useless for spotting the run that DID change
-    # something. Copy-Item carries the source LastWriteTime onto the copy, so
-    # name + length + mtime is a faithful "same file" test and costs no hashing.
-    $themesDir = Join-Path $env:LOCALAPPDATA $shell.OmpThemesDir
-    $pkg = Get-AppxPackage -Name 'ohmyposh.cli' -ErrorAction SilentlyContinue
-    if (-not $pkg) {
-        Add-Result -Group 'shell' -Id 'oh-my-posh themes' -Action 'failed' -Detail 'ohmyposh.cli appx not found'
-    } else {
-        $themeSource = @(Get-ChildItem (Join-Path $pkg.InstallLocation 'themes') -File -ErrorAction SilentlyContinue)
-        $stale = @($themeSource | Where-Object {
-                $dest = Join-Path $themesDir $_.Name
-                if (-not (Test-Path $dest)) { return $true }
-                $have = Get-Item $dest
-                $have.Length -ne $_.Length -or $have.LastWriteTimeUtc -ne $_.LastWriteTimeUtc
-            })
-        if ($themeSource.Count -eq 0) {
-            Add-Result -Group 'shell' -Id 'oh-my-posh themes' -Action 'failed' -Detail 'appx carries no themes directory'
-        } elseif ($stale.Count -eq 0) {
-            Add-Result -Group 'shell' -Id 'oh-my-posh themes' -Action 'current' -Detail ('{0} themes in {1}' -f $themeSource.Count, $themesDir)
-        } elseif (-not $PSCmdlet.ShouldProcess($themesDir, 'sync Oh My Posh themes')) {
-            Add-Result -Group 'shell' -Id 'oh-my-posh themes' -Action 'would-install' -Detail ('{0} of {1} themes' -f $stale.Count, $themeSource.Count)
-        } else {
-            New-Item -ItemType Directory -Path $themesDir -Force | Out-Null
-            $stale | Copy-Item -Destination $themesDir -Force
-            Add-Result -Group 'shell' -Id 'oh-my-posh themes' -Action 'installed' -Detail ('{0} of {1} themes -> {2}' -f $stale.Count, $themeSource.Count, $themesDir)
-        }
-    }
-
-    # --- Prompt theme: our own fork of jandedobbeleer, not the stock copy ---
-    # Deployed under a filename the sync loop above never touches (it only
-    # walks names it finds in the appx package), so the fork survives every
-    # theme resync instead of being overwritten back to stock. Adds a
-    # transient_prompt block: without it, Oh My Posh leaves the full
-    # multi-segment bar for every past command sitting in the scrollback, so
-    # copying a few lines out of the terminal drags one full prompt bar per
-    # line along with them - transient_prompt collapses each old prompt to a
-    # single arrow once the command is submitted.
-    Deploy-ManagedFile -Source $script:PromptThemeSource -Target (Join-Path $themesDir 'prompt-theme.omp.json') `
-        -Group 'shell' -Label 'prompt theme'
+    # --- Prompt config ---
+    # starship.toml at the repo root, not under windows/ - the whole point
+    # of moving off Oh My Posh is ONE prompt config read by every shell on
+    # every platform (PowerShell here, zsh on Linux/macOS), so this is not
+    # Windows's file to fork the way prompt-theme.omp.json used to be.
+    # STARSHIP_CONFIG is set explicitly in profile.ps1 to point at this
+    # same path, rather than trusted to Starship's own platform default
+    # ({FOLDERID_RoamingAppData}\starship\config.toml on Windows, a
+    # different path than the ~/.config one Linux/macOS use) - one path on
+    # every platform is the same reasoning restated for where the file
+    # lives, not just what is in it.
+    Deploy-ManagedFile -Source $script:StarshipTomlSource `
+        -Target (Join-Path $env:USERPROFILE '.config\starship.toml') `
+        -Group 'shell' -Label 'starship.toml'
 
     # --- PowerShell modules, once per edition ---
     # PS7 and Windows PowerShell 5.1 do not share a module folder unless PS7 is

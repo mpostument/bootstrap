@@ -20,6 +20,49 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.23.0]
+
+Oh My Posh replaced with Starship, matching the same move on the Linux and
+macOS sides. The reason: powerlevel10k, the theme the other two platforms
+used, is "basically unmaintained" as of 2026 by its own maintainer's words -
+and Starship reads the exact same `starship.toml` on all three platforms
+instead of a separate theme per shell, so this closes a real gap rather
+than trading one prompt for another for its own sake.
+
+### Changed
+
+- **`Starship.Starship` replaces `JanDeDobbeleer.OhMyPosh` in the `shell`
+  group.** `starship.toml` at the repo root - not a per-platform file - is
+  deployed to `%USERPROFILE%\.config\starship.toml` and pointed at
+  explicitly via `$env:STARSHIP_CONFIG` in `profile.ps1`, rather than
+  trusted to Starship's own Windows default
+  (`{FOLDERID_RoamingAppData}\starship\config.toml`, a different path than
+  the `~/.config` one Linux/macOS use). Transient prompt - the old
+  `prompt-theme.omp.json` fork's whole reason to exist - is now
+  `Enable-TransientPrompt`, a real Starship feature; that fork is deleted
+  from the repo.
+- **Nerd Font install no longer depends on Oh My Posh.** `oh-my-posh font
+  install` was the only thing that ever put Meslo on a Windows machine,
+  which is what made Oh My Posh un-removable even after Starship took over
+  the prompt. `Install-NerdFont` fetches the release archive from
+  `ryanoasis/nerd-fonts` directly (the same source the Linux/macOS sides
+  already used independently of any prompt tool), installs the `.ttf`
+  files into the per-user font store, registers each one under
+  `HKCU:\...\Fonts` by its own face-table name, and broadcasts
+  `WM_FONTCHANGE` so already-running windows - this console host included -
+  see it without a logoff.
+- **The Oh My Posh theme-sync phase is gone.** It existed to copy themes
+  out of the versioned `ohmyposh.cli` MSIX folder on every update; nothing
+  replaces it because nothing needs to - `starship.toml` is one file, not a
+  themes directory to keep in sync.
+
+### Removed
+
+- **`prompt-theme.omp.json`**, the forked Oh My Posh theme. If you had
+  further customised it by hand, port those changes into `starship.toml`
+  (TOML, not JSON, and Starship's own module names rather than Oh My
+  Posh's segment types) - this file is not read by anything any more.
+
 ## [1.22.0]
 
 ### Changed

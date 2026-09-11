@@ -32,7 +32,14 @@
             Packages    = @(
                 'Microsoft.PowerShell'
                 'Microsoft.WindowsTerminal'
-                'JanDeDobbeleer.OhMyPosh'
+                # Not Oh My Posh any more: Starship reads the SAME
+                # starship.toml the Linux/macOS sides do - one prompt
+                # config for every shell on every platform instead of a
+                # separate theme per shell, and it ships transient-prompt
+                # (Enable-TransientPrompt in profile.ps1) as a real
+                # feature, which is what used to need a forked
+                # prompt-theme.omp.json here.
+                'Starship.Starship'
                 # A working `sudo` for Windows - elevate one command without
                 # spawning a whole separate admin window/profile the way
                 # `Start-Process -Verb RunAs` does. Not in the `cli` group:
@@ -433,11 +440,10 @@
         # Fixed GUID for the Windows Terminal "PowerShell 7" profile entry,
         # kept stable across runs so the merge script can find it again.
         TerminalPwshGuid  = '{574e775e-4f2a-5b96-ac1e-a2962a402336}'
-        OmpThemesDir      = 'oh-my-posh\themes'
         # posh-git: tab-completion for git subcommands, branches and remotes.
-        # Not for its prompt - profile.ps1 imports it before oh-my-posh's
-        # `init`, so oh-my-posh's own `prompt` function overwrites posh-git's
-        # and wins; only the argument completers it registers survive.
+        # Not for its prompt - profile.ps1 imports it before Starship's own
+        # `init`, so Starship's prompt function overwrites posh-git's and
+        # wins; only the argument completers it registers survive.
         Modules51         = @('PSReadLine', 'Terminal-Icons', 'PSFzf', 'posh-git')
         # CompletionPredictor is PS7-only: it plugs into the predictor
         # subsystem, which does not exist in Windows PowerShell 5.1.

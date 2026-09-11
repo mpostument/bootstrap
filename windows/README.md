@@ -46,9 +46,12 @@ to start, so the first command still needs one of those two.
 
 1. **Packages** — installs or upgrades everything in `packages.psd1` via winget.
 2. **Externally managed software** — detects it and reports, changes nothing.
-3. **Shell** — Nerd Font, Oh My Posh themes, PowerShell modules for both 5.1
-   and 7, the profile, execution policy, and a Windows Terminal settings merge
-   that patches two keys instead of overwriting the file.
+3. **Shell** — a Nerd Font fetched straight from GitHub (independent of any
+   prompt tool - see `Install-NerdFont`), `starship.toml` deployed from the
+   repo root (the same file the Linux and macOS sides read too), PowerShell
+   modules for both 5.1 and 7, the profile, execution policy, and a Windows
+   Terminal settings merge that patches two keys instead of overwriting the
+   file.
 4. **mpv** — the player's config, UI and scripts. Skip with `-SkipMpv`.
 5. **Schedule** — a daily unattended run, so updates arrive without anyone
    remembering to ask. Skip with `-SkipSchedule`.
