@@ -123,9 +123,14 @@
                 'Microsoft.DotNet.SDK.10'
                 'GoLang.Go'
                 # Microsoft's build of OpenJDK rather than Oracle's: same
-                # OpenJDK sources, no click-through licence, and it is the
-                # one that matches what the Linux side gets from the
-                # distribution's default-jdk.
+                # OpenJDK sources, no click-through licence. Same vendor and
+                # same major (21) on all three platforms now - macOS used to
+                # run Temurin here instead, an undocumented divergence
+                # nobody had chosen on purpose; see macos/packages.conf's
+                # dev group cask for the fix and the full reasoning. Linux's
+                # default-jdk is frozen at 21 for trixie's whole release
+                # life, which is also why this is pinned rather than left to
+                # float to whatever's newest.
                 'Microsoft.OpenJDK.21'
                 # OpenTofu, not Terraform: HashiCorp's BSL relicensing and its
                 # 2025 IBM acquisition are the same case as Bruno over

@@ -20,6 +20,17 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.25.0]
+
+### Fixed
+
+- **The `Microsoft.OpenJDK.21` comment claimed this "matches what the
+  Linux side gets" - true of Linux, false of macOS.** macOS ran Temurin
+  (a different vendor) at whatever major Homebrew currently packages
+  (Java 26 as of this fix), an undocumented divergence nobody had chosen
+  on purpose. macOS now runs `microsoft-openjdk@21` - same vendor, same
+  major, on all three platforms. See macos/CHANGELOG.md.
+
 ## [1.24.0]
 
 ### Added
