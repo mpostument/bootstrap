@@ -106,8 +106,10 @@ so there is nothing to answer.
 
 For a quick check from any prompt without touching the repo, type `tools` -
 a zsh function baked into the managed `.zshrc` fragment on every run, listing
-every package as of the last run. `--list-packages` above is the live
-version, read straight from `packages.conf`.
+the `cli` group as of the last run, each with what to actually type and what
+it does. Deliberately just that one group, not the whole manifest -
+`--list-packages` above is the live, every-group version, read straight
+from `packages.conf`.
 
 ## The manifest
 
