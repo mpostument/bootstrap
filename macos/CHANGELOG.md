@@ -69,6 +69,18 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Nothing appeared when a terraform command was typed in a Terragrunt
+  tree.** Starship looks at the current directory only, and the module's
+  default detection is `.tf`/`.tfplan`/`.tfstate` files or a `.terraform`
+  folder. A Terragrunt repository has neither at its root nor in its
+  intermediate directories - just a `terragrunt.hcl`, which is precisely
+  where `terragrunt run-all` gets typed. A repository pinned with tfenv has
+  the same shape: `.terraform-version` at the root, the .tf files a
+  directory or two down. Detection now also counts `terragrunt.hcl`,
+  `.terraform.lock.hcl`, `.terraform-version` and `.tfvars`, which covers
+  both without costing anything - it is the same directory listing either
+  way.
+
 - **`format` and `right_format` in `starship.toml` were never in effect.**
   Both are top-level keys and both sat *below* `[palettes.catppuccin_mocha]`,
   so TOML filed them as two more keys of the palette table. Starship reads a
