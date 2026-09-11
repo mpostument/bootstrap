@@ -20,6 +20,20 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.21.0]
+
+### Added
+
+- **`tools` now shows what to actually type and what it does, for the `cli`
+  group.** Requested directly: a package ID like `sharkdp.bat` is not the
+  command you run, and Windows is the platform where that gap is worst -
+  every winget id in the group is `Publisher.Name`, never the binary name.
+  Sourced from `tools/cli-parity.conf`'s new `cmd`/`desc` columns, matched
+  by the exact winget id, so there is no guessing which row a package
+  belongs to. Everything outside `cli` is unaffected - `Google.Chrome`
+  opens from the Start Menu, not a prompt, and has no row there anyway.
+  Same change in linux/CHANGELOG.md and macos/CHANGELOG.md.
+
 ## [1.20.0]
 
 ### Added

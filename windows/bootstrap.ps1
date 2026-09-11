@@ -93,7 +93,7 @@ $ErrorActionPreference = 'Stop'
 #
 # Bump it in the same commit as the change it describes, and add a
 # windows/CHANGELOG.md entry; the release notes are read from that file.
-$script:BootstrapVersion = '1.20.0'
+$script:BootstrapVersion = '1.21.0'
 
 # Deliberately -ShowVersion and not -Version: PowerShell reserves -Version on
 # some hosts, and a parameter that silently binds to something else is a bad
@@ -472,6 +472,31 @@ function Deploy-ManagedFile {
     Add-Result -Group $Group -Id $Label -Action 'installed' -Detail $detail
 }
 
+# tools/cli-parity.conf's windows column names the SAME winget id
+# packages.psd1 does, so a lookup by that id is exact - no fuzzy matching,
+# no guessing which row a package belongs to. cmd/desc are read as plain
+# text (columns 6 and 7); parity.sh's own field count guards against the
+# file's shape drifting under this without both breaking together.
+function Get-CliToolsIndex {
+    param([string]$ParityPath)
+    $index = @{}
+    if (-not (Test-Path $ParityPath)) { return $index }
+    foreach ($line in Get-Content $ParityPath) {
+        if ($line -notmatch '\|') { continue }
+        $fields = $line -split '\|'
+        if ($fields.Count -lt 7) { continue }
+        $canonical = $fields[0].Trim()
+        if (-not $canonical -or $canonical.StartsWith('#')) { continue }
+        $win = $fields[3].Trim()
+        if (-not $win -or $win -eq '-') { continue }
+        $index[$win] = [pscustomobject]@{
+            Cmd  = $fields[5].Trim()
+            Desc = $fields[6].Trim()
+        }
+    }
+    return $index
+}
+
 # Regenerated fresh from the manifest every run, unlike Deploy-ManagedFile's
 # copy of a static source file - so a package added or removed shows up in
 # `tools` on the next run with no separate step to remember. profile.ps1 dot-
@@ -479,6 +504,10 @@ function Deploy-ManagedFile {
 # older profile.ps1 deployed before this existed does not error.
 function Deploy-ToolsList {
     param([string]$Target)
+    # Only the cli group gets cmd/desc - the package id already IS the run
+    # command for the id-heavy rest of the manifest (Google.Chrome opens from
+    # the Start Menu, not a prompt), and cli-parity.conf has no rows for them.
+    $cliIndex = Get-CliToolsIndex -ParityPath (Join-Path (Split-Path $script:ToolRoot -Parent) 'tools\cli-parity.conf')
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add('# managed by windows/bootstrap.ps1 - regenerated every run, edits here do not stick')
     $lines.Add('function tools {')
@@ -486,7 +515,12 @@ function Deploy-ToolsList {
     foreach ($g in $manifest.Groups) {
         $lines.Add("    Write-Host '  $($g.Name.Replace("'", "''"))' -ForegroundColor Cyan")
         foreach ($p in $g.Packages) {
-            $lines.Add("    Write-Host '    $($p.Replace("'", "''"))' -ForegroundColor DarkGray")
+            $text = $p
+            if ($g.Name -eq 'cli' -and $cliIndex.ContainsKey($p)) {
+                $info = $cliIndex[$p]
+                $text = '{0,-26} {1,-42} {2}' -f $p, $info.Cmd, $info.Desc
+            }
+            $lines.Add("    Write-Host '    $($text.Replace("'", "''"))' -ForegroundColor DarkGray")
         }
     }
     $lines.Add('    Write-Host ""')
