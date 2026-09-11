@@ -15,6 +15,109 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.0]
+
+### Added
+
+- **A right prompt, and context that appears only while you are typing the
+  command that would use it.** The left side is now one line and fixed in
+  shape - path, branch, git status, the arrow - and everything that depends
+  on *what you are about to run* moved right:
+
+  ```
+  ~/projects/omnistrate-poc  main ?1 ❯            ☸ prod-eu (payments)  14:49
+  ```
+
+  Type `kubectl` and the cluster and namespace appear on the right; type
+  `terraform` and the workspace does; `aws`, `az` and `gcloud` bring the
+  profile, subscription and account. Delete the word and they go away
+  again. An active Python virtualenv and the toolchain versions for the
+  directory you are in are always there, because those do not depend on the
+  command.
+
+  `dotnet`, `msbuild` and `nuget` are a special case worth knowing about.
+  The always-on part of the right prompt already reports the .NET *project*
+  - its target framework - whenever you are standing in one. Typing a
+  dotnet command swaps that for `dotnet --version`, which is the SDK that
+  command is actually about to use, `global.json` pin included. Those are
+  different answers on any machine with more than one SDK installed, and
+  the second one is the one that decides whether the build works.
+
+  p10k called this `SHOW_ON_COMMAND` and Starship has no equivalent - it
+  renders once, before anything is typed. So the gate is a
+  `zle-line-pre-redraw` hook: it works out which group the first word of
+  the line belongs to (skipping `sudo` and `VAR=value` prefixes) and, only
+  when that answer changes, points `RPROMPT` at the matching `ctx_*`
+  profile in `starship.toml` and redraws. One `starship` process per change
+  of group, not per keystroke.
+
+### Changed
+
+- **Git status says what it means.** `main !?` reads as `main !2 ?1` now,
+  and each state carries its own colour instead of all of them sharing one
+  yellow:
+
+  ```
+  +N staged   !N modified   ?N untracked   ✘N deleted
+  »N renamed  *N stashed    ~N conflicted  ⇡N/⇣N ahead/behind
+  ```
+
+  The symbols are the conventional ones and were already there. What was
+  missing is the count - a bare `!` does not say whether one file is dirty
+  or thirty - and the colour, which is what lets the symbol be confirmation
+  of something you already read rather than the only thing carrying it.
+
+### Fixed
+
+- **`format` and `right_format` in `starship.toml` were never in effect.**
+  Both are top-level keys and both sat *below* `[palettes.catppuccin_mocha]`,
+  so TOML filed them as two more keys of the palette table. Starship reads a
+  palette table for colour names, ignores anything else in it without a
+  warning, finds no `format` at the top level and falls back to its own
+  default - `format = "$all"`, every module it knows, in its order, on two
+  lines. That is why the prompt showed a gcloud account and an Azure
+  subscription permanently: not because this file asked for them, but
+  because nothing in this file was being read. The two keys now sit above
+  the first table header, where top-level keys have to be, and
+  `starship print-config | head` prints the format actually in force.
+
+- **Every prompt after the first was a bare `❯`.** The transient-prompt
+  widget assigned to `PROMPT` and `RPROMPT` to collapse a submitted line to
+  a single arrow - and those are globals, so the assignment stuck. Nothing
+  ever put the originals back, and from the second prompt onwards the
+  *live* prompt was the transient one too: no path, no branch, no status,
+  forever, until the shell was restarted. It looked like a theme that had
+  failed to load rather than a prompt that had been overwritten, which is
+  why it survived. The full pair is now saved as
+  `STARSHIP_FULL_PROMPT`/`STARSHIP_FULL_RPROMPT` the moment
+  `starship init zsh` produces it, and a `precmd` hook restores both before
+  each new prompt is drawn.
+
+## [1.23.0]
+
+### Fixed
+
+- **The script runs on the bash macOS actually ships.** `declare -A` and
+  `declare -n` are bash 4 features and macOS is still on bash 3.2.57 - the
+  2007 release, frozen when bash went GPLv3 - so `/usr/bin/env bash` finds
+  3.2 on any Mac that has not already installed a newer one. Neither is a
+  syntax error there: both parse and then fail at run time, which is why a
+  run installed and upgraded everything normally and only died in the zsh
+  phase with `declare: -A: invalid option`. The fragment it was midway
+  through writing was a temp file, so nothing landed half-written, but the
+  phases after it - prompt config, terminal config, the manual list - never
+  ran. `--list-groups` and `--list-packages` died the same way, at their
+  first group.
+
+  The three group arrays now go through a `group_array` helper and the
+  cli-parity lookup through parallel arrays walked by `parity_row`, both
+  documented where they are defined. Two things that look like detail and
+  are not: under 3.2, expanding an array that was never declared is a fatal
+  `set -u` error rather than an empty expansion, and `"${a[@]:-}"` on an
+  empty array yields one empty string rather than nothing - so a group with
+  no casks has to be recognised as absent, not copied. Linux and Windows are
+  unaffected; they run bash 5 and PowerShell respectively.
+
 ## [1.22.0]
 
 ### Fixed

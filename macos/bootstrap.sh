@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.22.0'
+BOOTSTRAP_VERSION='1.24.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -178,6 +178,51 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ============================================================
+# Arrays, the bash 3.2 way
+# ============================================================
+# macOS ships bash 3.2.57 - 2007, the last GPLv2 release - and it is what
+# `/usr/bin/env bash` finds on any Mac this script has not finished setting up
+# yet. That rules out the two things this file used to reach for: namerefs
+# (`declare -n`, bash 4.3) to read a group's arrays by computed name, and
+# associative arrays (`declare -A`, bash 4.0) for the cli-parity lookup.
+# Neither is a syntax error under 3.2 - both parse, then fail at run time,
+# which is why a run got all the way to the zsh phase before it died.
+#
+# group_array copies GROUP_<g>_FORMULA or GROUP_<g>_CASK into an array of the
+# caller's choosing. Both halves of it are about `set -u` under 3.2: expanding
+# an array that was never declared is a fatal unbound-variable error there and
+# a group with no casks at all is perfectly normal, hence the declare -p
+# guard; and "${a[@]:-}" on an empty array yields one empty string rather than
+# nothing, so the length test is what keeps an empty group from copying as a
+# group of one blank package.
+group_array() {   # group_array <dest> <source-array-name>
+  eval "$1=()"
+  declare -p "$2" >/dev/null 2>&1 || return 0
+  eval "if (( \${#$2[@]} )); then $1=(\"\${$2[@]}\"); fi"
+}
+
+# The cli-parity table, keyed by macOS package name - three parallel arrays
+# filled in the zsh phase and walked linearly here. A dozen rows looked up a
+# dozen times is not a data-structure problem, and a linear walk is what 3.2
+# leaves once the associative array is gone.
+#
+# Sets _row_cmd and _row_desc, and returns non-zero both when the package has
+# no row and when its row carries no command to type - the caller prints the
+# bare package name for either, which is what the associative array's
+# `[[ -n "${_cli_cmd[$pkg]:-}" ]]` test did.
+parity_row() {    # parity_row <package>
+  local i
+  _row_cmd='' _row_desc=''
+  for (( i = 0; i < ${#_parity_pkg[@]}; i++ )); do
+    [[ "${_parity_pkg[$i]}" == "$1" ]] || continue
+    _row_cmd="${_parity_cmd[$i]}"
+    _row_desc="${_parity_desc[$i]}"
+    break
+  done
+  [[ -n "$_row_cmd" ]]
+}
+
+# ============================================================
 # Manifest
 # ============================================================
 
@@ -206,16 +251,14 @@ if [[ "${LIST_GROUPS:-no}" == "yes" ]]; then
   for g in "${PKG_GROUPS[@]}"; do
     desc_var="GROUP_${g}_DESC"
     gui_var="GROUP_${g}_GUI"
-    # Nameref rather than eval: it is what bash provides for exactly this, and
-    # it keeps the array an array instead of round-tripping through a string.
-    declare -n _form="GROUP_${g}_FORMULA"
-    declare -n _cask="GROUP_${g}_CASK"
+    group_array _form "GROUP_${g}_FORMULA"
+    group_array _cask "GROUP_${g}_CASK"
     total=$(( ${#_form[@]} + ${#_cask[@]} ))
     gui_tag='               '
     [[ "${!gui_var:-no}" == "yes" ]] && gui_tag='[needs desktop]'
     printf '  %s%-10s%s %-3s packages  %s%s%s  %s\n' \
       "$C_CYAN" "$g" "$C_RESET" "$total" "$C_DIM" "$gui_tag" "$C_RESET" "${!desc_var}"
-    unset -n _form _cask
+    unset _form _cask
   done
   echo
   exit 0
@@ -225,13 +268,13 @@ if [[ "${LIST_PACKAGES:-no}" == "yes" ]]; then
   echo
   for g in "${PKG_GROUPS[@]}"; do
     printf '  %s%s%s\n' "$C_CYAN" "$g" "$C_RESET"
-    declare -n _form="GROUP_${g}_FORMULA"
-    declare -n _cask="GROUP_${g}_CASK"
+    group_array _form "GROUP_${g}_FORMULA"
+    group_array _cask "GROUP_${g}_CASK"
     for pkg in "${_form[@]:-}" "${_cask[@]:-}"; do
       [[ -z "$pkg" ]] && continue
       printf '    %s%s%s\n' "$C_DIM" "$pkg" "$C_RESET"
     done
-    unset -n _form _cask
+    unset _form _cask
   done
   echo
   exit 0
@@ -913,39 +956,117 @@ else
       echo 'fi'
       echo
       echo '# Transient prompt: once a command is submitted, collapse that now-'
-      echo '# historical prompt line to a single arrow instead of leaving the'
-      echo '# full bar - path, git branch/status, language versions, clock -'
-      echo '# sitting in the scrollback forever. Same job the old Oh My Posh'
-      echo '# fork does on the Windows side and p10k used to do here, but built'
-      echo '# into Starship as a real feature - see [profiles] in starship.toml'
-      echo '# for the transient/rtransient formats this renders.'
+      echo '# historical prompt line to a single arrow instead of leaving the full'
+      echo '# bar - path, git branch/status, clock - sitting in the scrollback'
+      echo '# forever. Same job p10k used to do here and the old Oh My Posh fork did'
+      echo '# on the Windows side, but built into Starship as a real feature - see'
+      echo '# [profiles] in starship.toml for the transient/rtransient formats this'
+      echo '# renders.'
       echo '#'
-      echo '# Not a config switch, because zsh (unlike PowerShell and Fish) has'
-      echo '# no first-class transient-prompt hook of its own - this IS the'
-      echo '# community-standard implementation Starship itself points to. It'
-      echo '# works by re-invoking `starship prompt` with --profile once a line'
-      echo '# is accepted, swapped in via string substitution on the PROMPT'
-      echo '# variable starship init zsh just set above. That variable is'
-      echo "# literally \`\$('starship' prompt --terminal-width=...)\`, and the"
-      echo '# substitution below inserts --profile between the binary name and'
-      echo '# its other flags.'
+      echo '# Not a config switch, because zsh (unlike PowerShell and Fish) has no'
+      echo '# first-class transient-prompt hook of its own - this IS the community'
+      echo '# implementation Starship itself points to. It works by re-invoking'
+      echo '# starship prompt with --profile once a line is accepted, swapped in via'
+      echo '# string substitution on the PROMPT variable starship init zsh just set'
+      echo '# above. That variable is literally $(starship prompt --terminal-width=...)'
+      echo '# and the substitution inserts --profile between the binary name and its'
+      echo '# other flags.'
       echo '#'
-      echo '# BOTH lines derive from $PROMPT, not $RPROMPT, even the one feeding'
-      echo '# RPROMPT below - $RPROMPT already carries --right, and --profile'
-      echo "# and --right cannot be combined (starship's own CLI rejects it)."
-      echo '# A left-shaped invocation assigned to the RPROMPT variable renders'
-      echo '# on the right regardless of which flags built its content, so this'
-      echo '# is correct rather than a workaround.'
+      echo '# EVERY line below derives from $PROMPT, not $RPROMPT, including the ones'
+      echo '# that end up in RPROMPT - $RPROMPT already carries --right, and --profile'
+      echo '# and --right cannot be combined (the starship CLI rejects the pair). A'
+      echo '# left-shaped invocation assigned to the RPROMPT variable renders on the'
+      echo '# right regardless of which flags built its content, so this is correct'
+      echo '# rather than a workaround.'
+      echo '#'
+      echo '# STARSHIP_FULL_PROMPT/STARSHIP_FULL_RPROMPT are what make any of this'
+      echo '# reversible, and leaving them out is a bug that hides for exactly one'
+      echo '# command: the widgets below assign to the GLOBAL PROMPT, so with no copy'
+      echo '# of the originals nothing ever puts the real prompt back and every prompt'
+      echo '# after the first is the bare transient arrow, forever. The precmd hook is'
+      echo '# what restores them before the next prompt is drawn.'
+      echo 'STARSHIP_FULL_PROMPT="$PROMPT"'
+      echo 'STARSHIP_FULL_RPROMPT="$RPROMPT"'
       echo 'TRANSIENT_PROMPT="${PROMPT// prompt / prompt --profile transient }"'
       echo 'TRANSIENT_RPROMPT="${PROMPT// prompt / prompt --profile rtransient }"'
+      echo 'STARSHIP_CTX_GROUP=""'
+      echo 'STARSHIP_TRANSIENT=0'
       echo 'autoload -Uz add-zle-hook-widget'
+      echo 'autoload -Uz add-zsh-hook'
+      echo 'starship-restore-prompt() {'
+      echo '  PROMPT="$STARSHIP_FULL_PROMPT"'
+      echo '  RPROMPT="$STARSHIP_FULL_RPROMPT"'
+      echo '  STARSHIP_CTX_GROUP=""'
+      echo '  STARSHIP_TRANSIENT=0'
+      echo '}'
+      echo 'add-zsh-hook precmd starship-restore-prompt'
       echo 'transient-prompt() {'
+      echo '  STARSHIP_TRANSIENT=1'
       echo '  PROMPT="$TRANSIENT_PROMPT"'
       echo '  RPROMPT="$TRANSIENT_RPROMPT"'
       echo '  zle .reset-prompt'
       echo '}'
       echo 'zle -N transient-prompt'
       echo 'add-zle-hook-widget zle-line-finish transient-prompt'
+      echo
+      echo '# Context-sensitive right prompt: the cluster and namespace, the AWS'
+      echo '# profile, the Azure subscription, the gcloud account or the Terraform'
+      echo '# workspace appears at the right of the line WHILE the command that would'
+      echo '# use it is being typed, and goes away again when it is deleted. p10k'
+      echo '# called this SHOW_ON_COMMAND. Starship has no equivalent - it renders'
+      echo '# once, before anything is typed - so the gate lives here: on each redraw,'
+      echo '# work out which group the first real word belongs to and, when that'
+      echo '# answer CHANGES, point RPROMPT at the matching ctx_* profile in'
+      echo '# starship.toml and redraw. The profile names are the contract with that'
+      echo '# file; ctx_$group is built by concatenation, so a group here with no'
+      echo '# profile there renders an empty right prompt and no error.'
+      echo '#'
+      echo '# The cost is one starship process per change of group, not per keystroke.'
+      echo '# The early return on an unchanged group is the entire reason a hook that'
+      echo '# fires on every character typed is affordable.'
+      echo '#'
+      echo '# The loop skips what is not the command yet, so sudo kubectl ... and'
+      echo '# AWS_PROFILE=prod aws ... still resolve to the tool behind them.'
+      echo '#'
+      echo '# zle .reset-prompt from inside zle-line-pre-redraw re-enters this widget'
+      echo '# once; by then the group matches and it returns at the guard, which is'
+      echo '# what stops it recursing. STARSHIP_TRANSIENT is the other guard: a'
+      echo '# transient redraw happens while the submitted command is still in BUFFER,'
+      echo '# so without it the context would be drawn back onto the very line being'
+      echo '# collapsed to get rid of it.'
+      echo 'starship-context-prompt() {'
+      echo '  (( STARSHIP_TRANSIENT )) && return'
+      echo '  local -a words'
+      echo '  words=( ${(z)BUFFER} )'
+      echo '  while (( $#words )) && [[ ${words[1]} == *=* || ${words[1]:t} == (sudo|doas|command|env|time|nice|nohup|watch) ]]; do'
+      echo '    shift words'
+      echo '  done'
+      echo '  local group=""'
+      echo '  case ${words[1]:t} in'
+      echo '    (kubectl|kubectl-*|k|kubectx|kubens|kustomize|k9s|stern|helm|helmfile|flux|argocd|velero|skaffold|kubeseal)'
+      echo '      group=kube ;;'
+      echo '    (aws|aws-vault|awslocal|eksctl|sam|copilot|yawsso|saml2aws|granted|assume)'
+      echo '      group=aws ;;'
+      echo '    (az|azd|azcopy|func)'
+      echo '      group=azure ;;'
+      echo '    (gcloud|gsutil|bq|firebase|gke-gcloud-auth-plugin)'
+      echo '      group=gcloud ;;'
+      echo '    (terraform|tofu|terragrunt|tflint|terraform-docs|infracost|tfenv|tfswitch)'
+      echo '      group=terraform ;;'
+      echo '    (dotnet|dotnet-*|msbuild|nuget)'
+      echo '      group=dotnet ;;'
+      echo '  esac'
+      echo '  [[ "$group" == "$STARSHIP_CTX_GROUP" ]] && return'
+      echo '  STARSHIP_CTX_GROUP="$group"'
+      echo '  if [[ -n "$group" ]]; then'
+      echo '    RPROMPT="${STARSHIP_FULL_PROMPT// prompt / prompt --profile ctx_$group }"'
+      echo '  else'
+      echo '    RPROMPT="$STARSHIP_FULL_RPROMPT"'
+      echo '  fi'
+      echo '  zle .reset-prompt'
+      echo '}'
+      echo 'zle -N starship-context-prompt'
+      echo 'add-zle-hook-widget zle-line-pre-redraw starship-context-prompt'
       echo
       echo '# Completion styling, and the fzf-tab settings without which fzf-tab'
       echo '# is inert. `menu no` is the load-bearing one: zsh menu selection and'
@@ -1022,7 +1143,7 @@ else
       echo '# did not run again since. Deliberately narrower than'
       echo '# `--list-packages`, which covers every group: this is the list'
       echo '# worth having memorised, not the whole manifest.'
-      declare -A _cli_cmd=() _cli_desc=()
+      _parity_pkg=() _parity_cmd=() _parity_desc=()
       if [[ -r "$SCRIPT_DIR/../tools/cli-parity.conf" ]]; then
         while IFS='|' read -r _pty_can _pty_lx _pty_mac _pty_win _pty_note _pty_cmd _pty_desc; do
           _pty_can="$(printf '%s' "$_pty_can" | tr -d '[:space:]')"
@@ -1032,23 +1153,24 @@ else
           # Free text, unlike the id fields above - trim ends only.
           _pty_cmd="$(printf '%s' "$_pty_cmd" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
           _pty_desc="$(printf '%s' "$_pty_desc" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-          _cli_cmd["$_pty_mac"]="$_pty_cmd"
-          _cli_desc["$_pty_mac"]="$_pty_desc"
+          _parity_pkg+=("$_pty_mac")
+          _parity_cmd+=("$_pty_cmd")
+          _parity_desc+=("$_pty_desc")
         done < "$SCRIPT_DIR/../tools/cli-parity.conf"
       fi
       echo 'tools() {'
       echo '  echo'
-      declare -n _form="GROUP_cli_FORMULA"
-      declare -n _cask="GROUP_cli_CASK"
+      group_array _form "GROUP_cli_FORMULA"
+      group_array _cask "GROUP_cli_CASK"
       for pkg in "${_form[@]:-}" "${_cask[@]:-}"; do
         [[ -z "$pkg" ]] && continue
-        if [[ -n "${_cli_cmd[$pkg]:-}" ]]; then
-          printf "  echo '  %-12s  %-10s  %s'\n" "$pkg" "${_cli_cmd[$pkg]}" "${_cli_desc[$pkg]}"
+        if parity_row "$pkg"; then
+          printf "  echo '  %-12s  %-10s  %s'\n" "$pkg" "$_row_cmd" "$_row_desc"
         else
           printf "  echo '  %s'\n" "$pkg"
         fi
       done
-      unset -n _form _cask
+      unset _form _cask
       echo '  echo'
       echo '}'
       echo
