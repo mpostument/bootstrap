@@ -20,6 +20,16 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.22.0]
+
+### Changed
+
+- **`tools` now prints only the `cli` group**, not every group in the
+  manifest. Requested directly: the other groups have no cmd/desc data and
+  were just noise next to the enriched cli listing - `-ListPackages` is
+  still the full, every-group reference. Same change in
+  linux/CHANGELOG.md and macos/CHANGELOG.md.
+
 ## [1.21.0]
 
 ### Added

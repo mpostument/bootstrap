@@ -171,8 +171,10 @@ reason.
 
 For a quick check from any prompt without touching the repo, type `tools` -
 a function the shell phase writes next to your PowerShell profile on every
-run, listing every package as of the last run. `-ListPackages` above is the
-live version, read straight from `packages.psd1`.
+run, listing the `cli` group as of the last run, each with what to actually
+type and what it does. Deliberately just that one group, not the whole
+manifest - `-ListPackages` above is the live, every-group version, read
+straight from `packages.psd1`.
 
 ## What it deliberately does not do
 

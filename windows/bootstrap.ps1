@@ -93,7 +93,7 @@ $ErrorActionPreference = 'Stop'
 #
 # Bump it in the same commit as the change it describes, and add a
 # windows/CHANGELOG.md entry; the release notes are read from that file.
-$script:BootstrapVersion = '1.21.0'
+$script:BootstrapVersion = '1.22.0'
 
 # Deliberately -ShowVersion and not -Version: PowerShell reserves -Version on
 # some hosts, and a parameter that silently binds to something else is a bad
@@ -502,25 +502,28 @@ function Get-CliToolsIndex {
 # `tools` on the next run with no separate step to remember. profile.ps1 dot-
 # sources this file if it exists next to it; it is silent when absent, so an
 # older profile.ps1 deployed before this existed does not error.
+#
+# Only the cli group - not every group -ListPackages covers. This is meant
+# to be the list worth having memorised, and cli-parity.conf has cmd/desc
+# rows for exactly that group; the rest of the manifest is either already
+# its own command or, like Google.Chrome, opens from the Start Menu rather
+# than a prompt at all.
 function Deploy-ToolsList {
     param([string]$Target)
-    # Only the cli group gets cmd/desc - the package id already IS the run
-    # command for the id-heavy rest of the manifest (Google.Chrome opens from
-    # the Start Menu, not a prompt), and cli-parity.conf has no rows for them.
     $cliIndex = Get-CliToolsIndex -ParityPath (Join-Path (Split-Path $script:ToolRoot -Parent) 'tools\cli-parity.conf')
+    $cliGroup = $manifest.Groups | Where-Object { $_.Name -eq 'cli' } | Select-Object -First 1
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add('# managed by windows/bootstrap.ps1 - regenerated every run, edits here do not stick')
     $lines.Add('function tools {')
     $lines.Add('    Write-Host ""')
-    foreach ($g in $manifest.Groups) {
-        $lines.Add("    Write-Host '  $($g.Name.Replace("'", "''"))' -ForegroundColor Cyan")
-        foreach ($p in $g.Packages) {
+    if ($cliGroup) {
+        foreach ($p in $cliGroup.Packages) {
             $text = $p
-            if ($g.Name -eq 'cli' -and $cliIndex.ContainsKey($p)) {
+            if ($cliIndex.ContainsKey($p)) {
                 $info = $cliIndex[$p]
                 $text = '{0,-26} {1,-42} {2}' -f $p, $info.Cmd, $info.Desc
             }
-            $lines.Add("    Write-Host '    $($text.Replace("'", "''"))' -ForegroundColor DarkGray")
+            $lines.Add("    Write-Host '  $($text.Replace("'", "''"))' -ForegroundColor DarkGray")
         }
     }
     $lines.Add('    Write-Host ""')
