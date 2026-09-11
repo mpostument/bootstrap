@@ -15,6 +15,18 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0]
+
+### Added
+
+- **`tools`, a shell function always available at a prompt, no repo needed.**
+  Same muscle-memory idea as `cat`/`ls`/`find`/`grep` above: baked directly
+  into the managed `.zshrc` fragment on every run, from `packages.conf` as
+  of that run - groups, TOOLS, RELEASES and REPOS packages. Stale exactly
+  the way the other aliases are if the manifest changes and this script
+  does not run again - `--list-packages` is the live version for when that
+  matters. Same command in windows/CHANGELOG.md and macos/CHANGELOG.md.
+
 ## [1.15.0]
 
 ### Added

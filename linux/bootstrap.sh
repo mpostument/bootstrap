@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.15.0'
+BOOTSTRAP_VERSION='1.16.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -1333,6 +1333,51 @@ else
         echo 'command -v dust   >/dev/null && alias du="dust"'
         echo 'command -v duf    >/dev/null && alias df="duf"'
         echo 'command -v zoxide >/dev/null && eval "$(zoxide init zsh)"'
+        echo
+        echo '# `tools` prints every package this bootstrap manages, grouped the same'
+        echo '# way `--list-packages` does. Baked in at THIS run, same as the aliases'
+        echo '# above - it goes stale exactly the way they would if the manifest'
+        echo '# changed and the script did not run again since.'
+        echo 'tools() {'
+        echo '  echo'
+        for g in "${PKG_GROUPS[@]}"; do
+          declare -n _apt="GROUP_${g}_APT"
+          declare -n _flat="GROUP_${g}_FLATPAK"
+          printf "  echo '  %s'\n" "$g"
+          for pkg in "${_apt[@]:-}" "${_flat[@]:-}"; do
+            [[ -z "$pkg" ]] && continue
+            printf "  echo '    %s'\n" "$pkg"
+          done
+          unset -n _apt _flat
+        done
+        if [[ "${#TOOLS[@]}" -gt 0 ]]; then
+          echo "  echo '  tools (version managers, git clones)'"
+          for tool in "${TOOLS[@]:-}"; do
+            [[ -z "$tool" ]] && continue
+            printf "  echo '    %s'\n" "$tool"
+          done
+        fi
+        if [[ "${#RELEASES[@]}" -gt 0 ]]; then
+          echo "  echo '  release binaries (~/.local/bin)'"
+          for entry in "${RELEASES[@]:-}"; do
+            [[ -z "$entry" ]] && continue
+            printf "  echo '    %s'\n" "$entry"
+          done
+        fi
+        if [[ "${#REPOS[@]}" -gt 0 ]]; then
+          echo "  echo '  repository packages'"
+          for repo in "${REPOS[@]:-}"; do
+            [[ -z "$repo" ]] && continue
+            declare -n _rpkgs="REPO_${repo}_PACKAGES"
+            for pkg in "${_rpkgs[@]:-}"; do
+              [[ -z "$pkg" ]] && continue
+              printf "  echo '    %s'\n" "$pkg"
+            done
+            unset -n _rpkgs
+          done
+        fi
+        echo '  echo'
+        echo '}'
         echo
         echo '# Where the release binaries land. The stock ~/.profile on Debian'
         echo '# adds this when it exists, but zsh never reads .profile - so without'

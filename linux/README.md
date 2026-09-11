@@ -77,6 +77,11 @@ Override it with `--gui` or `--no-gui` when you know better.
 --version          Print the version and exit.
 ```
 
+For a quick check from any prompt without touching the repo, type `tools` -
+a zsh function baked into the managed `.zshrc` fragment on every run, listing
+every package as of the last run. `--list-packages` above is the live
+version, read straight from `packages.conf`.
+
 ## The manifest
 
 `packages.conf` is sourced as bash, so it can use arrays and comments freely.
