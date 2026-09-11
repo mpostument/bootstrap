@@ -15,6 +15,16 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0]
+
+### Added
+
+- **`--list-packages`, printing every package name in every group and
+  exiting without touching anything.** Requested directly: the manifest
+  has grown past the point of remembering what is in it. `--list-groups`
+  still gives the short, count-only version. Same flag added in
+  windows/CHANGELOG.md and linux/CHANGELOG.md.
+
 ## [1.15.0]
 
 ### Added

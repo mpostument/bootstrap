@@ -94,6 +94,7 @@ instead, because it is not in the Debian archive.
 --dry-run          Show what would change, touch nothing.
 --groups a,b       Limit to named groups. Default is every group.
 --list-groups      Print the groups in the manifest and exit.
+--list-packages    Print every package name in every group and exit.
 --skip-upgrade     Install what is missing, leave installed versions alone.
 --gui / --no-gui   Whether to install groups that need a desktop. Default is
                    --gui; use --no-gui on a headless build agent.

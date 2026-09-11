@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.15.0'
+BOOTSTRAP_VERSION='1.16.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -149,6 +149,9 @@ Usage: bootstrap.sh [options]
   --dry-run          Show what would change, touch nothing.
   --groups a,b       Limit to named groups. Default is every group.
   --list-groups      Print the groups in the manifest and exit.
+  --list-packages    Print every package name in every group and exit - for
+                     when you know something is in here somewhere but not
+                     which group.
   --skip-upgrade     Install what is missing, leave installed versions alone.
   --gui / --no-gui   Whether to install groups that need a desktop. Default is
                      --gui; use --no-gui on a headless build agent.
@@ -166,6 +169,7 @@ while [[ $# -gt 0 ]]; do
     --groups)       shift; ONLY_GROUPS="${1:-}" ;;
     --groups=*)     ONLY_GROUPS="${1#*=}" ;;
     --list-groups)  LIST_GROUPS=yes ;;
+    --list-packages) LIST_PACKAGES=yes ;;
     --version)      echo "$BOOTSTRAP_VERSION"; exit 0 ;;
     -h|--help)      usage; exit 0 ;;
     *)              die "unknown option: $1 (try --help)" ;;
@@ -211,6 +215,22 @@ if [[ "${LIST_GROUPS:-no}" == "yes" ]]; then
     [[ "${!gui_var:-no}" == "yes" ]] && gui_tag='[needs desktop]'
     printf '  %s%-10s%s %-3s packages  %s%s%s  %s\n' \
       "$C_CYAN" "$g" "$C_RESET" "$total" "$C_DIM" "$gui_tag" "$C_RESET" "${!desc_var}"
+    unset -n _form _cask
+  done
+  echo
+  exit 0
+fi
+
+if [[ "${LIST_PACKAGES:-no}" == "yes" ]]; then
+  echo
+  for g in "${PKG_GROUPS[@]}"; do
+    printf '  %s%s%s\n' "$C_CYAN" "$g" "$C_RESET"
+    declare -n _form="GROUP_${g}_FORMULA"
+    declare -n _cask="GROUP_${g}_CASK"
+    for pkg in "${_form[@]:-}" "${_cask[@]:-}"; do
+      [[ -z "$pkg" ]] && continue
+      printf '    %s%s%s\n' "$C_DIM" "$pkg" "$C_RESET"
+    done
     unset -n _form _cask
   done
   echo
