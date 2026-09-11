@@ -15,6 +15,17 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.18.0]
+
+### Changed
+
+- **`tools` now prints only the `cli` group**, not every group in the
+  manifest - including TOOLS, RELEASES and REPOS packages, which it used
+  to cover too. Requested directly: those have no cmd/desc data and were
+  just noise next to the enriched cli listing - `--list-packages` is
+  still the full, every-group reference. Same change in
+  windows/CHANGELOG.md and macos/CHANGELOG.md.
+
 ## [1.17.0]
 
 ### Added

@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.17.0'
+BOOTSTRAP_VERSION='1.18.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -1334,15 +1334,13 @@ else
         echo 'command -v duf    >/dev/null && alias df="duf"'
         echo 'command -v zoxide >/dev/null && eval "$(zoxide init zsh)"'
         echo
-        echo '# `tools` prints every package this bootstrap manages, grouped the same'
-        echo '# way `--list-packages` does. Baked in at THIS run, same as the aliases'
-        echo '# above - it goes stale exactly the way they would if the manifest'
-        echo '# changed and the script did not run again since.'
-        echo
-        echo '# The cli group additionally gets what to actually type and what the'
-        echo '# thing does, from tools/cli-parity.conf - the package NAME already'
-        echo '# doubles as the command for everything in this group, but a fresh'
-        echo '# machine should not have to already know that.'
+        echo '# `tools` prints the cli group - bat/eza/fd/... - with what to'
+        echo '# actually type and what the thing does, from tools/cli-parity.conf.'
+        echo '# Baked in at THIS run, same as the aliases above - it goes stale'
+        echo '# exactly the way they would if the manifest changed and the script'
+        echo '# did not run again since. Deliberately narrower than'
+        echo '# `--list-packages`, which covers every group: this is the list'
+        echo '# worth having memorised, not the whole manifest.'
         declare -A _cli_cmd=() _cli_desc=()
         if [[ -r "$SCRIPT_DIR/../tools/cli-parity.conf" ]]; then
           while IFS='|' read -r _pty_can _pty_lx _pty_mac _pty_win _pty_note _pty_cmd _pty_desc; do
@@ -1359,46 +1357,17 @@ else
         fi
         echo 'tools() {'
         echo '  echo'
-        for g in "${PKG_GROUPS[@]}"; do
-          declare -n _apt="GROUP_${g}_APT"
-          declare -n _flat="GROUP_${g}_FLATPAK"
-          printf "  echo '  %s'\n" "$g"
-          for pkg in "${_apt[@]:-}" "${_flat[@]:-}"; do
-            [[ -z "$pkg" ]] && continue
-            if [[ "$g" == cli && -n "${_cli_cmd[$pkg]:-}" ]]; then
-              printf "  echo '    %-12s  %-10s  %s'\n" "$pkg" "${_cli_cmd[$pkg]}" "${_cli_desc[$pkg]}"
-            else
-              printf "  echo '    %s'\n" "$pkg"
-            fi
-          done
-          unset -n _apt _flat
+        declare -n _apt="GROUP_cli_APT"
+        declare -n _flat="GROUP_cli_FLATPAK"
+        for pkg in "${_apt[@]:-}" "${_flat[@]:-}"; do
+          [[ -z "$pkg" ]] && continue
+          if [[ -n "${_cli_cmd[$pkg]:-}" ]]; then
+            printf "  echo '  %-12s  %-10s  %s'\n" "$pkg" "${_cli_cmd[$pkg]}" "${_cli_desc[$pkg]}"
+          else
+            printf "  echo '  %s'\n" "$pkg"
+          fi
         done
-        if [[ "${#TOOLS[@]}" -gt 0 ]]; then
-          echo "  echo '  tools (version managers, git clones)'"
-          for tool in "${TOOLS[@]:-}"; do
-            [[ -z "$tool" ]] && continue
-            printf "  echo '    %s'\n" "$tool"
-          done
-        fi
-        if [[ "${#RELEASES[@]}" -gt 0 ]]; then
-          echo "  echo '  release binaries (~/.local/bin)'"
-          for entry in "${RELEASES[@]:-}"; do
-            [[ -z "$entry" ]] && continue
-            printf "  echo '    %s'\n" "$entry"
-          done
-        fi
-        if [[ "${#REPOS[@]}" -gt 0 ]]; then
-          echo "  echo '  repository packages'"
-          for repo in "${REPOS[@]:-}"; do
-            [[ -z "$repo" ]] && continue
-            declare -n _rpkgs="REPO_${repo}_PACKAGES"
-            for pkg in "${_rpkgs[@]:-}"; do
-              [[ -z "$pkg" ]] && continue
-              printf "  echo '    %s'\n" "$pkg"
-            done
-            unset -n _rpkgs
-          done
-        fi
+        unset -n _apt _flat
         echo '  echo'
         echo '}'
         echo
