@@ -29,6 +29,40 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Comments cut back to what a reader cannot work out from the code.** The
+  scripts, manifests, the shared `starship.toml`, the workflows and the
+  READMEs carried around 3,900 lines of commentary between them - restated
+  code, history of choices already made, and the same reasoning written out
+  again in each of the three platforms. What stays: section headings, the
+  `shellcheck` and `#Requires` directives, `bootstrap.ps1`'s comment-based
+  help (that one is the script's `-?`, not commentary), and the traps a
+  future edit would otherwise walk into - bash 3.2 arrays, TOML key order,
+  `fzf-tab.zsh`'s filename, `Get-Item function:prompt`. CHANGELOG.md is
+  untouched; the release workflow reads it.
+
+- **The prompt shows the whole path again, not just the repository
+  folder.** `truncate_to_repo` is Starship's own default and it cuts away
+  everything above the repo root, so standing in a checkout showed
+  `chronosphere-infra` and nothing else - no help at all when the question
+  being asked is which of three checkouts this is. The path now reads from
+  `~` down, with everything above the repo root dimmed so the extra width
+  does not compete with the part that says where you are, and anything past
+  eight components dropped behind a `…/` that admits it - Starship's default
+  truncation symbol is an empty string, which truncates just as hard and
+  says nothing.
+
+- **`openjdk-21-jdk` replaces `default-jdk`.** What installs today does not
+  change: trixie's `default-jdk` depends on `openjdk-21-jdk`, and trixie is
+  what `verify-manifests.yml` checks names against. What changes is the next
+  stable. `default-jdk` follows whatever the archive calls default - trixie
+  already carries `openjdk-25-jdk` alongside it - so this manifest would have
+  changed major the day a machine was upgraded, silently, while macOS
+  (`microsoft-openjdk@21`) and Windows
+  (`Microsoft.OpenJDK.21`) stayed where they were pinned. Both of those
+  manifests carried a comment resting on Linux being "frozen at 21 for
+  trixie's whole release life": true, and true only until trixie. All three
+  now state the same pin in their own package manager's spelling.
+
 - **The `ctx_*` profiles carry the whole right prompt, not one module.**
   1.25.0 added them as bare placeholders - `ctx_kube = "$kubernetes"` - to
   stop `starship prompt --profile ctx_kube` erroring. Each is now the

@@ -1,72 +1,10 @@
-# ============================================================
 # starship.toml - one prompt config, deployed identically to all three
 # platforms
-# ============================================================
-# The whole reason this fleet moved to Starship: PowerShell, zsh (and bash,
-# fish, nu...) all read this SAME file, so a change here changes the prompt
-# everywhere at once. Deployed verbatim by each bootstrap.ps1/bootstrap.sh
-# to that platform's config location (env:STARSHIP_CONFIG on Windows,
-# ~/.config/starship.toml on Linux/macOS) - see the shell phase in each.
-#
-# Edit this file, re-run bootstrap, done - no separate theme fork to
-# maintain (Windows used to carry one specifically to add transient-prompt
-# support, before Starship shipped it as a real feature) and no second
-# config file for the other platform to drift out of step with.
-#
-# LAYOUT, and the one idea the rest of this file serves:
-#
-#   ~/projects/omnistrate-poc  main ?1 ❯            (venv) 3.11.9  14:49
-#   \_________ left, always ___________/            \__ right, context __/
-#
-# The left side answers "where am I" and never changes shape. The right
-# side answers "what am I about to hit", and most of it is not drawn until
-# you start typing the command that would hit it: type `kubectl` and the
-# cluster appears on the right, type `terraform` and the workspace does,
-# delete the word and they go away again. That gating is NOT a Starship
-# feature - Starship renders once, before you type - it is the zsh
-# zle-line-pre-redraw / PowerShell PSReadLine key-handler wiring in the
-# shell phase of each bootstrap script, which re-renders the right side
-# through the [profiles] at the bottom of this file. The profiles are the
-# contract between this file and that wiring: rename one and the shell
-# fragment stops finding it.
 
 "$schema" = 'https://starship.rs/config-schema.json'
 
-# Catppuccin Mocha, matching the palette already defined for Windows
-# Terminal (packages.psd1's TerminalColorSchemeDef) and ghostty
-# (packages.conf's GHOSTTY_THEME) - the same fleet-wide "looks the same
-# everywhere" rule this file itself is an example of, just for the prompt
-# instead of the terminal chrome.
 palette = 'catppuccin_mocha'
 
-# ORDER MATTERS HERE, and silently. `format` and `right_format` are
-# top-level keys, so they have to appear BEFORE the first [table] header -
-# anything after `[palettes.catppuccin_mocha]` below is parsed as a key of
-# THAT table, not of the config. A format written down there is not an
-# error and draws no warning: Starship simply never sees it and falls back
-# to `format = "$all"`, every module it knows, in its own order. If the
-# prompt ever goes back to showing things this file does not list, check
-# this first - `starship print-config | head` prints the format actually in
-# force.
-#
-# One line, and deliberately short: identity (only when it is not obvious),
-# where you are, what git thinks of it, how long the last command took, and
-# the arrow. No $line_break - the cursor sits on the same line as the path,
-# which is what makes the right prompt land beside it rather than a line
-# below. Everything that varies with what you are about to run lives in
-# right_format and the profiles instead.
-# add_newline is off and the blank line moved INTO format, as the escape on
-# the first line below. Starship's own add_newline prepends its newline to
-# every profile render too, and a profile is what both the transient prompt
-# and every ctx_* right prompt below are rendered from - a leading newline
-# is harmless at the top of a prompt and wrecks anything drawn to the right
-# of the cursor. Verify with `starship prompt --profile transient | cat -v`:
-# it must start with the escape sequence, not with a blank line.
-#
-# profile.ps1 also keys off that leading newline: it is how the PowerShell
-# wrapper tells a full prompt render (which gets a right prompt, drawn onto
-# the line the newline just opened) from a transient one (which does not).
-# Take the \n out of format and the Windows right prompt goes quiet.
 add_newline = false
 
 format = """
@@ -80,20 +18,6 @@ $git_status\
 $cmd_duration\
 $character"""
 
-# The right prompt's baseline - what shows when the command line is empty or
-# is something with no cloud behind it. These are all "the toolchain this
-# directory actually uses" modules, so each one hides itself when it does
-# not apply; on a plain directory the right side is just the clock.
-#
-# $python is here rather than in a profile on purpose: its default
-# detect_env_vars = ["VIRTUAL_ENV"] means an active venv shows the moment it
-# is activated, anywhere, which is the thing you want to be reminded of
-# without having to type `pip` first.
-#
-# zsh renders this natively (RPROMPT, set by `starship init zsh`).
-# PowerShell has no right prompt at all - Starship's own PowerShell init
-# never reads this key - so profile.ps1 draws it by hand from the same
-# modules. See the Starship block there.
 right_format = """$nodejs$python$golang$rust$dotnet$docker_context$time"""
 
 [palettes.catppuccin_mocha]
@@ -124,36 +48,7 @@ base      = '#1e1e2e'
 mantle    = '#181825'
 crust     = '#11111b'
 
-# ============================================================
 # [profiles] - the alternate formats the shells swap in
-# ============================================================
-# A profile is just a named format string, rendered by
-# `starship prompt --profile <name>`. Two jobs here:
-#
-# transient/rtransient - collapse a submitted command's prompt to a bare
-# arrow so the scrollback is output, not a wall of repeated prompts.
-# Rendered from the zsh hook and, on PowerShell, by Starship's own
-# Enable-TransientPrompt (which calls `starship module character` and does
-# not read this section at all - it is zsh-only).
-#
-# ctx_* - the right prompt as it looks WHILE you are typing a command that
-# touches that thing. Each one is its context module followed by the exact
-# contents of right_format above, because a profile replaces the format
-# wholesale and TOML has no way to include one string in another - if you
-# add a module to right_format, add it to all six of these too. The names
-# are load-bearing: the shell fragments build `--profile ctx_$group` from
-# their own command->group tables, so the groups here must match the groups
-# there. A group with no key here is not a silent no-op either - starship
-# exits with `Profile "ctx_kube" not found`, on stderr, from inside a
-# command substitution that only the right-hand side of the prompt ever
-# sees, so it reads on screen as the feature simply not working.
-#
-# ctx_dotnet is the one that does not simply prepend. $dotnet is already in
-# right_format, where it reports the PROJECT - its target framework and the
-# version pinned for it - and that is the useful answer while you are
-# reading code. The moment you type `dotnet`, the useful answer becomes
-# which SDK is about to run, global.json and all, so the project badge is
-# swapped for [custom.dotnet_sdk] below rather than shown beside it.
 [profiles]
 transient = "[❯](green bold) "
 rtransient = ""
@@ -170,11 +65,6 @@ success_symbol = '[❯](green bold)'
 error_symbol = '[❯](red bold)'
 vimcmd_symbol = '[❮](green bold)'
 
-# Both default to showing only when it is not the obvious case: username
-# when root or over SSH (show_always = false, Starship's own default),
-# hostname only over SSH (ssh_only = true, also the default) - so neither
-# clutters a normal local prompt, only tells you when you are somewhere
-# else.
 [username]
 style_user = 'yellow bold'
 format = '[$user]($style)@'
@@ -186,36 +76,17 @@ format = '[$ssh_symbol$hostname]($style) '
 
 [directory]
 style = 'blue bold'
-truncation_length = 4
-truncate_to_repo = true
+truncation_length = 8
+truncate_to_repo = false
+truncation_symbol = '…/'
+repo_root_style = 'blue bold'
+before_repo_root_style = 'overlay1'
 
-# No `on ` - same reason as the context modules further down, and here it
-# also keeps the branch tight against the path it belongs to.
 [git_branch]
 style = 'mauve bold'
 symbol = ' '
 format = '[$symbol$branch]($style) '
 
-# Starship's default says `!?` and leaves you to work out what and how
-# many. Two changes fix that without spending a word of prompt on it:
-#
-#   ${count} on every symbol, so `!2 ?1` says two files modified, one
-#   untracked - and a colour per state, so the symbol is decoration rather
-#   than the only thing carrying the meaning. The legend, once:
-#
-#     +N  staged, ready to commit       !N  modified, not staged
-#     ?N  untracked, git does not know  ✘N  deleted
-#     »N  renamed                        *N  stashed
-#     ~N  conflicted, a merge is waiting
-#     ⇡N  commits ahead of upstream     ⇣N  behind    ⇡N⇣N  diverged
-#
-# The trailing space belongs to each symbol rather than to the group, which
-# is what keeps `!2 ?1` spaced without leaving a double space before the
-# arrow when only one of them is showing.
-#
-# Starship's default also wraps the whole thing in literal square brackets.
-# Dropped: on a one-line prompt they are three characters of nothing
-# between the branch and the arrow.
 [git_status]
 style = 'yellow bold'
 format = '($all_status$ahead_behind)'
@@ -231,8 +102,6 @@ behind     = '[⇣${count} ](peach bold)'
 diverged   = '[⇡${ahead_count}⇣${behind_count} ](peach bold)'
 up_to_date = ''
 
-# Mid-rebase/merge/cherry-pick, with the step counter. Rarely visible and
-# worth every column when it is.
 [git_state]
 style = 'red bold'
 
@@ -241,32 +110,7 @@ min_time = 2000
 style = 'peach bold'
 format = 'took [$duration]($style) '
 
-# ============================================================
 # The context modules
-# ============================================================
-# Every one of these is reached only through a ctx_* profile, so none of
-# them appears until the command line starts with something that would use
-# it. They still hide themselves the normal way on top of that - no
-# AWS_PROFILE set, no `az` subscription, no .terraform directory - so
-# typing `aws` in a directory with no AWS anything shows nothing rather
-# than an empty badge.
-#
-# `disabled = false` is already Starship's default for aws/gcloud/
-# terraform; azure and kubernetes are the two disabled upstream and need it
-# stated here.
-#
-# The formats all drop Starship's default `on `/`via ` prefix words. Those
-# read as a sentence on the left of a two-line prompt and as clutter on the
-# right of a one-line one. The cloud symbols are plain lowercase text
-# rather than glyphs - `aws`/`az`/`gcp`/`tf` survive any font, including a
-# TTY with no Nerd Font at all, and the colour already separates them.
-# force_display, because of the gating: by default Starship hides this
-# module unless it can see credentials for the profile in ~/.aws - which it
-# cannot when they come from SSO, a credential_process or an exported
-# session, the normal cases here. The badge is only ever drawn while an
-# `aws`-family command is on the line, and at that moment "which profile is
-# this about to use" is the whole question, so it answers even when it
-# cannot vouch for the credentials.
 [aws]
 disabled = false
 force_display = true
@@ -286,70 +130,26 @@ style = 'red bold'
 symbol = 'gcp '
 format = '[$symbol$account(@$domain)(\($region\))]($style) '
 
-# Recognises `tofu version` as well as `terraform version` out of the box
-# (Starship's own default `commands` list covers both), so this needed no
-# extra config for the switch to OpenTofu - see the dev group in
-# packages.psd1/packages.conf for that swap. $workspace, not $version:
-# which workspace you are in is the thing that changes what a plan or apply
-# actually touches.
 [terraform]
 disabled = false
 style = 'lavender bold'
 symbol = 'tf '
 format = '[$symbol$workspace]($style) '
-# Starship looks at the CURRENT directory only, and its defaults are
-# `.tf`/`.tfplan`/`.tfstate` files or a `.terraform` folder. That misses
-# the two places a terraform command is most often actually typed:
-#
-#   a Terragrunt tree, whose root and intermediate directories hold a
-#   `terragrunt.hcl` and no .tf file at all - which is exactly where
-#   `terragrunt run-all` gets run;
-#
-#   a repository pinned with tfenv, where `.terraform-version` sits at the
-#   root and the .tf files are a directory or two down.
-#
-# Both are listed below, along with `.terraform.lock.hcl` (present in any
-# initialised directory, including one whose .tf files were since moved)
-# and the `tfvars` extension. Widening detection costs nothing at runtime -
-# it is a directory listing either way - and the badge is gated behind
-# typing a terraform command regardless.
 detect_extensions = ['tf', 'tfplan', 'tfstate', 'tfvars']
 detect_files = ['terragrunt.hcl', 'terragrunt.hcl.json', '.terraform.lock.hcl', '.terraform-version']
 detect_folders = ['.terraform']
 
-# Context AND namespace. A context alone is half the answer to "what does
-# this `kubectl delete` hit" - the namespace is the other half, and it is
-# the one that is invisible in every other UI.
 [kubernetes]
 disabled = false
 symbol = '☸ '
 style = 'blue bold'
 format = '[$symbol$context( \($namespace\))]($style) '
 
-# Reached through ctx_kube, not a group of its own: typing `helm` puts the
-# CLUSTER on the right, which is what a `helm upgrade` is actually aimed
-# at. This adds the chart's helm version next to it when the directory is a
-# chart.
 [helm]
 style = 'teal bold'
 symbol = '⎈ '
 format = '[$symbol($version )]($style)'
 
-# `dotnet --version` rather than the [dotnet] module, and the difference is
-# the whole point: the module reads the project files, this asks the CLI,
-# which resolves global.json exactly the way the command you are typing is
-# about to. A pinned SDK that is not the newest installed one shows up here
-# and nowhere else.
-#
-# Reached only from ctx_dotnet, so the process runs when the line starts
-# with a dotnet command and never otherwise - about 100ms, once, on the
-# change of group rather than per keystroke.
-#
-# The outer ( ) is what keeps this quiet on a machine with no dotnet: a
-# custom module whose command fails still renders, with $output empty, so
-# without the conditional group a missing SDK would show as a bare `.NET`
-# badge. `when = true` means "no further test" - the gate is the profile
-# this is referenced from, not a condition here.
 [custom.dotnet_sdk]
 command = 'dotnet --version'
 when = true
@@ -357,10 +157,7 @@ style = 'mauve bold'
 symbol = '.NET '
 format = '([$symbol$output ]($style))'
 
-# ============================================================
 # Toolchain versions - the right prompt's baseline
-# ============================================================
-# Same `via ` removal as the context modules above, for the same reason.
 [nodejs]
 style = 'green bold'
 symbol = ' '

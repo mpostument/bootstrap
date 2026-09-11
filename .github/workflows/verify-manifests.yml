@@ -1,38 +1,10 @@
 name: Verify manifests
 
-# Does every package name in the three manifests still resolve to a real
-# package?
-#
-# Nothing here installs anything. Each check asks the relevant index whether a
-# name exists, which is the failure this repository keeps paying for at
-# runtime: `yq` resolved to a real Debian package that was a DIFFERENT PROGRAM
-# from the one the other two platforms installed, and nothing noticed for
-# months, because a wrong name that installs cleanly looks exactly like a right
-# one. `Derailed.k9s` needed its capital D found by hand. `google-cloud-sdk`
-# moved from formula to cask. Each of those was discovered by a run failing on
-# somebody's machine.
-#
-# SEPARATE from release.yml on purpose, and the reason matters. Every check
-# below depends on a third-party index being reachable: winget-pkgs, the
-# Homebrew API, the Debian archive, GitHub's release assets. Wiring that into
-# the release job would mean an upstream outage blocks a release of files that
-# are perfectly correct. Publishing must depend only on what is in the
-# repository; this asks about the world, which is a different question with a
-# different failure mode.
-#
-# The weekly schedule is the point rather than a nicety. Package names rot
-# while nobody touches the repository - a formula is renamed, a package leaves
-# the archive, a project changes how it names release assets - so a check that
-# only ran on push would find out at exactly the same time it does now, which
-# is when a run fails.
-
 on:
   push:
     branches: [main]
   pull_request:
   schedule:
-    # Monday morning. A name that broke over the weekend is known before the
-    # week's first bootstrap run.
     - cron: '0 7 * * 1'
   workflow_dispatch:
 
@@ -47,22 +19,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7.0.1
 
-      # ------------------------------------------------------------------
-      # The parity claim, checked before anything asks an index a question
-      # ------------------------------------------------------------------
-      # This one needs no network at all, so it runs first: if the manifests
-      # disagree with each other there is no point asking whether their names
-      # exist.
       - name: The cli group is the same on all three platforms
         run: bash tools/parity.sh
 
-      # ------------------------------------------------------------------
-      # Linux - the Debian archive
-      # ------------------------------------------------------------------
-      # In a Debian container rather than against the runner's Ubuntu archive.
-      # They are not the same index, and the manifest targets Debian family
-      # with Debian package names; checking Ubuntu's would pass names Debian
-      # does not carry and fail ones it does.
       - name: Every apt package exists in the Debian archive
         run: |
           set -euo pipefail
@@ -74,10 +33,6 @@ jobs:
             pkgs+=("${_apt[@]}")
             unset -n _apt
           done
-          # REPO_*_PACKAGES are deliberately NOT checked: those come from
-          # third-party repositories the container has not added, so every one
-          # of them would report as missing from the Debian archive, correctly
-          # and uselessly.
           printf '%s\n' "${pkgs[@]}" | sort -u > /tmp/apt-wanted.txt
           echo "Checking $(wc -l < /tmp/apt-wanted.txt) apt package names against trixie"
 
@@ -94,9 +49,6 @@ jobs:
 
           missing="$(sed -n 's/^MISSING://p' /tmp/apt-result.txt | tr -s ' ')"
 
-          # Packages the manifest already documents as absent from Debian, with
-          # the run reporting them as `missing` and carrying on. An entry here
-          # is a decision that was written down; anything else is drift.
           known_absent=" ghostty "
 
           failed=0
@@ -111,13 +63,6 @@ jobs:
           [ "$failed" -eq 0 ] && echo 'OK   every apt package resolves'
           exit "$failed"
 
-      # ------------------------------------------------------------------
-      # Linux - Flathub
-      # ------------------------------------------------------------------
-      # A Flatpak reference is a reverse-DNS string with no spell check on it
-      # anywhere: org.gimp.GIMP is right and org.gimp.Gimp is not, and the only
-      # thing that tells you which is a failed install on a real machine. Same
-      # class of error as the winget id case bug, and checked the same way.
       - name: Every Flathub reference exists
         run: |
           set -euo pipefail
@@ -141,41 +86,20 @@ jobs:
           [ "$failed" -eq 0 ] && echo "OK   all $n Flathub references resolve"
           exit "$failed"
 
-      # ------------------------------------------------------------------
-      # macOS - the Homebrew API
-      # ------------------------------------------------------------------
-      # formulae.brew.sh serves the whole index as JSON, so this needs no macOS
-      # runner and no brew install. Formulae and casks are asked SEPARATELY and
-      # that is the point: `docker` is a formula (the CLI alone) and
-      # `docker-desktop` is a cask, `google-cloud-sdk` moved from one to the
-      # other, and a check that accepted either would miss exactly that move.
       - name: Every Homebrew formula and cask exists
         run: |
           set -euo pipefail
           # shellcheck disable=SC1091
           . macos/packages.conf
 
-          # The whole index, once, rather than one request per package. Two
-          # reasons beyond speed, and both are things a per-name lookup gets
-          # WRONG rather than slowly:
-          #
-          #   aliases    `python3` and `sqlite3` install fine and have no page
-          #              of their own - they are aliases of python@3.x and
-          #              sqlite. A per-name check calls both a bug.
-          #   old_tokens a renamed cask keeps its old name here, which is how
-          #              `mpv` was found to have become `stolendata-mpv`. A
-          #              per-name check says only "gone", not "renamed to".
           curl -fsSL https://formulae.brew.sh/api/formula.json -o /tmp/f.json
           curl -fsSL https://formulae.brew.sh/api/cask.json    -o /tmp/c.json
 
-          # Names, then aliases, one per line.
           { grep -o '"name":"[^"]*"' /tmp/f.json | cut -d'"' -f4
             grep -o '"aliases":\[[^]]*\]' /tmp/f.json | grep -o '"[^"]*"' | tr -d '"'
           } | sort -u > /tmp/formulae.txt
           { grep -o '"token":"[^"]*"' /tmp/c.json | cut -d'"' -f4
           } | sort -u > /tmp/casks.txt
-          # Renamed casks, kept apart so the message can say "renamed", which
-          # is the difference between a one-word fix and an investigation.
           grep -o '"old_tokens":\[[^]]*\]' /tmp/c.json | grep -o '"[^"]*"' | tr -d '"' \
             | sort -u > /tmp/casks-old.txt
 
@@ -196,10 +120,6 @@ jobs:
             declare -n _cask="GROUP_${g}_CASK"
             for f in ${_form[@]+"${_form[@]}"}; do
               n=$(( n + 1 ))
-              # Formulae that come from a tap in TAPS rather than homebrew-core.
-              # The API indexes core only, so a tap formula is correctly absent
-              # from it and must be listed here to stay checkable-by-exception
-              # rather than silently unchecked.
               case " tflint " in *" $f "*) echo "NOTE $f - from a tap, not core"; continue ;; esac
               check formula "$f" || {
                 echo "::error file=macos/packages.conf::'$f' is not a Homebrew formula (is it a cask, or does it need a tap in TAPS?)"
@@ -222,19 +142,6 @@ jobs:
           [ "$failed" -eq 0 ] && echo "OK   all $n Homebrew names resolve, each as the kind the manifest says"
           exit "$failed"
 
-      # ------------------------------------------------------------------
-      # Windows - the winget-pkgs repository
-      # ------------------------------------------------------------------
-      # Against the manifest repository rather than the winget CLI, because the
-      # GitHub-hosted Windows runners do not ship winget and installing it is a
-      # large detour for a name lookup.
-      #
-      # The path is derived, not searched: winget-pkgs stores
-      # `Publisher.Package` at manifests/<lowercased first letter>/Publisher/
-      # Package/, so `BurntSushi.ripgrep.MSVC` is manifests/b/BurntSushi/
-      # ripgrep/MSVC. That derivation is also why this catches the case bug -
-      # the path is case-sensitive on GitHub exactly as `winget -e` is
-      # case-sensitive on the id, which is what made `derailed.k9s` fail.
       - name: Every winget id exists in winget-pkgs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -260,14 +167,6 @@ jobs:
           [ "$failed" -eq 0 ] && echo "OK   all $n winget ids resolve, case included"
           exit "$failed"
 
-      # ------------------------------------------------------------------
-      # The release binaries - do the asset URLs still exist?
-      # ------------------------------------------------------------------
-      # The one check here that is not about a name in an index. A RELEASES
-      # entry builds a download URL out of an asset PATTERN, so it breaks when
-      # an upstream renames its assets - which is silent until a run 404s. helm
-      # publishes to its own domain and k9s capitalises Linux; both were found
-      # the hard way, and both are exactly what this re-checks every week.
       - name: Every RELEASES asset URL resolves
         run: |
           set -euo pipefail

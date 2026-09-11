@@ -1,9 +1,7 @@
 # bootstrap.sh
 
-Installs and updates a Debian-family machine's software from a manifest.
-
-One command does both jobs. On a fresh machine it installs everything; on a
-machine that already has it, it takes the updates.
+Installs and updates a Debian-family machine's software from a manifest. One
+command does both.
 
 ```bash
 ./bootstrap.sh --dry-run     # show what would change, touch nothing
@@ -11,60 +9,37 @@ machine that already has it, it takes the updates.
 ```
 
 It calls `sudo` for the steps that need root and runs everything else as you.
-Nothing here needs you to be root for the whole run.
 
 ## The desktop check
 
-The thing that makes one manifest work on both a workstation and a server:
-groups marked `GROUP_<name>_GUI=yes` are **skipped** when the machine has no
-desktop environment. Blender, GIMP, VLC and the rest are reported as `no-gui`
-rather than dragging a large dependency tree onto a box where nobody can open
-them.
+Groups marked `GROUP_<name>_GUI=yes` are skipped when the machine has no
+desktop, and reported as `no-gui`.
 
-The two obvious ways to detect this are both wrong, so neither is used:
-
-| Signal | Why it lies |
-|---|---|
-| `$DISPLAY` / `$WAYLAND_DISPLAY` | Describes the *session*, not the machine. Unset when you SSH into your own desktop; **set** when you SSH into a headless server with X forwarding. WSLg sets both on a WSL install with no desktop at all. |
-| `systemctl get-default` | Reports `graphical.target` on that same WSL install. |
-
-Both were measured on WSL Ubuntu 24.04: `DISPLAY=:0`, `WAYLAND_DISPLAY=wayland-0`,
-`graphical.target` — and no desktop.
-
-So the script asks what is **installed** instead: a display manager, or session
-`.desktop` files under `/usr/share/xsessions` or `/usr/share/wayland-sessions`.
-Neither appears by accident, and the answer is the same over SSH as it is at
-the keyboard — which is the property that matters for something meant to run
-unattended.
-
-Override it with `--gui` or `--no-gui` when you know better.
+Detection asks what is **installed** — a display manager, or session `.desktop`
+files under `/usr/share/xsessions` or `/usr/share/wayland-sessions`. Not
+`$DISPLAY`/`$WAYLAND_DISPLAY` and not `systemctl get-default`: both describe the
+session rather than the machine, and both report a desktop on WSL, which has
+none. Override with `--gui` or `--no-gui`.
 
 ## What it does
 
-1. **Repositories** — adds the third-party apt sources in the manifest, each
-   with its own key under `/etc/apt/keyrings` and a `Signed-By` line scoping
-   that key to that repository only.
-2. **Repository packages** — VS Code, Docker, Unity Hub.
-3. **Package groups** — everything from the distribution archive and Flathub,
-   with GUI groups gated on the desktop check.
-4. **Upgrades** — one apt transaction for the whole system, plus `flatpak
-   update` — and only when something is actually outdated.
-5. **Tools** — `pyenv`, `pyenv-virtualenv`, `tofuenv` and `nvm`, git clones
-   under `$HOME`.
-6. **.NET SDK** — Microsoft's install script, into `$HOME/.dotnet`.
-7. **Release binaries** — `tflint`, `terraform-docs` and `starship`, static
-   builds from GitHub into `~/.local/bin`, for software Debian does not
-   package.
-8. **Nerd Font** — Meslo, on desktop machines, because the prompt needs it.
-9. **Claude Code** — Anthropic's script, once, into `~/.local/bin`.
-10. **zsh** — oh-my-zsh, Starship and the plugins, plus a managed
-    `~/.zshrc.bootstrap` fragment sourced from your own `.zshrc`.
-11. **Prompt config** — `starship.toml` at the repo root, copied to
-    `~/.config/starship.toml` unchanged. The same file Windows and macOS
-    deploy too - one prompt config for every shell on every platform.
-12. **Schedule** — a systemd system timer that re-runs this script daily,
-    unattended, so updates arrive on their own. The Linux side of the same job
-    the Windows manifest gives Task Scheduler.
+1. **Repositories** — third-party apt sources, each with its own key under
+   `/etc/apt/keyrings` and a `Signed-By` line scoping it to that repository.
+2. **Repository packages** — VS Code, Docker, Unity Hub, kubectl, Azure CLI,
+   Google Cloud CLI.
+3. **Package groups** — archive and Flathub, GUI groups gated on the check above.
+4. **Upgrades** — one apt transaction plus `flatpak update`, only when outdated.
+5. **Tools** — `pyenv`, `pyenv-virtualenv`, `tofuenv`, `nvm` as git clones under `$HOME`.
+6. **.NET SDK** — Microsoft's install script into `$HOME/.dotnet`.
+7. **Release binaries** — `tflint`, `terraform-docs`, `helm`, `k9s`, `stern`,
+   `yq`, `starship` into `~/.local/bin`.
+8. **Nerd Font** — Meslo, on desktop machines.
+9. **Claude Code** — Anthropic's script into `~/.local/bin`.
+10. **zsh** — oh-my-zsh, Starship and plugins, plus a managed
+    `~/.zshrc.bootstrap` sourced from your own `.zshrc`.
+11. **Prompt config** — `starship.toml` from the repo root to
+    `~/.config/starship.toml`, the same file all three platforms deploy.
+12. **Schedule** — a systemd system timer that re-runs this script daily.
 
 ## Options
 
@@ -72,8 +47,7 @@ Override it with `--gui` or `--no-gui` when you know better.
 --dry-run          Show what would change, touch nothing.
 --groups a,b       Limit to named groups. Default is every group.
 --list-groups      Print the groups in the manifest and exit.
---list-packages    Print every package/tool name this script manages and
-                   exit - groups, TOOLS, RELEASES and REPOS packages.
+--list-packages    Print every package/tool this script manages and exit.
 --skip-upgrade     Install what is missing, leave installed versions alone.
 --skip-schedule    Leave the systemd timer alone.
 --gui / --no-gui   Override desktop detection instead of probing for it.
@@ -81,100 +55,63 @@ Override it with `--gui` or `--no-gui` when you know better.
 --version          Print the version and exit.
 ```
 
-For a quick check from any prompt without touching the repo, type `tools` -
-a zsh function baked into the managed `.zshrc` fragment on every run, listing
-the `cli` group as of the last run, each with what to actually type and what
-it does. Deliberately just that one group, not the whole manifest -
-`--list-packages` above is the live, every-group version, read straight
-from `packages.conf`.
+`tools` is a zsh function written into the managed fragment: the `cli` group as
+of the last run, with what to type and what it does.
 
 ## The manifest
 
-`packages.conf` is sourced as bash, so it can use arrays and comments freely.
-Software is sorted by **who owns it**, the same way the Windows manifest sorts
-it, because that is the distinction that matters when an update goes wrong:
+`packages.conf` is sourced as bash. Software is sorted by who owns it:
 
 | | installed | upgraded |
 |---|---|---|
 | `GROUP_*_APT` | yes | yes, in one system-wide transaction |
 | `GROUP_*_FLATPAK` | yes | yes |
 | `REPOS` | yes, with its key and source file | yes |
-| `RELEASES` | yes, a static binary into `~/.local/bin` | yes, checked against the newest release tag |
+| `RELEASES` | yes, a static binary into `~/.local/bin` | yes, against the newest release tag |
 | `TOOLS` | yes, git clone into `$HOME` | yes, `git pull --ff-only` |
 | `HELD` | no | no |
 | `MANUAL` | no | no |
 
-Adding to `REPOS` is not a small decision: a repository there can push a
-package to this machine on every future run, forever. Each entry names its key
-URL explicitly rather than piping a vendor script into a shell, and the key is
-scoped with `Signed-By` — unlike `apt-key`, which trusts a key for *every*
-repository on the system.
+A `REPOS` entry can push packages to this machine on every future run. Each
+names its key URL explicitly rather than piping a vendor script into a shell,
+and scopes it with `Signed-By`.
 
 `{ID}` and `{CODENAME}` in a repository URL are substituted from
-`/etc/os-release`. Docker publishes a separate tree per distribution and per
-release, and pointing Ubuntu at the Debian one installs packages built against
-a different libc.
+`/etc/os-release` — Docker publishes a separate tree per distribution and
+release.
 
-### Two names worth knowing
+`PKG_GROUPS`, not `GROUPS`: the latter is a bash builtin holding the user's
+group IDs, and assigning to it silently turns every group name into a number.
 
-**`PKG_GROUPS`, not `GROUPS`.** `GROUPS` is a bash builtin holding the current
-user's group IDs. Assigning to it silently does nothing, and every group name
-becomes a number — the first version of this manifest did exactly that and the
-run reported groups called `1000` and `27`.
-
-**`fd-find` installs as `fdfind`, `bat` as `batcat`.** Debian renames both to
-dodge a clash with older archive packages. The managed zsh fragment aliases
-them and guards each on `command -v`, because a blind alias to a missing binary
-breaks the normal command entirely.
+`fd-find` installs as `fdfind` and `bat` as `batcat`; the zsh fragment aliases
+both, guarded on `command -v`.
 
 ## zsh
 
-The shell setup matches the fleet's Ansible role, so a shell is the same
-wherever you land: oh-my-zsh, Starship, and the plugin list in the
-manifest.
-
-Plugin **order** is load-bearing, not alphabetical:
-
-- `zsh-syntax-highlighting` must be last but one. It wraps ZLE widgets, and
-  anything sourced after it defines widgets outside that wrapping.
-- `history-substring-search` is the documented exception and goes after it.
-- `fzf-tab` must load after `compinit` but before anything that wraps ZLE
-  widgets, which makes first the only position that satisfies it.
+Plugin order is load-bearing: `zsh-syntax-highlighting` last but one,
+`history-substring-search` after it, `fzf-tab` first (after `compinit`, before
+anything that wraps ZLE widgets).
 
 Your `.zshrc` is not rewritten. The managed block lives in
-`~/.zshrc.bootstrap`, and a single `source` line is appended to `.zshrc` if it
-is not already there.
+`~/.zshrc.bootstrap`, with one `source` line appended to `.zshrc` if absent.
 
 ## Schedule
 
-A `systemd` **system** timer (`bootstrap-linux.timer` by default, see
-`SCHEDULE_UNIT_NAME` in the manifest) re-runs this script daily at
-`SCHEDULE_TIME`, unattended — the Linux side of the daily Task Scheduler job
-the Windows manifest registers.
+A systemd system timer (`bootstrap-linux.timer`, see `SCHEDULE_UNIT_NAME`)
+re-runs this script daily at `SCHEDULE_TIME`.
 
-- **Needs root**, same as any step here that calls `sudo` — registering a
-  system unit is one of them, not a special case.
-- **Skipped, not failed**, on a machine where `systemd` is not PID 1 (stock
-  WSL is the real example) or where `SCHEDULE_ENABLED` is `no` in the
-  manifest. `--skip-schedule` does the same for one run.
-- **Catches up a missed run.** `Persistent=true` on the timer is systemd's
-  equivalent of Task Scheduler's "start when available" — a trigger the
-  machine slept through fires as soon as it wakes, instead of waiting for
-  tomorrow.
-- **No log file to find.** Unlike Windows, where Task Scheduler captures
-  nothing on its own, a systemd service's output goes to the journal by
-  default: `journalctl -u bootstrap-linux` is the log.
+- Needs root, like any step here that calls `sudo`.
+- Skipped where systemd is not PID 1 (stock WSL) or `SCHEDULE_ENABLED=no`.
+  `--skip-schedule` does the same for one run.
+- `Persistent=true`, so a trigger the machine slept through fires on wake.
+- Logs to the journal: `journalctl -u bootstrap-linux`.
 
-Disable it with `SCHEDULE_ENABLED=no` in the manifest, or remove it from a
-machine entirely with `sudo systemctl disable --now bootstrap-linux.timer`.
+Remove it with `sudo systemctl disable --now bootstrap-linux.timer`.
 
 ## Releases
 
-All three platforms ship in **one** GitHub release, tagged `vX` — the tag names
-the bundle, not a version. Each platform still versions independently, so a
-release states which version of each is inside, and this one's number lives in
-`BOOTSTRAP_VERSION` in `bootstrap.sh` with its notes in `CHANGELOG.md`.
-
-The release workflow refuses to publish if any platform's current version has
-no matching changelog section, if any shipped script fails to parse, or if
-shellcheck complains.
+All three platforms ship in one GitHub release tagged `vX`; each versions
+independently. This one's number is `BOOTSTRAP_VERSION` in `bootstrap.sh`, with
+notes in `CHANGELOG.md`. The release workflow refuses to publish if the current
+version has no changelog section, a script fails to parse, or shellcheck
+complains.

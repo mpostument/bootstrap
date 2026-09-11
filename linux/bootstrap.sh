@@ -1,18 +1,9 @@
 #!/usr/bin/env bash
-#
-# Installs and updates this machine's software from packages.conf.
-#
-# Run it on a fresh machine to build it out; run it again any time to take
-# updates. Both are the same command - the script works out per package which
-# one it is doing.
-#
-# See README.md.
 
 set -euo pipefail
 
 BOOTSTRAP_VERSION='1.23.0'
 
-# Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
 
@@ -23,9 +14,7 @@ ASSUME_YES=no
 GUI_OVERRIDE=auto
 ONLY_GROUPS=""
 
-# ============================================================
 # Output
-# ============================================================
 
 if [[ -t 1 ]]; then
   C_RESET=$'\033[0m'; C_CYAN=$'\033[36m'; C_DIM=$'\033[2m'
@@ -34,9 +23,6 @@ else
   C_RESET=''; C_CYAN=''; C_DIM=''; C_GREEN=''; C_YELLOW=''; C_RED=''; C_BLUE=''
 fi
 
-# One line per package, colour-coded by what happened, plus a row for the
-# summary. Every code path that decides something about a package ends here, so
-# the summary can never disagree with the live output.
 RESULT_ACTIONS=()
 RESULT_LINES=()
 
@@ -61,27 +47,7 @@ result() {
 
 die() { printf '%serror:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
 
-# ============================================================
 # Is there a desktop on this machine?
-# ============================================================
-# The question is "does this machine have a desktop environment", and the two
-# obvious ways to answer it are both wrong.
-#
-# $DISPLAY / $WAYLAND_DISPLAY describe THIS SESSION, not the machine. They are
-# unset when you SSH into your own workstation, so a desktop looks headless;
-# they are SET when you SSH into a headless server with X forwarding, so a
-# server looks like a desktop; and WSLg sets both on a WSL install that has no
-# desktop environment at all. Measured on WSL Ubuntu 24.04: DISPLAY=:0 and
-# WAYLAND_DISPLAY=wayland-0, with no display manager and zero session files.
-#
-# `systemctl get-default` is closer but still lies: the same WSL install
-# reports graphical.target.
-#
-# So ask what is actually installed instead. A machine that can start a desktop
-# session has either a display manager or session .desktop files - usually
-# both, and neither appears by accident. That answer is the same over SSH as it
-# is at the keyboard, which is the property that matters for a tool that is
-# meant to run unattended.
 has_desktop() {
   local dm
   for dm in gdm3 gdm sddm lightdm lxdm xdm slim ly greetd; do
@@ -104,17 +70,12 @@ has_desktop() {
   return 1
 }
 
-# ============================================================
 # Package state
-# ============================================================
 
 apt_installed() {
   dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q '^install ok installed'
 }
 
-# Present in the archive at all. A name that is simply not packaged for this
-# release should be reported as such, not attempted and failed - the two look
-# identical in apt's output and mean very different things.
 apt_available() {
   apt-cache show "$1" >/dev/null 2>&1
 }
@@ -131,9 +92,7 @@ run_priv() {
   fi
 }
 
-# ============================================================
 # Arguments
-# ============================================================
 
 usage() {
   cat <<'USAGE'
@@ -174,24 +133,12 @@ done
 
 [[ -t 0 ]] || ASSUME_YES=yes
 
-# ============================================================
 # Manifest
-# ============================================================
 
 [[ -f "$MANIFEST" ]] || die "manifest not found: $MANIFEST"
 # shellcheck source=packages.conf
 source "$MANIFEST"
 
-# Checked here, once, rather than discovered halfway through a run. A manifest
-# that sources cleanly is not a manifest that is complete.
-#
-# The *_ENABLED switches are in this list for a reason worth stating. Every one
-# of them is read as "${X_ENABLED:-no}", which means a manifest that never
-# mentions X and a manifest that deliberately sets X to no produce the same
-# output - "disabled in the manifest" - and one of those two is a bug. That is
-# not hypothetical: the Claude Code keys were dropped from this file by a bad
-# edit and the run went on reporting the phase as disabled, which is exactly
-# what it would have said if the absence had been on purpose.
 for required in PKG_GROUPS MANUAL HELD TOOLS REPOS RELEASES ZSH_PLUGINS ZSH_CUSTOM_PLUGINS \
                 DOTNET_ENABLED ZSH_ENABLED NERD_FONT_ENABLED CLAUDE_CODE_ENABLED \
                 AWSCLI_ENABLED GHOSTTY_ENABLED SCHEDULE_ENABLED HISTORY_SIZE HISTORY_FILE_SIZE; do
@@ -203,8 +150,6 @@ if [[ "${LIST_GROUPS:-no}" == "yes" ]]; then
   for g in "${PKG_GROUPS[@]}"; do
     desc_var="GROUP_${g}_DESC"
     gui_var="GROUP_${g}_GUI"
-    # Nameref rather than eval: it is what bash provides for exactly this, and
-    # it keeps the array an array instead of round-tripping through a string.
     declare -n _apt="GROUP_${g}_APT"
     declare -n _flat="GROUP_${g}_FLATPAK"
     total=$(( ${#_apt[@]} + ${#_flat[@]} ))
@@ -260,9 +205,7 @@ if [[ "${LIST_PACKAGES:-no}" == "yes" ]]; then
   exit 0
 fi
 
-# ============================================================
 # Preflight
-# ============================================================
 
 phase 'Preflight'
 
@@ -303,9 +246,6 @@ fi
 APT_OPTS=()
 [[ "$ASSUME_YES" == "yes" ]] && APT_OPTS+=(-y)
 
-# apt's index is read once. Refreshing it before every single package is pure
-# cost, and not refreshing it at all is how a fresh machine fails to find a
-# package that has been in the archive for a year.
 if [[ "$DRY_RUN" == "no" ]]; then
   printf '  %-16s' 'apt index'
   if run_priv apt-get update -qq >/dev/null 2>&1; then
@@ -315,18 +255,14 @@ if [[ "$DRY_RUN" == "no" ]]; then
   fi
 fi
 
-# ============================================================
 # Held
-# ============================================================
 
 for entry in "${HELD[@]:-}"; do
   [[ -z "$entry" ]] && continue
   result 'held' "${entry%%:*}" "${entry#*:}"
 done
 
-# ============================================================
 # Packages
-# ============================================================
 
 selected=("${PKG_GROUPS[@]}")
 if [[ -n "$ONLY_GROUPS" ]]; then
@@ -345,19 +281,10 @@ install_apt() {
       result 'skipped' "$pkg" "$version"
       return
     fi
-    # Upgrades are taken for the whole system in one transaction below rather
-    # than per package: apt resolves dependencies across the set, and asking it
-    # to upgrade one package at a time is both slower and more likely to hold
-    # something back.
     result 'current' "$pkg" "$version"
     return
   fi
   if ! apt_available "$pkg"; then
-    # Two different situations look identical to apt-cache, so say which this
-    # is. During a dry run a package from a third-party repository has not been
-    # added yet, so it is unknown for that reason rather than genuinely absent
-    # from the release - reporting it as plain `missing` reads like a broken
-    # manifest when nothing is wrong.
     if [[ "$DRY_RUN" == "yes" ]]; then
       result 'missing' "$pkg" 'not in the index yet - may come from a repo this run would add'
     else
@@ -401,14 +328,7 @@ install_flatpak() {
   fi
 }
 
-# ============================================================
 # Third-party repositories
-# ============================================================
-# Each repository gets its own dearmoured key under /etc/apt/keyrings and a
-# deb822 .sources file that names that key with Signed-By. Scoping matters: a
-# key added the old way, with apt-key, is trusted for EVERY repository on the
-# system, so one compromised vendor could sign a replacement for any package.
-# Signed-By limits each key to the repository it came with.
 
 KEYRING_DIR=/etc/apt/keyrings
 REPOS_CHANGED=no
@@ -425,9 +345,6 @@ setup_repo() {
     return
   fi
 
-  # {ID} and {CODENAME} from /etc/os-release. Docker publishes a separate tree
-  # per distribution AND per release; pointing Ubuntu at the Debian tree
-  # installs packages built against a different libc.
   local key_url="${!key_var}" uri="${!uri_var}" suites="${!suites_var}"
   key_url="${key_url//\{ID\}/$OS_ID}"; key_url="${key_url//\{CODENAME\}/$OS_CODENAME}"
   uri="${uri//\{ID\}/$OS_ID}";         uri="${uri//\{CODENAME\}/$OS_CODENAME}"
@@ -436,11 +353,6 @@ setup_repo() {
   local keyring="${KEYRING_DIR}/${name}.gpg"
   local sources="/etc/apt/sources.list.d/${name}.sources"
 
-  # A FLAT repository has no components, and says so by leaving COMPONENTS
-  # empty in the manifest. Kubernetes publishes one - the whole archive lives
-  # at a single path with `Suites: /` - and emitting `Components:` with nothing
-  # after it is not the same as omitting the field: apt rejects the empty value
-  # rather than reading it as "none". So the line is left out entirely.
   local want
   if [[ -z "${!comp_var}" ]]; then
     want="$(printf 'Types: deb\nURIs: %s\nSuites: %s\nArchitectures: %s\nSigned-By: %s\n' \
@@ -461,9 +373,6 @@ setup_repo() {
   fi
 
   run_priv install -m 0755 -d "$KEYRING_DIR"
-  # --dearmor unconditionally: some vendors serve ASCII armour and some serve
-  # binary, and gpg is happy to re-emit binary input unchanged, so this handles
-  # both without sniffing the content.
   if ! curl -fsSL "$key_url" | run_priv gpg --dearmor --yes -o "$keyring" 2>/dev/null; then
     result 'failed' "repo: $desc" "could not fetch or dearmour $key_url"
     return
@@ -480,13 +389,6 @@ setup_repo() {
 phase 'Repositories - third-party apt sources'
 
 DPKG_ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
-# The SAME machine under two naming conventions, and upstream projects are
-# split roughly evenly between them: dpkg says amd64 and arm64, uname says
-# x86_64 and aarch64. Both are substituted into release URLs, because a
-# manifest entry cannot rename what its upstream chose to call the asset, and
-# guessing the wrong word produces a confident 404 against a release that
-# exists. Not called GOARCH: Go's own GOARCH values are amd64 and arm64, the
-# dpkg spelling, so the name would point at the wrong one of these two.
 UNAME_ARCH="$(uname -m 2>/dev/null || echo x86_64)"
 OS_ID="$(. /etc/os-release 2>/dev/null && echo "${ID:-debian}")"
 OS_CODENAME="$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-stable}")"
@@ -496,7 +398,6 @@ for repo in "${REPOS[@]:-}"; do
   setup_repo "$repo"
 done
 
-# One refresh for all of them, and only when something actually changed.
 if [[ "$REPOS_CHANGED" == "yes" && "$DRY_RUN" == "no" ]]; then
   if run_priv apt-get update -qq >/dev/null 2>&1; then
     result 'current' 'apt index' 'refreshed for new repositories'
@@ -531,10 +432,6 @@ for group in "${selected[@]}"; do
   phase "$group - ${!desc_var}"
 
   if [[ "$needs_gui" == "yes" && "$HAS_GUI" != "yes" ]]; then
-    # The requirement this whole script exists for: no desktop means the
-    # desktop software is not installed, reported plainly rather than
-    # attempted. Blender on a headless box pulls a large dependency tree for
-    # something nobody can open.
     eval "pkgs=(\"\${GROUP_${group}_APT[@]:-}\" \"\${GROUP_${group}_FLATPAK[@]:-}\")"
     for pkg in "${pkgs[@]}"; do
       [[ -z "$pkg" ]] && continue
@@ -556,24 +453,12 @@ for group in "${selected[@]}"; do
   done
 done
 
-# ============================================================
 # Upgrades
-# ============================================================
-# One transaction for everything, after the installs, so apt resolves the whole
-# set at once.
 
-# How many packages apt would actually move, from the local lists - no network,
-# and the same solver `apt-get upgrade` is about to run, so the number the dry
-# run prints is the number the real run acts on.
 apt_pending_count() {
   apt-get --just-print upgrade 2>/dev/null | grep -c '^Inst ' || true
 }
 
-# Flatpak has no --just-print, so ask it what it has instead: `active` is the
-# commit each installed ref is currently running. Comparing the list before and
-# after an update is the same before/after idiom git_clone_or_update uses, it
-# costs nothing (the list is local), and it does not depend on matching an
-# English string in flatpak's output.
 flatpak_commits() {
   flatpak list --columns=application,active 2>/dev/null | sort || true
 }
@@ -617,13 +502,7 @@ else
   fi
 fi
 
-# ============================================================
 # Tools that install themselves into $HOME
-# ============================================================
-# git clones, not apt packages, and deliberately not run through sudo: each of
-# these lives entirely under the user's home directory. That is the point -
-# nothing system-wide to conflict with the distribution's own Python or
-# Terraform, and no third-party apt key to trust.
 
 git_clone_or_update() {
   local name="$1" dir="$2" repo="$3"
@@ -647,8 +526,6 @@ git_clone_or_update() {
         result 'upgraded' "$name" "$before -> $after"
       fi
     else
-      # A pull that cannot fast-forward means somebody has local commits or the
-      # branch moved. Reported, never forced: this is the user's checkout.
       result 'failed' "$name" 'git pull could not fast-forward'
     fi
     return
@@ -669,10 +546,6 @@ git_clone_or_update() {
   fi
 }
 
-# Guarded rather than unconditional: TOOLS has been empty before and will be
-# again, and a phase header printed over nothing reads like something failed.
-# git_clone_or_update is used either way - the zsh theme and every custom
-# plugin go through it.
 if [[ "${#TOOLS[@]}" -gt 0 ]]; then
   phase 'Tools - git clones in $HOME'
   for tool in "${TOOLS[@]:-}"; do
@@ -684,9 +557,7 @@ if [[ "${#TOOLS[@]}" -gt 0 ]]; then
   done
 fi
 
-# ============================================================
 # .NET SDK
-# ============================================================
 
 if [[ "${DOTNET_ENABLED:-no}" != "yes" ]]; then
   phase 'dotnet - disabled in the manifest'
@@ -694,9 +565,6 @@ else
   phase 'dotnet - SDK from the vendor script'
   dotnet_exe="${DOTNET_DIR}/dotnet"
   if [[ -x "$dotnet_exe" ]]; then
-    # Every SDK on disk, not just the newest. dotnet-install.sh installs side
-    # by side, so a channel rollover leaves the previous major here forever -
-    # visible rather than silently accumulating.
     versions="$("$dotnet_exe" --list-sdks 2>/dev/null | awk '{print $1}' | paste -sd, - || true)"
     if [[ "$SKIP_UPGRADE" == "yes" ]]; then
       result 'skipped' 'dotnet SDK' "${versions:-present}"
@@ -731,51 +599,24 @@ else
   fi
 fi
 
-# ============================================================
 # Release binaries
-# ============================================================
-# Static binaries from a GitHub release into ~/.local/bin, for software that is
-# in neither the Debian archive nor a git repository. See packages.conf.
-#
-# Version-checked properly rather than re-downloaded blindly: the binary is
-# asked what it is, the newest release tag is fetched, and a run where they
-# already agree transfers nothing and says `current`.
 
-# The tag of the newest release, from the API. One unauthenticated call per
-# tool, and only when the tool is actually being considered - the anonymous
-# rate limit is 60 an hour and this must not be the thing that spends it.
 github_latest_tag() {
   curl -fsSL "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
     | grep -m1 '"tag_name"' \
     | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || true
 }
 
-# Whatever looks like a version in the binary's own --version output. Every
-# tool prints a different sentence around it - "TFLint version 0.53.0",
-# "terraform-docs version v0.19.0 ..." - so the number is what gets matched,
-# not the wording.
 binary_version() {
   local bin="$1" out v a
-  # Three spellings, because these tools do not agree on one. helm has no
-  # --version at all and wants `version --short`; tflint and terraform-docs
-  # only understand --version.
   local -a attempts=('--version' 'version --short' 'version')
 
   for a in "${attempts[@]}"; do
     # shellcheck disable=SC2086
     out="$("$bin" $a 2>/dev/null || true)"
 
-    # head -1, and NOT `grep -m1`. -m1 stops grep after the first matching
-    # LINE, which is not the same as the first match - with -o, every match on
-    # that one line still prints. `aws --version` puts the CLI, Python and
-    # kernel versions on a single line, so that combination returned three
-    # versions and the extra two appeared raw under the result row.
     v="$(printf '%s' "$out" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
 
-    # The test is "did this produce a version", not "did this exit 0". A tool
-    # that exits cleanly and prints nothing would otherwise end the search on
-    # the first attempt and report no version at all - which install_release
-    # reads as "not installed" and acts on by downloading it again, every run.
     if [[ -n "$v" ]]; then
       printf '%s' "$v"
       return 0
@@ -783,16 +624,12 @@ binary_version() {
   done
 }
 
-# Unpack whatever the release published, chosen by extension. A shape nobody
-# listed is an error rather than a guess: silently treating an unknown archive
-# as a bare binary is how you end up with a gzip stream marked executable.
 unpack_asset() {
   local url="$1" file="$2" binname="$3"
   case "$url" in
     *.zip)    unzip -q "$file" ;;
     *.tar.gz|*.tgz) tar -xzf "$file" ;;
     *.tar.xz) tar -xJf "$file" ;;
-    # No extension at all is the common shape for a plain static binary.
     *[!./]) cp "$file" "$binname" ;;
     *)        return 1 ;;
   esac
@@ -817,9 +654,6 @@ install_release() {
   local tag want
   tag="$(github_latest_tag "$repo")"
   if [[ -z "$tag" ]]; then
-    # No tag means the API did not answer - rate limit, or no network. An
-    # installed copy is still fine and is reported as such rather than as a
-    # failure; only a missing one is a problem worth a red line.
     if [[ -n "$have" ]]; then
       result 'current' "$desc" "$have (could not reach the GitHub API)"
     else
@@ -843,16 +677,6 @@ install_release() {
     return
   fi
 
-  # {TAG} is the tag as published - v1.31.0 - and {VERSION} is the same thing
-  # without the leading v. Both are needed because projects disagree: helm
-  # names its asset helm-v3.16.2-linux-amd64.tar.gz and stern names its
-  # stern_1.31.0_linux_amd64.tar.gz, from tags that look identical.
-  # A GitHub release TAG does not imply GitHub-hosted BINARIES. helm is the
-  # case that proved it: its releases carry no attachments at all and the
-  # tarballs live on get.helm.sh, so building the usual download URL produced a
-  # confident 404 against a tag that existed. An entry may therefore give a
-  # whole URL of its own; the tag still comes from the API, because that is the
-  # part GitHub is being asked for.
   local url_var="RELEASE_${name}_URL"
   local url="${!url_var:-}"
   [[ -z "$url" ]] && url="https://github.com/${repo}/releases/download/${tag}/${asset}"
@@ -863,26 +687,10 @@ install_release() {
 
   local tmp
   tmp="$(mktemp -d)"
-  # A subshell with its own trap, so the temp directory goes whether the
-  # download works, the archive is corrupt, or the binary is not where the
-  # asset was supposed to put it.
   if (
-    # Chained with && rather than `set -e`, and that is not a style choice.
-    # A subshell inside an `if` condition inherits the suppression that makes
-    # `set -e` inert there, so the abort never happens - every step runs
-    # regardless and the exit status is whatever the LAST one returned. Written
-    # the obvious way, a failed download went on to unpack nothing, find
-    # nothing, and then report whatever `install` thought of being handed an
-    # empty path. Chaining makes the status mean what it looks like it means.
     cd "$tmp" &&
-    # -S keeps curl's reason (404, DNS, TLS) rather than swallowing it, but it
-    # goes to a file, not the terminal. One line per decision is the whole
-    # point of this output, and a raw `curl: (22) ...` printed above the result
-    # row breaks that - so the reason is folded into the result line instead.
     curl -fsSL -o asset "$url" 2>curl.err &&
     unpack_asset "$url" asset "$binname" &&
-    # -type f rather than a fixed path: some projects put the binary at the
-    # root of the archive and some nest it a directory down.
     found="$(find . -type f -name "$binname" -print -quit)" &&
     [[ -n "$found" ]] &&
     mkdir -p "$RELEASE_BIN_DIR" &&
@@ -893,18 +701,11 @@ install_release() {
     if [[ -z "$have" ]]; then
       result 'installed' "$desc" "${now:-$want}"
     elif [[ "$now" == "$have" ]]; then
-      # The download worked and the binary is the version it already was. That
-      # means the release tag moved without this asset changing, and reporting
-      # `upgraded 0.60.0 -> 0.60.0` would be the arrow saying nothing happened
-      # while the colour says something did.
       result 'current' "$desc" "$have (release $tag carries the same build)"
     else
       result 'upgraded' "$desc" "$have -> ${now:-$want}"
     fi
   else
-    # curl's own words when it has any - "The requested URL returned error:
-    # 404" says considerably more than "could not fetch", and it is the
-    # difference between a wrong URL and a network that is down.
     local why=""
     [[ -s "$tmp/curl.err" ]] && why="$(tail -1 "$tmp/curl.err" | sed 's/^curl: //')"
     result 'failed' "$desc" "${why:-could not fetch or unpack}: $url"
@@ -920,11 +721,7 @@ if [[ "${#RELEASES[@]}" -gt 0 ]]; then
   done
 fi
 
-# ============================================================
 # AWS CLI v2
-# ============================================================
-# A zip from AWS containing an installer, because that is the only way v2 is
-# published - see packages.conf. Everything lands under $HOME.
 
 if [[ "${AWSCLI_ENABLED:-no}" != "yes" ]]; then
   phase 'AWS CLI - disabled in the manifest'
@@ -944,15 +741,8 @@ else
       result 'would-install' 'AWS CLI v2' "$AWSCLI_DIR"
     fi
   else
-    # uname -m, not dpkg --print-architecture: AWS names its zips x86_64 and
-    # aarch64, where dpkg says amd64 and arm64. Same machine, different words.
-    # The same {UNAME_ARCH} that release URLs understand, off one definition
-    # near DPKG_ARCH, so the two phases cannot drift on what the word means.
     aws_url="${AWSCLI_URL//\{UNAME_ARCH\}/$UNAME_ARCH}"
     aws_tmp="$(mktemp -d)"
-    # --update is required rather than optional: the installer refuses to write
-    # over an existing install without it, and omitting it turns every run
-    # after the first into a failure.
     aws_mode=()
     [[ -n "$aws_have" ]] && aws_mode=(--update)
     if (
@@ -976,13 +766,7 @@ else
   fi
 fi
 
-# ============================================================
 # Nerd Font
-# ============================================================
-# Starship draws its prompt from a Nerd Font's private-use area, same as
-# p10k did before it; without one the prompt is boxes. Desktop machines
-# only - the glyphs are rendered by the terminal you are typing at, so a
-# font on a headless server changes nothing anywhere. See packages.conf.
 
 if [[ "${NERD_FONT_ENABLED:-no}" != "yes" ]]; then
   phase 'Nerd Font - disabled in the manifest'
@@ -992,10 +776,6 @@ elif [[ "$HAS_GUI" != "yes" ]]; then
 else
   phase 'Nerd Font'
 
-  # fontconfig first, because it sees system-wide installs and packaged fonts
-  # as well as this directory - reinstalling over a font the distribution
-  # already provides would be the same bug the Windows side had, where checking
-  # only one of two font directories reinstalled Meslo on every single run.
   font_present=no
   if command -v fc-list >/dev/null 2>&1; then
     fc-list 2>/dev/null | grep -qi 'MesloLG.*Nerd Font' && font_present=yes
@@ -1009,32 +789,16 @@ else
   elif [[ "$DRY_RUN" == "yes" ]]; then
     result 'would-install' "font: $NERD_FONT_NAME" "$NERD_FONT_DIR"
   else
-    # /releases/latest/download/ redirects to the newest asset, so this costs
-    # no API call on a machine that already has the font - which is every run
-    # after the first. A font does not need a version check the way a linter
-    # does; it is either there or it is not.
     font_url="https://github.com/${NERD_FONT_REPO}/releases/latest/download/${NERD_FONT_NAME}.tar.xz"
     font_tmp="$(mktemp -d)"
-    # && rather than `set -e`, for the reason spelled out in install_release:
-    # inside an `if` condition, even a subshell's own `set -e` is inert.
     if (
       cd "$font_tmp" &&
       curl -fsSL -o font.tar.xz "$font_url" &&
       tar -xJf font.tar.xz &&
       mkdir -p "$NERD_FONT_DIR" &&
-      # The archive carries three widths - LGS, LGL and LGM - in every weight
-      # and in base, Mono and Propo variants. Only LGM is installed, and all of
-      # its variants: the terminal wants the Mono face (that is what the Windows
-      # manifest names as TerminalFontFace) and anything else wants the base
-      # one, so taking just the one whose name has no suffix leaves the terminal
-      # without the font it was the whole point of installing.
       find . -type f -name "${NERD_FONT_MATCH}*.ttf" -exec cp {} "$NERD_FONT_DIR/" \; &&
-      # find succeeds having copied nothing, so the archive being the wrong
-      # shape has to be caught here rather than inferred from find's status.
       compgen -G "${NERD_FONT_DIR}/${NERD_FONT_MATCH}*" >/dev/null
     ); then
-      # Without this the font is on disk and invisible until the next login:
-      # fontconfig caches per-directory and does not rescan on its own.
       command -v fc-cache >/dev/null 2>&1 && fc-cache -f "$NERD_FONT_DIR" >/dev/null 2>&1
       result 'installed' "font: $NERD_FONT_NAME" "$NERD_FONT_DIR"
     else
@@ -1044,21 +808,12 @@ else
   fi
 fi
 
-# ============================================================
 # Claude Code
-# ============================================================
-# Anthropic's installer, once, into ~/.local/bin - and then left alone, because
-# Claude Code updates itself. Reinstalling it on every run would be the second
-# installer in a fight it cannot win, which is the same call this script makes
-# about anything owned by another updater.
 
 if [[ "${CLAUDE_CODE_ENABLED:-no}" != "yes" ]]; then
   phase 'Claude Code - disabled in the manifest'
 else
   phase 'Claude Code'
-  # Both the binary the installer writes and anything already on PATH: a copy
-  # installed some other way is still a copy that updates itself, and
-  # installing over it is exactly what this section exists not to do.
   claude_exe=""
   if command -v claude >/dev/null 2>&1; then
     claude_exe="$(command -v claude)"
@@ -1084,11 +839,7 @@ else
   fi
 fi
 
-# ============================================================
 # zsh
-# ============================================================
-# oh-my-zsh, Starship and the plugins, matching the fleet's zsh role so a
-# shell is the same wherever you land.
 
 if [[ "${ZSH_ENABLED:-no}" != "yes" ]]; then
   phase 'zsh - disabled in the manifest'
@@ -1106,9 +857,6 @@ else
     elif [[ "$DRY_RUN" == "yes" ]]; then
       result 'would-install' 'oh-my-zsh' "$OMZ_DIR"
     else
-      # --unattended so the installer neither starts a shell nor rewrites the
-      # login shell behind our back; chsh is the user's call, not this
-      # script's, and doing it here is how a broken .zshrc locks somebody out.
       if RUNZSH=no CHSH=no sh -c \
           "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" \
           "" --unattended >/dev/null 2>&1; then
@@ -1119,37 +867,16 @@ else
     fi
 
     if [[ -d "$OMZ_DIR" || "$DRY_RUN" == "yes" ]]; then
-      # No theme clone here any more - Starship is a RELEASES entry
-      # (a static binary, not an oh-my-zsh theme at all) and is installed
-      # by the release-binaries phase further down, not this one.
       for entry in "${ZSH_CUSTOM_PLUGINS[@]:-}"; do
         [[ -z "$entry" ]] && continue
         git_clone_or_update "plugin: ${entry%%|*}" "${OMZ_CUSTOM}/plugins/${entry%%|*}" "${entry#*|}"
       done
     fi
 
-    # Completion directory permissions. zsh treats a group- or world-writable
-    # directory on fpath as untrusted, and oh-my-zsh turns that into a refusal:
-    # it prints "Insecure completion-dependent directories detected" and then
-    # loads NO completions at all - not merely the ones from the offending
-    # directory. So a machine can end up with fewer completions after
-    # installing zsh-completions than it had before.
-    #
-    # The trigger here is not the same as on macOS, where it is Homebrew
-    # creating <prefix>/share group-writable. These are clones in $HOME, so the
-    # cause is the umask that made them: on a system with USERGROUPS_ENAB and a
-    # 002 umask - the Debian default for a user whose group is their own name -
-    # every directory git creates is group-writable, and oh-my-zsh audits the
-    # lot. Nothing is wrong with that umask; zsh is simply stricter than it.
-    #
-    # Fixed rather than reported, because these are directories this script
-    # cloned. Only what is on fpath is touched, not $HOME at large.
     COMPFIX_DIRS=("$OMZ_DIR" "$OMZ_CUSTOM" "${OMZ_CUSTOM}/plugins" "${OMZ_CUSTOM}/themes")
     for entry in "${ZSH_CUSTOM_PLUGINS[@]:-}"; do
       [[ -z "$entry" ]] && continue
       COMPFIX_DIRS+=("${OMZ_CUSTOM}/plugins/${entry%%|*}")
-      # zsh-completions puts its functions in a src/ subdirectory and adds THAT
-      # to fpath, so the parent being clean is not enough.
       [[ -d "${OMZ_CUSTOM}/plugins/${entry%%|*}/src" ]] && \
         COMPFIX_DIRS+=("${OMZ_CUSTOM}/plugins/${entry%%|*}/src")
     done
@@ -1157,9 +884,6 @@ else
     INSECURE_DIRS=()
     for d in "${COMPFIX_DIRS[@]}"; do
       [[ -d "$d" ]] || continue
-      # stat -c is the GNU spelling; %A gives the symbolic mode, so the group
-      # write bit is character 6 and the other write bit is character 9. The
-      # macOS script uses `stat -f '%Sp'` for the same thing.
       perms="$(stat -c '%A' "$d" 2>/dev/null)" || continue
       if [[ "${perms:5:1}" == "w" || "${perms:8:1}" == "w" ]]; then
         INSECURE_DIRS+=("$d")
@@ -1178,82 +902,28 @@ else
       fi
     fi
 
-    # The managed fragment, not the whole .zshrc. Anything else in that file is
-    # somebody's own work; this writes one clearly-marked block and leaves the
-    # rest alone, the same rule the Windows profile follows.
     ZSHRC="${HOME}/.zshrc"
     FRAGMENT="${HOME}/.zshrc.bootstrap"
     if [[ "$DRY_RUN" == "yes" ]]; then
       result 'would-install' 'zsh config' "$FRAGMENT"
     else
-      # Rendered to a temp file first so the fragment can be compared with what
-      # is already on disk. Writing it unconditionally worked, but it reported
-      # `installed` on every run of an otherwise idempotent script, which makes
-      # the summary useless for spotting the run where something really changed.
-      # Beside the target, not in /tmp: same filesystem, so the replace below is
-      # an atomic rename rather than a copy that can be seen half-written, and
-      # the mode is set here rather than inherited from mktemp's 0600.
       NEW_FRAGMENT="$(mktemp "${FRAGMENT}.XXXXXX")"
       chmod 0644 "$NEW_FRAGMENT"
       {
-        echo "# managed by linux/bootstrap.sh - edit the manifest, not this file"
         echo
-        echo '# Release binaries FIRST, ahead of oh-my-zsh, because starship init'
-        echo '# below needs the binary this puts on PATH - a release binary, not'
-        echo '# an apt package, so nothing else on this system already put it'
-        echo '# there. The stock ~/.profile on Debian adds this directory when it'
-        echo '# exists, but zsh never reads .profile, so without this line'
-        echo '# tflint, terraform-docs and starship install and are not on PATH.'
         echo '[ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH"'
         echo
         echo "export ZSH=\"$OMZ_DIR\""
         echo "ZSH_THEME=\"$ZSH_THEME\""
         echo
-        echo '# Both of these have to precede oh-my-zsh.sh, because the nvm plugin'
-        echo '# reads them as it loads. NVM_DIR is where the TOOLS clone put it;'
-        echo '# lazy defers sourcing nvm.sh until the first nvm, node or npm, which'
-        echo '# keeps a few hundred milliseconds off every shell that never uses it.'
         echo 'export NVM_DIR="$HOME/.nvm"'
         echo "zstyle ':omz:plugins:nvm' lazy yes"
         echo
         printf 'plugins=(%s)\n' "${ZSH_PLUGINS[*]}"
         echo 'source "$ZSH/oh-my-zsh.sh"'
         echo
-        echo '# The prompt itself. oh-my-zsh sets its own PROMPT inside'
-        echo '# oh-my-zsh.sh just above, so this has to come after it to win -'
-        echo '# same position the powerlevel10k theme used to load from.'
         echo 'eval "$(starship init zsh)"'
         echo
-        echo '# Transient prompt: once a command is submitted, collapse that now-'
-        echo '# historical prompt line to a single arrow instead of leaving the full'
-        echo '# bar - path, git branch/status, clock - sitting in the scrollback'
-        echo '# forever. Same job p10k used to do here and the old Oh My Posh fork did'
-        echo '# on the Windows side, but built into Starship as a real feature - see'
-        echo '# [profiles] in starship.toml for the transient/rtransient formats this'
-        echo '# renders.'
-        echo '#'
-        echo '# Not a config switch, because zsh (unlike PowerShell and Fish) has no'
-        echo '# first-class transient-prompt hook of its own - this IS the community'
-        echo '# implementation Starship itself points to. It works by re-invoking'
-        echo '# starship prompt with --profile once a line is accepted, swapped in via'
-        echo '# string substitution on the PROMPT variable starship init zsh just set'
-        echo '# above. That variable is literally $(starship prompt --terminal-width=...)'
-        echo '# and the substitution inserts --profile between the binary name and its'
-        echo '# other flags.'
-        echo '#'
-        echo '# EVERY line below derives from $PROMPT, not $RPROMPT, including the ones'
-        echo '# that end up in RPROMPT - $RPROMPT already carries --right, and --profile'
-        echo '# and --right cannot be combined (the starship CLI rejects the pair). A'
-        echo '# left-shaped invocation assigned to the RPROMPT variable renders on the'
-        echo '# right regardless of which flags built its content, so this is correct'
-        echo '# rather than a workaround.'
-        echo '#'
-        echo '# STARSHIP_FULL_PROMPT/STARSHIP_FULL_RPROMPT are what make any of this'
-        echo '# reversible, and leaving them out is a bug that hides for exactly one'
-        echo '# command: the widgets below assign to the GLOBAL PROMPT, so with no copy'
-        echo '# of the originals nothing ever puts the real prompt back and every prompt'
-        echo '# after the first is the bare transient arrow, forever. The precmd hook is'
-        echo '# what restores them before the next prompt is drawn.'
         echo 'STARSHIP_FULL_PROMPT="$PROMPT"'
         echo 'STARSHIP_FULL_RPROMPT="$RPROMPT"'
         echo 'TRANSIENT_PROMPT="${PROMPT// prompt / prompt --profile transient }"'
@@ -1278,31 +948,6 @@ else
         echo 'zle -N transient-prompt'
         echo 'add-zle-hook-widget zle-line-finish transient-prompt'
         echo
-        echo '# Context-sensitive right prompt: the cluster and namespace, the AWS'
-        echo '# profile, the Azure subscription, the gcloud account or the Terraform'
-        echo '# workspace appears at the right of the line WHILE the command that would'
-        echo '# use it is being typed, and goes away again when it is deleted. p10k'
-        echo '# called this SHOW_ON_COMMAND. Starship has no equivalent - it renders'
-        echo '# once, before anything is typed - so the gate lives here: on each redraw,'
-        echo '# work out which group the first real word belongs to and, when that'
-        echo '# answer CHANGES, point RPROMPT at the matching ctx_* profile in'
-        echo '# starship.toml and redraw. The profile names are the contract with that'
-        echo '# file; ctx_$group is built by concatenation, so a group here with no'
-        echo '# profile there renders an empty right prompt and no error.'
-        echo '#'
-        echo '# The cost is one starship process per change of group, not per keystroke.'
-        echo '# The early return on an unchanged group is the entire reason a hook that'
-        echo '# fires on every character typed is affordable.'
-        echo '#'
-        echo '# The loop skips what is not the command yet, so sudo kubectl ... and'
-        echo '# AWS_PROFILE=prod aws ... still resolve to the tool behind them.'
-        echo '#'
-        echo '# zle .reset-prompt from inside zle-line-pre-redraw re-enters this widget'
-        echo '# once; by then the group matches and it returns at the guard, which is'
-        echo '# what stops it recursing. STARSHIP_TRANSIENT is the other guard: a'
-        echo '# transient redraw happens while the submitted command is still in BUFFER,'
-        echo '# so without it the context would be drawn back onto the very line being'
-        echo '# collapsed to get rid of it.'
         echo 'starship-context-prompt() {'
         echo '  (( STARSHIP_TRANSIENT )) && return'
         echo '  local -a words'
@@ -1337,13 +982,6 @@ else
         echo 'zle -N starship-context-prompt'
         echo 'add-zle-hook-widget zle-line-pre-redraw starship-context-prompt'
         echo
-        echo '# history-substring-search comes from the plugin oh-my-zsh bundles,'
-        echo '# which does bind keys - but only the terminfo sequences, and only'
-        echo '# when terminfo has them. A terminal outside application cursor mode'
-        echo '# sends the raw escape instead and reaches nothing. Binding both'
-        echo '# spellings costs nothing and removes the "it works on my machine,'
-        echo '# over SSH" class of report. Guarded on the widget, so this is inert'
-        echo '# if the plugin ever leaves the list.'
         echo 'if (( $+widgets[history-substring-search-up] )); then'
         echo "  bindkey '^[[A' history-substring-search-up"
         echo "  bindkey '^[[B' history-substring-search-down"
@@ -1351,11 +989,6 @@ else
         echo "  bindkey -M vicmd 'j' history-substring-search-down"
         echo 'fi'
         echo
-        echo '# Completion styling, and the fzf-tab settings without which fzf-tab'
-        echo '# is inert. `menu no` is the load-bearing one: zsh menu selection and'
-        echo '# fzf-tab both want to own the completion UI, and if zsh has it,'
-        echo '# fzf-tab is cloned, sourced, working, and never invoked. It is named'
-        echo '# first in plugins= above and that is still not enough.'
         echo 'zstyle '"'"':completion:*'"'"' list-colors "${(s.:.)LS_COLORS}"'
         echo "bindkey -M menuselect '^[[Z' reverse-menu-complete"
         echo 'if command -v fzf >/dev/null; then'
@@ -1378,11 +1011,6 @@ else
         echo "  bindkey '^I' menu-select"
         echo 'fi'
         echo
-        echo '# History, sized so a busy week does not quietly drop the command'
-        echo '# you wanted. HISTSIZE is what the running shell holds; SAVEHIST is'
-        echo '# what reaches the file, and it must not be smaller or the file is'
-        echo '# truncated on every exit - the classic way to lose history while'
-        echo '# believing it is being kept.'
         echo 'HISTFILE="$HOME/.zsh_history"'
         printf 'HISTSIZE=%s\n' "$HISTORY_SIZE"
         printf 'SAVEHIST=%s\n' "$HISTORY_FILE_SIZE"
@@ -1396,47 +1024,17 @@ else
         echo 'setopt HIST_VERIFY           # expand !! for review, do not just run it'
         echo 'setopt HIST_IGNORE_SPACE     # a leading space keeps it out of history'
         echo
-        echo '# Aliases guard on command -v: these binaries are renamed on Debian'
-        echo '# (fd-find -> fdfind, bat -> batcat) and absent on some releases, and a'
-        echo '# blind alias to a missing binary breaks the normal command entirely.'
-        echo '#'
-        echo '# Two of the flags are about behaving like the command being'
-        echo '# replaced rather than like the replacement. bat pages by default'
-        echo '# and cat does not, so --paging=never; `eza --icons` emits icons'
-        echo '# even into a pipe, where they become mojibake in whatever reads'
-        echo '# them, so --icons=auto ties them to stdout being a terminal.'
-        echo '#'
-        echo '# Each pair is ordered Debian-name first, real-name second, so on a'
-        echo '# release that has both the unrenamed one wins.'
         echo 'command -v batcat >/dev/null && alias cat="batcat --paging=never"'
         echo 'command -v bat    >/dev/null && alias cat="bat --paging=never"'
         echo 'command -v eza    >/dev/null && alias ls="eza --icons=auto --group-directories-first"'
-        echo '#'
-        echo '# find comes BEFORE the fd alias on purpose. `alias fd="fdfind"`'
-        echo '# makes `command -v fd` succeed on a box that has no fd binary at'
-        echo '# all, so testing for it afterwards tests the alias and not the'
-        echo '# tool. It would still work - zsh expands an alias to an alias -'
-        echo '# but it would work by accident.'
         echo 'command -v fdfind >/dev/null && alias find="fdfind"'
         echo 'command -v fd     >/dev/null && alias find="fd"'
         echo 'command -v fdfind >/dev/null && alias fd="fdfind"'
         echo 'command -v rg     >/dev/null && alias grep="rg"'
-        echo '#'
-        echo '# du/df to dust/duf are a bigger change of shape than the pairs above:'
-        echo '# dust prints a tree with bars, duf a table with different columns, and'
-        echo '# neither is a drop-in for a script parsing `du -sh` or `df -h` output -'
-        echo '# that script should keep calling the real binary, not this alias.'
         echo 'command -v dust   >/dev/null && alias du="dust"'
         echo 'command -v duf    >/dev/null && alias df="duf"'
         echo 'command -v zoxide >/dev/null && eval "$(zoxide init zsh)"'
         echo
-        echo '# `tools` prints the cli group - bat/eza/fd/... - with what to'
-        echo '# actually type and what the thing does, from tools/cli-parity.conf.'
-        echo '# Baked in at THIS run, same as the aliases above - it goes stale'
-        echo '# exactly the way they would if the manifest changed and the script'
-        echo '# did not run again since. Deliberately narrower than'
-        echo '# `--list-packages`, which covers every group: this is the list'
-        echo '# worth having memorised, not the whole manifest.'
         declare -A _cli_cmd=() _cli_desc=()
         if [[ -r "$SCRIPT_DIR/../tools/cli-parity.conf" ]]; then
           while IFS='|' read -r _pty_can _pty_lx _pty_mac _pty_win _pty_note _pty_cmd _pty_desc; do
@@ -1444,7 +1042,6 @@ else
             [[ -z "$_pty_can" || "$_pty_can" == \#* ]] && continue
             _pty_lx="$(printf '%s' "$_pty_lx" | tr -d '[:space:]')"
             [[ -z "$_pty_lx" || "$_pty_lx" == '-' || "$_pty_lx" == '@releases' ]] && continue
-            # Free text, unlike the id fields above - trim ends only.
             _pty_cmd="$(printf '%s' "$_pty_cmd" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
             _pty_desc="$(printf '%s' "$_pty_desc" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
             _cli_cmd["$_pty_lx"]="$_pty_cmd"
@@ -1467,24 +1064,11 @@ else
         echo '  echo'
         echo '}'
         echo
-        echo '# Version managers, ahead of anything the platform ships, so a'
-        echo '# project pin wins over the machine default whenever there is one.'
         echo '[ -d "$HOME/.pyenv/bin" ] && export PATH="$HOME/.pyenv/bin:$PATH"'
         echo 'command -v pyenv >/dev/null && eval "$(pyenv init -)"'
         echo '[ -d "$HOME/.tofuenv/bin" ] && export PATH="$HOME/.tofuenv/bin:$PATH"'
         echo
-        echo '# nvm is loaded LAZILY, by the oh-my-zsh plugin rather than by'
-        echo '# sourcing nvm.sh here. nvm is a large shell script and sourcing it'
-        echo '# eagerly is the single most common reason a zsh startup stops being'
-        echo '# instant - it is easily a few hundred milliseconds on every new'
-        echo '# terminal. Lazy means the first `nvm`, `node` or `npm` pays that'
-        echo '# cost once and no other shell pays it at all.'
-        echo '#'
-        echo '# NVM_DIR and the zstyle must both be set BEFORE oh-my-zsh.sh is'
-        echo '# sourced above, which is why they are not down here with the rest.'
         echo
-        echo '# Not managed by any of them: the SDK installs side by side under'
-        echo '# its own directory and there is no per-project version to pick.'
         echo '[ -d "$HOME/.dotnet" ] && export PATH="$HOME/.dotnet:$PATH" && export DOTNET_ROOT="$HOME/.dotnet"'
       } > "$NEW_FRAGMENT"
 
@@ -1499,8 +1083,6 @@ else
         result 'installed' 'zsh config' "$FRAGMENT"
       fi
 
-      # Sourced from .zshrc rather than written into it, so re-running this
-      # never has to parse or rewrite a file the user owns.
       SOURCE_LINE='[ -f "$HOME/.zshrc.bootstrap" ] && source "$HOME/.zshrc.bootstrap"'
       if [[ -f "$ZSHRC" ]] && grep -qF '.zshrc.bootstrap' "$ZSHRC"; then
         result 'current' 'zshrc hook' "$ZSHRC"
@@ -1513,15 +1095,7 @@ else
   fi
 fi
 
-# ============================================================
 # Prompt config
-# ============================================================
-# starship.toml at the repo root, not under linux/ - the whole point of
-# moving off powerlevel10k is ONE prompt config read by every shell on
-# every platform, so this is not Linux's file to fork. A straight copy,
-# compared first: unlike the zsh fragment or the ghostty config below,
-# nothing here is generated from manifest values, so there is nothing to
-# template - the file IS the deployed content.
 STARSHIP_TOML_SOURCE="${SCRIPT_DIR}/../starship.toml"
 if ! command -v starship >/dev/null 2>&1; then
   phase 'Prompt config'
@@ -1551,16 +1125,7 @@ else
   fi
 fi
 
-# ============================================================
 # Terminal config
-# ============================================================
-# The payoff for choosing ghostty: its config is a plain text file, so it gets
-# the same treatment as the zsh fragment - rendered, compared, and reported as
-# `current` when nothing moved.
-#
-# ~/.config/ghostty/config on both platforms. macOS also reads a path under
-# ~/Library/Application Support, but it honours the XDG one too, and one path
-# in the script beats two.
 
 if [[ "${GHOSTTY_ENABLED:-no}" != "yes" ]]; then
   phase 'Terminal config - disabled in the manifest'
@@ -1579,46 +1144,20 @@ else
     NEW_GHOSTTY="$(mktemp "${GHOSTTY_CONF}.XXXXXX")"
     chmod 0644 "$NEW_GHOSTTY"
     {
-      echo "# managed by bootstrap.sh - edit the manifest, not this file"
       echo
-      echo "# Bytes, not lines, and there is no unlimited setting - ghostty says an"
-      echo "# unlimited buffer is a planned feature, not a current one. This is"
-      echo "# 256MB, and it is PER SURFACE: every tab and split gets its own, and"
-      echo "# the buffer lives in RAM. A cap, not a preallocation, so an idle tab"
-      echo "# costs nothing."
-      echo "#"
-      echo "# Note what this does NOT cover. Scrollback belongs to the window and"
-      echo "# dies with it, and inside tmux it is bypassed entirely - tmux owns"
-      echo "# the screen and keeps its own buffer. For output you want to still"
-      echo "# have tomorrow, redirect it to a file."
       echo "scrollback-limit = ${GHOSTTY_SCROLLBACK_BYTES}"
       echo
-      echo "# A name that matches a row from \`ghostty +list-themes\`. Ghostty ships"
-      echo "# 463 of them; changing this line is the whole change of palette."
       echo "theme = ${GHOSTTY_THEME}"
       echo
-      echo "# The Meslo Nerd Font the manifest installs. Family name from the face"
-      echo "# table (spaces), not the ttf filename. Blank leaves ghostty's default."
       [[ -n "${GHOSTTY_FONT_FAMILY:-}" ]] && echo "font-family = ${GHOSTTY_FONT_FAMILY}"
       echo "font-size = ${GHOSTTY_FONT_SIZE}"
       echo
-      echo "# Select-to-copy. Ctrl-Shift-C still works and is unaffected; this is"
-      echo "# the extra convenience, at the cost of a stray selection replacing"
-      echo "# whatever was on the clipboard."
       echo "copy-on-select = ${GHOSTTY_COPY_ON_SELECT}"
       echo
-      echo "# Ghostty auto-installs the shell hooks; this opts INTO the extras."
-      echo "# \`cursor\` follows zsh vi-mode, \`sudo\` preserves prompt state through"
-      echo "# sudo, \`title\` tracks cwd in the terminal title."
       echo "shell-integration-features = ${GHOSTTY_SHELL_INTEGRATION_FEATURES}"
       echo
-      echo "# Quake-style drop-down terminal on Ctrl-\`, global so it fires from any"
-      echo "# app. Wayland compositors need the GlobalShortcuts portal for this to"
-      echo "# reach ghostty. Blank in the manifest disables it."
       [[ -n "${GHOSTTY_QUICK_TERMINAL_KEYBIND:-}" ]] && echo "keybind = ${GHOSTTY_QUICK_TERMINAL_KEYBIND}"
       echo
-      echo "# Padding between content and window edge. Ghostty's default of 2/2 is"
-      echo "# visually cramped at 16pt - the prompt sits right against the frame."
       echo "window-padding-x = ${GHOSTTY_WINDOW_PADDING_X}"
       echo "window-padding-y = ${GHOSTTY_WINDOW_PADDING_Y}"
     } > "$NEW_GHOSTTY"
@@ -1636,28 +1175,7 @@ else
   fi
 fi
 
-# ============================================================
 # Schedule
-# ============================================================
-# Same job as the Windows manifest's Schedule phase: a daily unattended run,
-# so this machine takes updates without anyone remembering to ask for them.
-# Every phase above reports `current` when it changes nothing, so a daily run
-# costs almost nothing and its log is only worth reading on the days it is
-# not all `current`.
-#
-# A systemd unit rather than cron, for the one thing cron cannot do: catch up
-# a run the machine slept through. Persistent=true below is systemd's
-# equivalent of Task Scheduler's StartWhenAvailable - the trigger this machine
-# missed at 04:20 asleep still fires the moment it wakes, instead of silently
-# waiting for tomorrow.
-#
-# Logging is deliberately NOT reinvented here the way the Windows phase has
-# to reinvent it. Task Scheduler captures nothing on its own, so that phase
-# pipes output through Tee-Object into hand-rolled dated files and prunes them
-# itself. A systemd service's stdout/stderr goes to the journal by default,
-# with its own retention already configured on every one of these machines -
-# `journalctl -u bootstrap-linux` is the log, and there is no file for this
-# script to create or prune.
 
 phase 'Schedule'
 
@@ -1666,10 +1184,6 @@ if [[ "$SKIP_SCHEDULE" == "yes" ]]; then
 elif [[ "${SCHEDULE_ENABLED:-no}" != "yes" ]]; then
   result 'skipped' 'schedule' 'disabled in the manifest'
 elif [[ ! -d /run/systemd/system ]]; then
-  # The test the systemd docs recommend for "is this machine's PID 1 actually
-  # systemd": a running service manager creates this directory itself, so its
-  # absence means something else is init. WSL is the real case - this script
-  # otherwise runs fine there, but plenty of installs never turn systemd on.
   result 'skipped' 'schedule' 'systemd is not running as init (e.g. WSL without systemd enabled)'
 else
   SERVICE_UNIT="/etc/systemd/system/${SCHEDULE_UNIT_NAME}.service"
@@ -1677,7 +1191,6 @@ else
 
   NEW_SERVICE="$(mktemp)"
   {
-    echo '# managed by linux/bootstrap.sh - edit the manifest, not this file'
     echo '[Unit]'
     echo "Description=Runs $SCRIPT_DIR/bootstrap.sh unattended, taking package and script updates"
     echo
@@ -1689,27 +1202,18 @@ else
 
   NEW_TIMER="$(mktemp)"
   {
-    echo '# managed by linux/bootstrap.sh - edit the manifest, not this file'
     echo '[Unit]'
     echo "Description=Daily trigger for ${SCHEDULE_UNIT_NAME}.service"
     echo
     echo '[Timer]'
     echo "OnCalendar=*-*-* ${SCHEDULE_TIME}:00"
-    # Catches up a run the machine was asleep for, same reasoning as above.
     echo 'Persistent=true'
-    # Nothing here to stagger across a fleet - this is one machine - but it
-    # costs nothing and means a reboot at exactly 04:20 does not race apt.
     echo 'RandomizedDelaySec=5m'
     echo
     echo '[Install]'
     echo 'WantedBy=timers.target'
   } > "$NEW_TIMER"
 
-  # Unlike the Windows Task Scheduler object - which carries registration
-  # timestamps that never compare equal, forcing that phase to hand-pick which
-  # fields actually matter - a unit file has no such incidental metadata. A
-  # plain byte comparison against what's on disk already answers "did anything
-  # that matters change".
   if [[ -f "$SERVICE_UNIT" ]] && cmp -s "$NEW_SERVICE" "$SERVICE_UNIT"; then
     SERVICE_CHANGED=no
   else
@@ -1747,11 +1251,7 @@ else
   fi
 fi
 
-# ============================================================
 # Manual
-# ============================================================
-# Reported, never touched. Each of these needs a third-party repository and a
-# signing key, which is a decision to make by hand.
 
 phase 'Manual - reported only'
 
@@ -1768,9 +1268,7 @@ for entry in "${MANUAL[@]:-}"; do
   fi
 done
 
-# ============================================================
 # Summary
-# ============================================================
 
 phase 'Summary'
 

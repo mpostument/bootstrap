@@ -1,18 +1,9 @@
 #!/usr/bin/env bash
-#
-# Installs and updates this Mac's software from packages.conf.
-#
-# Run it on a fresh machine to build it out; run it again any time to take
-# updates. Both are the same command - the script works out per package which
-# one it is doing.
-#
-# See README.md.
 
 set -euo pipefail
 
 BOOTSTRAP_VERSION='1.26.0'
 
-# Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
 
@@ -21,9 +12,7 @@ SKIP_UPGRADE=no
 GUI_OVERRIDE=auto
 ONLY_GROUPS=""
 
-# ============================================================
 # Output
-# ============================================================
 
 if [[ -t 1 ]]; then
   C_RESET=$'\033[0m'; C_CYAN=$'\033[36m'; C_DIM=$'\033[2m'
@@ -32,9 +21,6 @@ else
   C_RESET=''; C_CYAN=''; C_DIM=''; C_GREEN=''; C_YELLOW=''; C_RED=''; C_BLUE=''
 fi
 
-# One line per package, colour-coded by what happened, plus a row for the
-# summary. Every code path that decides something about a package ends here, so
-# the summary can never disagree with the live output.
 RESULT_ACTIONS=()
 
 phase() {
@@ -57,24 +43,7 @@ result() {
 
 die() { printf '%serror:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
 
-# ============================================================
 # Which Mac is this?
-# ============================================================
-# Homebrew lives at a different prefix per architecture - /opt/homebrew on
-# Apple silicon, /usr/local on Intel - and everything downstream depends on
-# getting that right. Install into the wrong one and you do not get an error;
-# you get a second, parallel Homebrew that the shell never picks up.
-#
-# `uname -m` is the obvious way to ask, and on its own it is wrong. Under
-# Rosetta - an Intel binary, or a Terminal with "Open using Rosetta" ticked, or
-# an `arch -x86_64 zsh` somewhere in your history - `uname -m` reports x86_64
-# on an Apple silicon Mac, because that is what the translated process is
-# entitled to believe. A script that trusts it would install the Intel Homebrew
-# into /usr/local on an M-series machine and quietly leave it there.
-#
-# sysctl.proc_translated is the question actually worth asking: the kernel sets
-# it to 1 when THIS process is being translated. It is absent on Intel Macs, so
-# a missing value and a 0 both mean "native".
 detect_arch() {
   local machine translated
   machine="$(uname -m)"
@@ -84,8 +53,6 @@ detect_arch() {
     ARCH=arm64
     ARCH_NOTE="Apple silicon"
   elif [[ "$translated" == "1" ]]; then
-    # x86_64 reported, but the kernel says we are translated - so the hardware
-    # is Apple silicon and uname is describing the emulation, not the Mac.
     ARCH=arm64
     ARCH_NOTE="Apple silicon, seen through Rosetta"
   else
@@ -100,18 +67,7 @@ detect_arch() {
   fi
 }
 
-# ============================================================
 # Package state
-# ============================================================
-# Formulae and casks are looked up SEPARATELY, never with a bare `brew list`.
-# The same name can be both: `docker` is a formula (the CLI client on its own)
-# and `docker-desktop` is a cask (the engine and the app). A check that does
-# not say which kind it means will call a package installed when the other kind
-# of it is.
-#
-# Every one of these goes through "$BREW" rather than a bare `brew`. On a fresh
-# machine Homebrew was installed minutes ago and nothing has re-read a profile
-# since, so `brew` may well not be on PATH yet.
 
 brew_formula_installed() {
   "$BREW" list --formula --versions "$1" >/dev/null 2>&1
@@ -121,11 +77,6 @@ brew_cask_installed() {
   "$BREW" list --cask --versions "$1" >/dev/null 2>&1
 }
 
-# Known to Homebrew at all. A name that is simply not in the tap should be
-# reported as such, not attempted and failed - a typo and a formula that was
-# renamed upstream look identical in brew's output and mean very different
-# things. Casks answer the same question from the JSON in install_cask, which
-# needs it anyway.
 brew_formula_available() {
   "$BREW" info --formula "$1" >/dev/null 2>&1
 }
@@ -138,9 +89,7 @@ brew_cask_version() {
   "$BREW" list --cask --versions "$1" 2>/dev/null | awk '{print $2}' || true
 }
 
-# ============================================================
 # Arguments
-# ============================================================
 
 usage() {
   cat <<'USAGE'
@@ -177,39 +126,13 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-# ============================================================
 # Arrays, the bash 3.2 way
-# ============================================================
-# macOS ships bash 3.2.57 - 2007, the last GPLv2 release - and it is what
-# `/usr/bin/env bash` finds on any Mac this script has not finished setting up
-# yet. That rules out the two things this file used to reach for: namerefs
-# (`declare -n`, bash 4.3) to read a group's arrays by computed name, and
-# associative arrays (`declare -A`, bash 4.0) for the cli-parity lookup.
-# Neither is a syntax error under 3.2 - both parse, then fail at run time,
-# which is why a run got all the way to the zsh phase before it died.
-#
-# group_array copies GROUP_<g>_FORMULA or GROUP_<g>_CASK into an array of the
-# caller's choosing. Both halves of it are about `set -u` under 3.2: expanding
-# an array that was never declared is a fatal unbound-variable error there and
-# a group with no casks at all is perfectly normal, hence the declare -p
-# guard; and "${a[@]:-}" on an empty array yields one empty string rather than
-# nothing, so the length test is what keeps an empty group from copying as a
-# group of one blank package.
 group_array() {   # group_array <dest> <source-array-name>
   eval "$1=()"
   declare -p "$2" >/dev/null 2>&1 || return 0
   eval "if (( \${#$2[@]} )); then $1=(\"\${$2[@]}\"); fi"
 }
 
-# The cli-parity table, keyed by macOS package name - three parallel arrays
-# filled in the zsh phase and walked linearly here. A dozen rows looked up a
-# dozen times is not a data-structure problem, and a linear walk is what 3.2
-# leaves once the associative array is gone.
-#
-# Sets _row_cmd and _row_desc, and returns non-zero both when the package has
-# no row and when its row carries no command to type - the caller prints the
-# bare package name for either, which is what the associative array's
-# `[[ -n "${_cli_cmd[$pkg]:-}" ]]` test did.
 parity_row() {    # parity_row <package>
   local i
   _row_cmd='' _row_desc=''
@@ -222,24 +145,12 @@ parity_row() {    # parity_row <package>
   [[ -n "$_row_cmd" ]]
 }
 
-# ============================================================
 # Manifest
-# ============================================================
 
 [[ -f "$MANIFEST" ]] || die "manifest not found: $MANIFEST"
 # shellcheck source=packages.conf
 source "$MANIFEST"
 
-# Checked here, once, rather than discovered halfway through a run. A manifest
-# that sources cleanly is not a manifest that is complete.
-#
-# The *_ENABLED switches are in this list for a reason worth stating. Every one
-# of them is read as "${X_ENABLED:-no}", which means a manifest that never
-# mentions X and a manifest that deliberately sets X to no produce the same
-# output - "disabled in the manifest" - and one of those two is a bug. The
-# Linux manifest lost its Claude Code keys to a bad edit and the run went on
-# reporting the phase as disabled, which is what it would have said if the
-# absence had been intended.
 for required in PKG_GROUPS MANUAL HELD TOOLS TAPS ZSH_PLUGINS ZSH_CUSTOM_PLUGINS \
                 ZSH_ENABLED \
                 GHOSTTY_ENABLED HISTORY_SIZE HISTORY_FILE_SIZE; do
@@ -280,19 +191,12 @@ if [[ "${LIST_PACKAGES:-no}" == "yes" ]]; then
   exit 0
 fi
 
-# ============================================================
 # Preflight
-# ============================================================
 
 phase 'Preflight'
 
 [[ "$(uname -s)" == "Darwin" ]] || die "this script targets macOS (uname says $(uname -s))"
 
-# The inverse of the Linux script, and worth being loud about. That one calls
-# sudo for the steps that need root; this one must never run as root at all.
-# Homebrew refuses to operate as root, and a `sudo ./bootstrap.sh` that got far
-# enough would leave root-owned files in the prefix and in $HOME that later
-# unprivileged runs cannot write - a mess to unpick, and easy to avoid here.
 [[ "$(id -u)" -ne 0 ]] || die "do not run this with sudo - Homebrew refuses to run as root, and it would leave root-owned files in your home directory"
 
 detect_arch
@@ -308,14 +212,6 @@ if [[ "$ARCH_NOTE" == *Rosetta* ]]; then
 fi
 
 if [[ "$GUI_OVERRIDE" == "auto" ]]; then
-  # No probe here, unlike the Linux script, and that is the honest answer
-  # rather than a missing feature. Linux can ask whether a display manager or
-  # any session files are installed, and a machine with none of them cannot
-  # start a desktop. Every Mac can: the window server is part of the OS, and
-  # the signals that differ between a laptop and a rack-mounted mini - whether
-  # anyone is logged in at the console, whether $SSH_CONNECTION is set - all
-  # describe THIS SESSION, which is exactly the mistake the Linux script goes
-  # out of its way not to make. So default to yes and take the override.
   HAS_GUI=yes
   GUI_NOTE="every Mac has one; pass --no-gui for a headless agent"
 else
@@ -333,12 +229,6 @@ fi
 
 [[ "$DRY_RUN" == "yes" ]] && printf '  %-16s%s%s%s\n' 'mode' "$C_BLUE" 'dry run - nothing will change' "$C_RESET"
 
-# Xcode's Command Line Tools, checked before Homebrew rather than reported at
-# the end: brew cannot compile, and for many formulae cannot even install a
-# bottle, without them. `xcode-select --install` is deliberately NOT run here -
-# it opens a modal dialog and waits for a human, which would hang an unattended
-# run with no output explaining why. Homebrew's own installer does install
-# them, so this only has to be fatal when Homebrew is already present.
 CLT_PRESENT=no
 if xcode-select -p >/dev/null 2>&1; then
   CLT_PRESENT=yes
@@ -347,16 +237,9 @@ else
   printf '  %-16s%s%s%s\n' 'xcode CLT' "$C_YELLOW" 'not installed' "$C_RESET"
 fi
 
-# ------------------------------------------------------------
-# Homebrew itself
-# ------------------------------------------------------------
-
 BREW="${BREW_PREFIX}/bin/brew"
 
 if [[ ! -x "$BREW" ]]; then
-  # Not on PATH and not at the expected prefix. Before installing a second one,
-  # check whether it is simply somewhere else - a Homebrew moved by hand, or an
-  # Intel install on a machine that has since been migrated to Apple silicon.
   if command -v brew >/dev/null 2>&1; then
     FOUND="$(command -v brew)"
     result 'present' 'homebrew' "$FOUND (not the ${ARCH} prefix ${BREW_PREFIX})"
@@ -368,10 +251,6 @@ if [[ ! -x "$BREW" ]]; then
     if [[ "$CLT_PRESENT" == "no" ]]; then
       printf '  %s%s%s\n' "$C_DIM" 'Homebrew will install the Command Line Tools first; this takes a while.' "$C_RESET"
     fi
-    # NONINTERACTIVE stops the installer waiting for a RETURN it will never
-    # get. It still calls sudo to create the prefix, so the first run on a
-    # fresh machine asks for a password once - there is no way around that and
-    # pretending otherwise would just hang.
     if NONINTERACTIVE=1 /bin/bash -c \
         "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/brew/HEAD/install.sh)" >/dev/null 2>&1 \
         && [[ -x "$BREW" ]]; then
@@ -388,17 +267,10 @@ if [[ ! -x "$BREW" && "$DRY_RUN" == "no" ]]; then
   die "no usable brew at $BREW"
 fi
 
-# brew needs its own environment - PATH, MANPATH and the prefix variables -
-# and this script cannot assume the calling shell already has it. On a first
-# run it demonstrably does not: Homebrew was installed thirty lines ago and
-# nothing has re-read a profile since.
 if [[ -x "$BREW" ]]; then
   eval "$("$BREW" shellenv)"
 fi
 
-# One index refresh for the whole run. HOMEBREW_NO_AUTO_UPDATE then stops brew
-# repeating it before every single install, which on a fresh machine with
-# forty packages is forty needless fetches of the same repository.
 export HOMEBREW_NO_AUTO_UPDATE=1
 export HOMEBREW_NO_ENV_HINTS=1
 
@@ -411,23 +283,14 @@ if [[ "$DRY_RUN" == "no" && -x "$BREW" ]]; then
   fi
 fi
 
-# ============================================================
 # Held
-# ============================================================
 
 for entry in "${HELD[@]:-}"; do
   [[ -z "$entry" ]] && continue
   result 'held' "${entry%%:*}" "${entry#*:}"
 done
 
-# ============================================================
 # Taps
-# ============================================================
-# Homebrew's third-party repositories. Empty in the shipped manifest, and the
-# mechanism is here anyway so that adding one is a manifest edit rather than a
-# script edit. A tap is a git repository of build recipes: once tapped it can
-# define what `brew install <name>` does, which is the same class of trust
-# decision as an apt signing key even though it looks like one word.
 
 phase 'Taps - third-party Homebrew repositories'
 
@@ -451,9 +314,7 @@ else
   done
 fi
 
-# ============================================================
 # Packages
-# ============================================================
 
 selected=("${PKG_GROUPS[@]}")
 if [[ -n "$ONLY_GROUPS" ]]; then
@@ -472,10 +333,6 @@ install_formula() {
       result 'skipped' "$pkg" "$version"
       return
     fi
-    # Upgrades are taken for everything in one pass below rather than per
-    # package: brew resolves dependencies across the set, and upgrading one
-    # formula at a time is both slower and more likely to rebuild a dependency
-    # several times over.
     result 'current' "$pkg" "$version"
     return
   fi
@@ -507,31 +364,14 @@ install_cask() {
     return
   fi
 
-  # One `brew info` for both questions below: whether the cask exists at all,
-  # and what it would put in /Applications. Asking twice doubles the cost for
-  # every cask on a fresh machine, and they are the same lookup.
   local json
   if ! json="$("$BREW" info --cask --json=v2 "$token" 2>/dev/null)"; then
     result 'missing' "$token" 'no such cask - tokens get renamed, check brew search'
     return
   fi
 
-  # An app already in /Applications that Homebrew did not put there is left
-  # alone, not overwritten. Two installers owning one .app is how a machine
-  # ends up disagreeing with itself about which version is installed.
-  #
-  # The name comes out of the JSON with sed and grep rather than jq, because
-  # jq is a package this script installs and cannot assume on a first run.
-  # Everything before "artifacts" is discarded first so a .app named in a zap
-  # or uninstall stanza cannot be mistaken for the thing being installed.
   local appname
   # shellcheck disable=SC2001
-  # ${json##*'"artifacts"'} is the suggested replacement and is not used here
-  # on purpose. It is only equivalent because `.*` is greedy - it has to strip
-  # to the LAST "artifacts", not the first, or a cask mentioning the word
-  # earlier truncates in the wrong place. Writing that as a parameter expansion
-  # means remembering which of # and ## is the greedy one, in a line whose
-  # correctness already rests on greediness. sed says it once, visibly.
   appname="$(sed 's/.*"artifacts"//' <<< "$json" | grep -o '"[^"]*\.app"' | head -1 | tr -d '"' || true)"
   if [[ -n "$appname" && -d "/Applications/${appname}" ]]; then
     result 'present' "$token" "/Applications/${appname} - installed by something else"
@@ -578,22 +418,13 @@ for group in "${selected[@]}"; do
   done
 done
 
-# ============================================================
 # Upgrades
-# ============================================================
-# `brew upgrade` exits 0 whether it moved forty packages or none, so its exit
-# code cannot be read as "something changed". Ask what is outdated first, and
-# the count is both the decision and the thing worth printing.
 
 brew_outdated() {
-  # --quiet gives bare names, one per line, and nothing when everything is
-  # current. Casks are asked for separately because the two lists are.
   "$BREW" outdated --quiet "$@" 2>/dev/null || true
 }
 
 count_lines() {
-  # grep -c rather than wc -l: an empty string is one empty line to wc, which
-  # would report 1 outdated package on a fully up-to-date machine.
   grep -c . <<< "$1" || true
 }
 
@@ -614,12 +445,6 @@ else
     result 'failed' 'brew formulae' 'brew upgrade failed'
   fi
 
-  # No --greedy, on purpose. Casks that declare auto_updates - Chrome, VS Code,
-  # Docker Desktop - keep themselves current, and --greedy makes Homebrew
-  # download and reinstall them anyway, on top of an app that has already
-  # updated itself. That is two installers fighting over one .app, and the
-  # visible symptom is a large download every single run for something that was
-  # never out of date. They are reported below instead.
   outdated_casks="$(brew_outdated --cask)"
   n_casks="$(count_lines "$outdated_casks")"
   if [[ "$n_casks" -eq 0 ]]; then
@@ -632,8 +457,6 @@ else
     result 'failed' 'brew casks' 'brew upgrade --cask failed'
   fi
 
-  # The self-updaters, named rather than silently left out, so the output does
-  # not look like Homebrew is keeping something current that it is not.
   self_updating="$(comm -13 \
     <(printf '%s\n' "$outdated_casks" | grep . | sort || true) \
     <(brew_outdated --cask --greedy | grep . | sort || true) || true)"
@@ -642,13 +465,7 @@ else
   fi
 fi
 
-# ============================================================
 # Tools that install themselves into $HOME
-# ============================================================
-# git clones, not Homebrew formulae. See the note in packages.conf for why
-# these are not `brew install pyenv` - the short version is that $HOME/.pyenv
-# is the same path on Linux and macOS, so one managed zsh fragment works on
-# both, and Homebrew never gets a second claim on them.
 
 git_clone_or_update() {
   local name="$1" dir="$2" repo="$3"
@@ -672,8 +489,6 @@ git_clone_or_update() {
         result 'upgraded' "$name" "$before -> $after"
       fi
     else
-      # A pull that cannot fast-forward means somebody has local commits or the
-      # branch moved. Reported, never forced: this is the user's checkout.
       result 'failed' "$name" 'git pull could not fast-forward'
     fi
     return
@@ -694,10 +509,6 @@ git_clone_or_update() {
   fi
 }
 
-# Guarded rather than unconditional: TOOLS has been empty before and will be
-# again, and a phase header printed over nothing reads like something failed.
-# git_clone_or_update is used either way - the zsh theme and every custom
-# plugin go through it.
 if [[ "${#TOOLS[@]}" -gt 0 ]]; then
   phase 'Tools - git clones in $HOME'
   for tool in "${TOOLS[@]:-}"; do
@@ -709,11 +520,7 @@ if [[ "${#TOOLS[@]}" -gt 0 ]]; then
   done
 fi
 
-# ============================================================
 # zsh
-# ============================================================
-# oh-my-zsh, Starship and the plugins, matching the Linux script and the
-# fleet's zsh role so a shell is the same wherever you land.
 
 if [[ "${ZSH_ENABLED:-no}" != "yes" ]]; then
   phase 'zsh - disabled in the manifest'
@@ -723,9 +530,6 @@ else
   OMZ_DIR="${ZSH:-$HOME/.oh-my-zsh}"
   OMZ_CUSTOM="${OMZ_DIR}/custom"
 
-  # macOS has shipped zsh as the default login shell since Catalina, so unlike
-  # the Linux script there is nothing to install and nothing to chsh. Reported
-  # so the version is on the record next to everything else.
   result 'present' 'zsh' "$(/bin/zsh --version 2>/dev/null | awk '{print $2}' || echo 'system')"
 
   if [[ -d "$OMZ_DIR" ]]; then
@@ -733,10 +537,6 @@ else
   elif [[ "$DRY_RUN" == "yes" ]]; then
     result 'would-install' 'oh-my-zsh' "$OMZ_DIR"
   else
-    # --unattended so the installer neither starts a shell nor rewrites the
-    # login shell behind our back. CHSH=no matters more here than on Linux:
-    # the login shell is already zsh, so the only thing chsh could do is point
-    # it somewhere else.
     if RUNZSH=no CHSH=no sh -c \
         "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" \
         "" --unattended >/dev/null 2>&1; then
@@ -746,11 +546,6 @@ else
     fi
   fi
 
-  # ZSH_CUSTOM_PLUGINS is empty on macOS and the theme is a formula, so in
-  # practice this loop does nothing here - every one of them comes from
-  # Homebrew and is sourced by path in the fragment below. The loop stays
-  # because the category has not stopped existing: an oh-my-zsh plugin with no
-  # formula would still be cloned, and the Linux script uses the same shape.
   if [[ -d "$OMZ_DIR" || "$DRY_RUN" == "yes" ]]; then
     for entry in ${ZSH_CUSTOM_PLUGINS[@]+"${ZSH_CUSTOM_PLUGINS[@]}"}; do
       [[ -z "$entry" ]] && continue
@@ -758,21 +553,6 @@ else
     done
   fi
 
-  # Completion directory permissions, and this is here because the fragment
-  # below is what causes the problem. Adding <prefix>/share/zsh-completions to
-  # fpath brings it, and its parents, into what oh-my-zsh audits at startup.
-  #
-  # Homebrew creates <prefix>/share group-writable for the admin group. zsh
-  # treats a group-writable directory on fpath as untrusted, and oh-my-zsh
-  # turns that into a refusal: it prints "Insecure completion-dependent
-  # directories detected" and then loads NO completions at all - not merely the
-  # ones from the offending directory. So installing zsh-completions can leave
-  # you with fewer completions than before it, which is a memorable afternoon.
-  #
-  # Fixed rather than reported, because this script created the condition. It
-  # is the same chmod the zsh-completions formula prints in its own caveat.
-  # Note that `brew` may recreate the group bit on a later install into share/;
-  # a re-run puts it back.
   COMPFIX_DIRS=(
     "${BREW_PREFIX}/share"
     "${BREW_PREFIX}/share/zsh"
@@ -782,8 +562,6 @@ else
   INSECURE_DIRS=()
   for d in "${COMPFIX_DIRS[@]}"; do
     [[ -d "$d" ]] || continue
-    # stat -f is the BSD spelling; %Sp gives the symbolic mode, so the group
-    # write bit is character 6 and the other write bit is character 9.
     perms="$(stat -f '%Sp' "$d" 2>/dev/null)" || continue
     if [[ "${perms:5:1}" == "w" || "${perms:8:1}" == "w" ]]; then
       INSECURE_DIRS+=("$d")
@@ -802,25 +580,6 @@ else
     fi
   fi
 
-  # ~/.zshenv, and it is here because it is the only file zsh reads on EVERY
-  # invocation - login, interactive, script, `zsh -c`, and the one-shot shell
-  # an editor or a GUI app spawns to run a command. Neither place this script
-  # already writes `brew shellenv` covers that: ~/.zprofile is login-only and
-  # the fragment below is interactive-only. So `zsh -c 'bat file'` ran with no
-  # Homebrew on PATH and failed on a binary the manifest had just installed.
-  #
-  # What may go in this file is therefore narrow. It must be silent, because
-  # anything printed here corrupts the output of every script; and it must be
-  # fast, because every zsh pays for it. `brew shellenv` only exports
-  # variables, so it qualifies - and almost nothing else does.
-  #
-  # The .zprofile line stays as well, and is not redundant: shellenv PREPENDS,
-  # so re-running it in a login shell re-asserts the prefix ahead of anything
-  # that reordered PATH in between. The duplicate entry is one a modern
-  # shellenv dedupes.
-  #
-  # Fragment plus a source line, the same shape as .zshrc below and for the
-  # same reason: a .zshenv that already exists is somebody's own work.
   ZSHENV="${HOME}/.zshenv"
   ZSHENV_FRAGMENT="${HOME}/.zshenv.bootstrap"
   if [[ "$DRY_RUN" == "yes" ]]; then
@@ -829,10 +588,6 @@ else
     NEW_ZSHENV="$(mktemp "${ZSHENV_FRAGMENT}.XXXXXX")"
     chmod 0644 "$NEW_ZSHENV"
     {
-      echo "# managed by macos/bootstrap.sh - edit the manifest, not this file"
-      echo '#'
-      echo '# Sourced from ~/.zshenv, which zsh reads on every invocation - scripts'
-      echo '# included. Keep it silent and cheap: no echo, no prompts, nothing slow.'
       echo
       echo "[ -x \"${BREW_PREFIX}/bin/brew\" ] && eval \"\$(${BREW_PREFIX}/bin/brew shellenv)\""
     } > "$NEW_ZSHENV"
@@ -848,10 +603,6 @@ else
       result 'installed' 'zshenv config' "$ZSHENV_FRAGMENT"
     fi
 
-    # Matched on a line that actually sources the fragment, not on any mention
-    # of the name, so a comment about this file is not mistaken for the hook.
-    # grep's exit 1 is the `if` condition here, not inside a command
-    # substitution, so pipefail has nothing to kill.
     ZSHENV_SOURCE_LINE='[ -f "$HOME/.zshenv.bootstrap" ] && source "$HOME/.zshenv.bootstrap"'
     if [[ -f "$ZSHENV" ]] && grep -qE '^[^#]*(source|\.)[[:space:]].*\.zshenv\.bootstrap' "$ZSHENV"; then
       result 'current' 'zshenv hook' "$ZSHENV"
@@ -861,90 +612,31 @@ else
     fi
   fi
 
-  # The managed fragment, not the whole .zshrc. Anything else in that file is
-  # somebody's own work; this writes one clearly-marked block and leaves the
-  # rest alone, the same rule the Windows profile and the Linux script follow.
   ZSHRC="${HOME}/.zshrc"
   FRAGMENT="${HOME}/.zshrc.bootstrap"
   if [[ "$DRY_RUN" == "yes" ]]; then
     result 'would-install' 'zsh config' "$FRAGMENT"
   else
-    # Rendered to a temp file beside the target and compared, so a run that
-    # changes nothing says `current` instead of claiming an install. Same
-    # filesystem, so the replace is an atomic rename; the mode is set here
-    # rather than inherited from mktemp's 0600.
     NEW_FRAGMENT="$(mktemp "${FRAGMENT}.XXXXXX")"
     chmod 0644 "$NEW_FRAGMENT"
     {
-      echo "# managed by macos/bootstrap.sh - edit the manifest, not this file"
       echo
-      echo '# Homebrew first, and unconditional: nothing below can find a brew-'
-      echo '# installed binary until the prefix is on PATH. The prefix differs by'
-      echo '# architecture - /opt/homebrew on Apple silicon, /usr/local on Intel -'
-      echo '# so this is written for the machine it was generated on.'
       echo "[ -x \"${BREW_PREFIX}/bin/brew\" ] && eval \"\$(${BREW_PREFIX}/bin/brew shellenv)\""
       echo
       echo "export ZSH=\"$OMZ_DIR\""
       echo "ZSH_THEME=\"$ZSH_THEME\""
       echo
-      echo '# zsh-completions ships completion FUNCTIONS, not a plugin to'
-      echo '# source, so its directory has to be on fpath before compinit runs'
-      echo '# - and oh-my-zsh runs compinit inside oh-my-zsh.sh. Adding it'
-      echo '# afterwards is the classic way to install this and see no new'
-      echo '# completions at all.'
       echo "fpath+=(\"${BREW_PREFIX}/share/zsh-completions\")"
       echo
-      # No NVM_DIR or nvm zstyle here any more. The oh-my-zsh nvm plugin is not
-      # in the macOS plugin list at all - see packages.conf for why - so there
-      # is nothing left that has to be set before oh-my-zsh.sh is sourced. nvm
-      # is configured further down with the other version managers instead.
       printf 'plugins=(%s)\n' "${ZSH_PLUGINS[*]}"
       echo 'source "$ZSH/oh-my-zsh.sh"'
       echo
-      echo '# The theme and the four add-on plugins, sourced by path because'
-      echo '# Homebrew installed them and oh-my-zsh only finds things under'
-      echo '# $ZSH_CUSTOM. On the Linux side these are clones there and are'
-      echo '# named in plugins=() instead; this is the same set, loaded'
-      echo '# differently.'
-      echo '#'
-      echo '# ORDER IS LOAD-BEARING and it is the same set of rules the plugin'
-      echo '# list used to encode, now that nothing else enforces them:'
-      echo '#'
-      echo '#   fzf-tab must come AFTER compinit, which oh-my-zsh.sh just ran,'
-      echo '#   and BEFORE anything that wraps ZLE widgets.'
-      echo '#'
-      echo '#   zsh-syntax-highlighting must be LAST but one. It wraps every ZLE'
-      echo '#   widget that exists when it loads, so a plugin sourced after it'
-      echo '#   defines its widgets outside that wrapping and goes unhighlighted.'
-      echo '#'
-      echo '#   history-substring-search is the documented exception and must'
-      echo '#   come after the highlighter, which is why it is last.'
-      echo '# The prompt itself. oh-my-zsh sets its own PROMPT inside oh-my-zsh.sh'
-      echo '# just above, so this has to come after it to win - same position'
-      echo '# powerlevel10k used to load from, same reason.'
       echo 'eval "$(starship init zsh)"'
-      echo "# fzf-tab.zsh, NOT fzf-tab.plugin.zsh. The upstream repository names"
-      echo "# it the second way and every oh-my-zsh guide says so; the Homebrew"
-      echo "# formula installs it as the first. Getting this wrong fails the -r"
-      echo "# guard and loads nothing, with no error anywhere."
       echo "[ -r \"${BREW_PREFIX}/share/fzf-tab/fzf-tab.zsh\" ] && source \"${BREW_PREFIX}/share/fzf-tab/fzf-tab.zsh\""
       echo "[ -r \"${BREW_PREFIX}/share/zsh-autosuggestions/zsh-autosuggestions.zsh\" ] && source \"${BREW_PREFIX}/share/zsh-autosuggestions/zsh-autosuggestions.zsh\""
       echo "[ -r \"${BREW_PREFIX}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh\" ] && source \"${BREW_PREFIX}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh\""
       echo "[ -r \"${BREW_PREFIX}/share/zsh-history-substring-search/zsh-history-substring-search.zsh\" ] && source \"${BREW_PREFIX}/share/zsh-history-substring-search/zsh-history-substring-search.zsh\""
       echo
-      echo '# Sourcing history-substring-search is not enough to USE it. The'
-      echo '# plugin ships no keybindings at all - upstream leaves that to the'
-      echo '# caller - so without these lines it loads, defines its widgets, and'
-      echo '# nothing you press ever reaches them. oh-my-zsh bundles a copy that'
-      echo '# does bind keys, which is exactly why this is easy to miss: drop the'
-      echo '# omz plugin for the newer standalone one and the feature silently'
-      echo '# stops working.'
-      echo '#'
-      echo '# Both spellings of up/down are bound. A terminal in application'
-      echo '# cursor mode sends the terminfo sequence and a terminal outside it'
-      echo '# sends the raw escape, and which one you get varies by terminal and'
-      echo '# by whether zle has started - so binding one of the two works'
-      echo '# everywhere except where it does not.'
       echo 'zmodload zsh/terminfo 2>/dev/null'
       echo 'if (( $+widgets[history-substring-search-up] )); then'
       echo "  bindkey '^[[A' history-substring-search-up"
@@ -955,36 +647,6 @@ else
       echo "  bindkey -M vicmd 'j' history-substring-search-down"
       echo 'fi'
       echo
-      echo '# Transient prompt: once a command is submitted, collapse that now-'
-      echo '# historical prompt line to a single arrow instead of leaving the full'
-      echo '# bar - path, git branch/status, clock - sitting in the scrollback'
-      echo '# forever. Same job p10k used to do here and the old Oh My Posh fork did'
-      echo '# on the Windows side, but built into Starship as a real feature - see'
-      echo '# [profiles] in starship.toml for the transient/rtransient formats this'
-      echo '# renders.'
-      echo '#'
-      echo '# Not a config switch, because zsh (unlike PowerShell and Fish) has no'
-      echo '# first-class transient-prompt hook of its own - this IS the community'
-      echo '# implementation Starship itself points to. It works by re-invoking'
-      echo '# starship prompt with --profile once a line is accepted, swapped in via'
-      echo '# string substitution on the PROMPT variable starship init zsh just set'
-      echo '# above. That variable is literally $(starship prompt --terminal-width=...)'
-      echo '# and the substitution inserts --profile between the binary name and its'
-      echo '# other flags.'
-      echo '#'
-      echo '# EVERY line below derives from $PROMPT, not $RPROMPT, including the ones'
-      echo '# that end up in RPROMPT - $RPROMPT already carries --right, and --profile'
-      echo '# and --right cannot be combined (the starship CLI rejects the pair). A'
-      echo '# left-shaped invocation assigned to the RPROMPT variable renders on the'
-      echo '# right regardless of which flags built its content, so this is correct'
-      echo '# rather than a workaround.'
-      echo '#'
-      echo '# STARSHIP_FULL_PROMPT/STARSHIP_FULL_RPROMPT are what make any of this'
-      echo '# reversible, and leaving them out is a bug that hides for exactly one'
-      echo '# command: the widgets below assign to the GLOBAL PROMPT, so with no copy'
-      echo '# of the originals nothing ever puts the real prompt back and every prompt'
-      echo '# after the first is the bare transient arrow, forever. The precmd hook is'
-      echo '# what restores them before the next prompt is drawn.'
       echo 'STARSHIP_FULL_PROMPT="$PROMPT"'
       echo 'STARSHIP_FULL_RPROMPT="$RPROMPT"'
       echo 'TRANSIENT_PROMPT="${PROMPT// prompt / prompt --profile transient }"'
@@ -1009,31 +671,6 @@ else
       echo 'zle -N transient-prompt'
       echo 'add-zle-hook-widget zle-line-finish transient-prompt'
       echo
-      echo '# Context-sensitive right prompt: the cluster and namespace, the AWS'
-      echo '# profile, the Azure subscription, the gcloud account or the Terraform'
-      echo '# workspace appears at the right of the line WHILE the command that would'
-      echo '# use it is being typed, and goes away again when it is deleted. p10k'
-      echo '# called this SHOW_ON_COMMAND. Starship has no equivalent - it renders'
-      echo '# once, before anything is typed - so the gate lives here: on each redraw,'
-      echo '# work out which group the first real word belongs to and, when that'
-      echo '# answer CHANGES, point RPROMPT at the matching ctx_* profile in'
-      echo '# starship.toml and redraw. The profile names are the contract with that'
-      echo '# file; ctx_$group is built by concatenation, so a group here with no'
-      echo '# profile there renders an empty right prompt and no error.'
-      echo '#'
-      echo '# The cost is one starship process per change of group, not per keystroke.'
-      echo '# The early return on an unchanged group is the entire reason a hook that'
-      echo '# fires on every character typed is affordable.'
-      echo '#'
-      echo '# The loop skips what is not the command yet, so sudo kubectl ... and'
-      echo '# AWS_PROFILE=prod aws ... still resolve to the tool behind them.'
-      echo '#'
-      echo '# zle .reset-prompt from inside zle-line-pre-redraw re-enters this widget'
-      echo '# once; by then the group matches and it returns at the guard, which is'
-      echo '# what stops it recursing. STARSHIP_TRANSIENT is the other guard: a'
-      echo '# transient redraw happens while the submitted command is still in BUFFER,'
-      echo '# so without it the context would be drawn back onto the very line being'
-      echo '# collapsed to get rid of it.'
       echo 'starship-context-prompt() {'
       echo '  (( STARSHIP_TRANSIENT )) && return'
       echo '  local -a words'
@@ -1068,11 +705,6 @@ else
       echo 'zle -N starship-context-prompt'
       echo 'add-zle-hook-widget zle-line-pre-redraw starship-context-prompt'
       echo
-      echo '# Completion styling, and the fzf-tab settings without which fzf-tab'
-      echo '# is inert. `menu no` is the load-bearing one: zsh menu selection and'
-      echo '# fzf-tab both want to own the completion UI, and if zsh has it,'
-      echo '# fzf-tab is sourced, working, and never invoked - the same silent'
-      echo '# nothing as the keybindings above.'
       echo 'zstyle '"'"':completion:*'"'"' list-colors "${(s.:.)LS_COLORS}"'
       echo "bindkey -M menuselect '^[[Z' reverse-menu-complete"
       echo 'if command -v fzf >/dev/null; then'
@@ -1095,11 +727,6 @@ else
       echo "  bindkey '^I' menu-select"
       echo 'fi'
       echo
-      echo '# History, sized so a busy week does not quietly drop the command'
-      echo '# you wanted. HISTSIZE is what the running shell holds; SAVEHIST is'
-      echo '# what reaches the file, and it must not be smaller or the file is'
-      echo '# truncated on every exit - the classic way to lose history while'
-      echo '# believing it is being kept.'
       echo 'HISTFILE="$HOME/.zsh_history"'
       printf 'HISTSIZE=%s\n' "$HISTORY_SIZE"
       printf 'SAVEHIST=%s\n' "$HISTORY_FILE_SIZE"
@@ -1113,36 +740,14 @@ else
       echo 'setopt HIST_VERIFY           # expand !! for review, do not just run it'
       echo 'setopt HIST_IGNORE_SPACE     # a leading space keeps it out of history'
       echo
-      echo '# Aliases guard on command -v so the fragment still works on a machine'
-      echo '# where one of these failed to install - a blind alias to a missing'
-      echo '# binary breaks the normal command entirely. Unlike Debian, Homebrew'
-      echo '# does not rename bat or fd, so there is no batcat/fdfind dance here.'
-      echo '#'
-      echo '# Two of the flags are about behaving like the command being'
-      echo '# replaced rather than like the replacement. `bat` pages by default'
-      echo '# and `cat` does not, so --paging=never; `eza --icons` emits icons'
-      echo '# even into a pipe, where they become mojibake in whatever reads'
-      echo '# them, so --icons=auto ties them to stdout being a terminal.'
       echo 'command -v bat    >/dev/null && alias cat="bat --paging=never"'
       echo 'command -v eza    >/dev/null && alias ls="eza --icons=auto --group-directories-first"'
       echo 'command -v rg     >/dev/null && alias grep="rg"'
       echo 'command -v fd     >/dev/null && alias find="fd"'
-      echo '#'
-      echo '# du/df to dust/duf are a bigger change of shape than the pairs above:'
-      echo '# dust prints a tree with bars, duf a table with different columns, and'
-      echo '# neither is a drop-in for a script parsing `du -sh` or `df -h` output -'
-      echo '# that script should keep calling the real binary, not this alias.'
       echo 'command -v dust   >/dev/null && alias du="dust"'
       echo 'command -v duf    >/dev/null && alias df="duf"'
       echo 'command -v zoxide >/dev/null && eval "$(zoxide init zsh)"'
       echo
-      echo '# `tools` prints the cli group - bat/eza/fd/... - with what to'
-      echo '# actually type and what the thing does, from tools/cli-parity.conf.'
-      echo '# Baked in at THIS run, same as the aliases above - it goes stale'
-      echo '# exactly the way they would if the manifest changed and the script'
-      echo '# did not run again since. Deliberately narrower than'
-      echo '# `--list-packages`, which covers every group: this is the list'
-      echo '# worth having memorised, not the whole manifest.'
       _parity_pkg=() _parity_cmd=() _parity_desc=()
       if [[ -r "$SCRIPT_DIR/../tools/cli-parity.conf" ]]; then
         while IFS='|' read -r _pty_can _pty_lx _pty_mac _pty_win _pty_note _pty_cmd _pty_desc; do
@@ -1150,7 +755,6 @@ else
           [[ -z "$_pty_can" || "$_pty_can" == \#* ]] && continue
           _pty_mac="$(printf '%s' "$_pty_mac" | tr -d '[:space:]')"
           [[ -z "$_pty_mac" || "$_pty_mac" == '-' ]] && continue
-          # Free text, unlike the id fields above - trim ends only.
           _pty_cmd="$(printf '%s' "$_pty_cmd" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
           _pty_desc="$(printf '%s' "$_pty_desc" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
           _parity_pkg+=("$_pty_mac")
@@ -1174,53 +778,16 @@ else
       echo '  echo'
       echo '}'
       echo
-      echo '# GNU make arrives as gmake because /usr/bin/make is BSD make and'
-      echo '# Homebrew will not shadow the system one. Almost every Makefile worth'
-      echo '# running expects GNU; if you need the BSD one, /usr/bin/make is still'
-      echo '# there under its full path.'
       echo 'command -v gmake  >/dev/null && alias make="gmake"'
       echo
-      echo '# Nothing on macOS puts this on PATH by default, and it is where a'
-      echo '# `pip install --user` and any hand-installed binary land - so a'
-      echo '# command can be on disk and not exist without this line.'
       echo '[ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH"'
       echo
-      echo '# Version managers, ahead of anything the platform ships, so a'
-      echo '# project pin wins over the machine default whenever there is one.'
-      echo '#'
-      echo '# All four come from Homebrew here, so none of them needs a PATH'
-      echo '# entry of its own - brew shellenv above already put its bin'
-      echo '# directory in front. The Linux fragment prepends $HOME/.pyenv/bin'
-      echo '# and $HOME/.tofuenv/bin because there they are git clones.'
       echo 'command -v pyenv >/dev/null && eval "$(pyenv init -)"'
-      echo '# pyenv-virtualenv is a separate init and a separate formula. Without'
-      echo '# this line the plugin is installed and does nothing: `pyenv'
-      echo '# virtualenv` still creates environments, but none of them ever'
-      echo '# activate on cd.'
       echo 'command -v pyenv-virtualenv-init >/dev/null && eval "$(pyenv virtualenv-init -)"'
       echo
-      echo '# nvm, and the two halves of it are deliberately different places.'
-      echo '#'
-      echo '# NVM_DIR is the DATA directory - where installed node versions'
-      echo '# live - and it must NOT be the brew prefix. Homebrew says so'
-      echo '# itself: leaving it at the Cellar path "will destroy any'
-      echo '# nvm-installed Node installations upon upgrade/reinstall", because'
-      echo '# `brew upgrade nvm` replaces that directory wholesale. ~/.nvm'
-      echo '# survives, and is also where the Linux side keeps the same data.'
-      echo '#'
-      echo '# nvm.sh itself comes from the brew prefix, since that is the copy'
-      echo '# brew installed. The oh-my-zsh nvm plugin cannot express this split'
-      echo '# - it sources $NVM_DIR/nvm.sh and nothing else - which is why the'
-      echo '# plugin is not in the list and this is written out by hand.'
       echo 'export NVM_DIR="$HOME/.nvm"'
       echo '[ -d "$NVM_DIR" ] || mkdir -p "$NVM_DIR"'
       echo
-      echo '# LAZY, for the reason the plugin was lazy: nvm is a large shell'
-      echo '# script and sourcing it eagerly is the single most common reason a'
-      echo '# zsh startup stops being instant - easily a few hundred'
-      echo '# milliseconds on every new terminal. These stubs replace themselves'
-      echo '# with the real thing on first use, so the first `nvm`, `node` or'
-      echo '# `npm` pays that cost once and no other shell pays it at all.'
       echo "_bootstrap_load_nvm() {"
       echo "  unfunction nvm node npm npx _bootstrap_load_nvm 2>/dev/null"
       echo "  [ -s \"${BREW_PREFIX}/opt/nvm/nvm.sh\" ] && . \"${BREW_PREFIX}/opt/nvm/nvm.sh\""
@@ -1245,8 +812,6 @@ else
       result 'installed' 'zsh config' "$FRAGMENT"
     fi
 
-    # Sourced from .zshrc rather than written into it, so re-running this never
-    # has to parse or rewrite a file the user owns.
     SOURCE_LINE='[ -f "$HOME/.zshrc.bootstrap" ] && source "$HOME/.zshrc.bootstrap"'
     if [[ -f "$ZSHRC" ]] && grep -qF '.zshrc.bootstrap' "$ZSHRC"; then
       result 'current' 'zshrc hook' "$ZSHRC"
@@ -1258,15 +823,7 @@ else
   fi
 fi
 
-# ============================================================
 # Prompt config
-# ============================================================
-# starship.toml at the repo root, not under macos/ - the whole point of
-# moving off powerlevel10k is ONE prompt config read by every shell on
-# every platform, so this is not macOS's file to fork. A straight copy,
-# compared first: unlike the zsh fragment or the ghostty config below,
-# nothing here is generated from manifest values, so there is nothing to
-# template - the file IS the deployed content.
 STARSHIP_TOML_SOURCE="${SCRIPT_DIR}/../starship.toml"
 if ! command -v starship >/dev/null 2>&1; then
   phase 'Prompt config'
@@ -1296,16 +853,7 @@ else
   fi
 fi
 
-# ============================================================
 # Terminal config
-# ============================================================
-# The payoff for choosing ghostty: its config is a plain text file, so it gets
-# the same treatment as the zsh fragment - rendered, compared, and reported as
-# `current` when nothing moved.
-#
-# ~/.config/ghostty/config on both platforms. macOS also reads a path under
-# ~/Library/Application Support, but it honours the XDG one too, and one path
-# in the script beats two.
 
 if [[ "${GHOSTTY_ENABLED:-no}" != "yes" ]]; then
   phase 'Terminal config - disabled in the manifest'
@@ -1324,58 +872,26 @@ else
     NEW_GHOSTTY="$(mktemp "${GHOSTTY_CONF}.XXXXXX")"
     chmod 0644 "$NEW_GHOSTTY"
     {
-      echo "# managed by bootstrap.sh - edit the manifest, not this file"
       echo
-      echo "# Bytes, not lines, and there is no unlimited setting - ghostty says an"
-      echo "# unlimited buffer is a planned feature, not a current one. This is"
-      echo "# 256MB, and it is PER SURFACE: every tab and split gets its own, and"
-      echo "# the buffer lives in RAM. A cap, not a preallocation, so an idle tab"
-      echo "# costs nothing."
-      echo "#"
-      echo "# Note what this does NOT cover. Scrollback belongs to the window and"
-      echo "# dies with it, and inside tmux it is bypassed entirely - tmux owns"
-      echo "# the screen and keeps its own buffer. For output you want to still"
-      echo "# have tomorrow, redirect it to a file."
       echo "scrollback-limit = ${GHOSTTY_SCROLLBACK_BYTES}"
       echo
-      echo "# A name that matches a row from \`ghostty +list-themes\`. Ghostty ships"
-      echo "# 463 of them; changing this line is the whole change of palette."
       echo "theme = ${GHOSTTY_THEME}"
       echo
-      echo "# The Meslo Nerd Font the manifest installs. Family name from the face"
-      echo "# table (spaces), not the ttf filename. Blank falls back to SF Mono."
       [[ -n "${GHOSTTY_FONT_FAMILY:-}" ]] && echo "font-family = ${GHOSTTY_FONT_FAMILY}"
       echo "font-size = ${GHOSTTY_FONT_SIZE}"
       echo
-      echo "# Option is Meta, so Option-f/b/arrows produce the word-wise escape"
-      echo "# sequences readline, zsh and vim recognise. macOS's default reverses"
-      echo "# this to keep the typographic bindings, which nobody uses at a terminal."
       echo "macos-option-as-alt = ${GHOSTTY_MACOS_OPTION_AS_ALT}"
       echo
-      echo "# Restore tabs and splits across a plain quit-and-relaunch. The default"
-      echo "# only restores when the OS asks; \`always\` covers Cmd-Q too."
       echo "window-save-state = ${GHOSTTY_WINDOW_SAVE_STATE}"
       echo
-      echo "# Select-to-copy. Cmd-Shift-C still works and is unaffected; this is"
-      echo "# the extra convenience, at the cost of a stray selection replacing"
-      echo "# whatever was on the clipboard."
       echo "copy-on-select = ${GHOSTTY_COPY_ON_SELECT}"
       echo
-      echo "# End the process when the last window closes, matching CLI convention."
-      echo "# macOS's default keeps the app alive with no visible window."
       echo "quit-after-last-window-closed = ${GHOSTTY_QUIT_AFTER_LAST_WINDOW}"
       echo
-      echo "# Ghostty auto-installs the shell hooks; this opts INTO the extras."
-      echo "# \`cursor\` follows zsh vi-mode, \`sudo\` preserves prompt state through"
-      echo "# sudo, \`title\` tracks cwd in the terminal title."
       echo "shell-integration-features = ${GHOSTTY_SHELL_INTEGRATION_FEATURES}"
       echo
-      echo "# Quake-style drop-down terminal on Cmd-\`, global so it fires from any"
-      echo "# app including full-screen ones. Blank in the manifest disables it."
       [[ -n "${GHOSTTY_QUICK_TERMINAL_KEYBIND:-}" ]] && echo "keybind = ${GHOSTTY_QUICK_TERMINAL_KEYBIND}"
       echo
-      echo "# Padding between content and window edge. Ghostty's default of 2/2 is"
-      echo "# visually cramped at 16pt - the prompt sits right against the frame."
       echo "window-padding-x = ${GHOSTTY_WINDOW_PADDING_X}"
       echo "window-padding-y = ${GHOSTTY_WINDOW_PADDING_Y}"
     } > "$NEW_GHOSTTY"
@@ -1393,11 +909,7 @@ else
   fi
 fi
 
-# ============================================================
 # Manual
-# ============================================================
-# Reported, never touched. Each of these is owned by an installer this script
-# will not drive, or is a decision to make by hand.
 
 phase 'Manual - reported only'
 
@@ -1414,9 +926,7 @@ for entry in "${MANUAL[@]:-}"; do
   fi
 done
 
-# ============================================================
 # Summary
-# ============================================================
 
 phase 'Summary'
 
