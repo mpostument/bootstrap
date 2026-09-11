@@ -60,6 +60,13 @@ ctx_gcloud    = "$gcloud$nodejs$python$golang$rust$dotnet$docker_context$time"
 ctx_terraform = "$terraform$nodejs$python$golang$rust$dotnet$docker_context$time"
 ctx_dotnet    = "${custom.dotnet_sdk}$nodejs$python$golang$rust$docker_context$time"
 
+# Claude Code statusline - rendered by `starship statusline claude-code`,
+# wired up via `.claude/settings.json`'s statusLine.command (run /statusline
+# in Claude Code, or set it by hand). This is the whole line Claude Code
+# shows, not an addition to the shell prompt above, so it repeats
+# directory/git_branch rather than relying on the main $format.
+claude-code = "$directory$git_branch$claude_model$claude_context$claude_cost"
+
 [character]
 success_symbol = '[❯](green bold)'
 error_symbol = '[❯](red bold)'
@@ -149,6 +156,54 @@ format = '[$symbol$context( \($namespace\))]($style) '
 style = 'teal bold'
 symbol = '⎈ '
 format = '[$symbol($version )]($style)'
+
+# Claude Code statusline modules - only meaningful under the claude-code
+# profile above; harmless elsewhere since the shell prompt never renders them.
+[claude_model]
+style = 'pink bold'
+symbol = '🤖 '
+format = '[$symbol$model]($style) '
+
+[claude_context]
+format = '[$gauge $percentage]($style) '
+gauge_width = 10
+gauge_full_symbol = '█'
+gauge_partial_symbol = '▒'
+gauge_empty_symbol = '░'
+
+[[claude_context.display]]
+threshold = 0
+style = 'green bold'
+hidden = true
+
+[[claude_context.display]]
+threshold = 30
+style = 'green bold'
+
+[[claude_context.display]]
+threshold = 60
+style = 'yellow bold'
+
+[[claude_context.display]]
+threshold = 80
+style = 'red bold'
+
+[claude_cost]
+symbol = '💰 '
+format = '[$symbol$cost]($style) '
+
+[[claude_cost.display]]
+threshold = 0
+style = 'green bold'
+hidden = true
+
+[[claude_cost.display]]
+threshold = 1
+style = 'yellow bold'
+
+[[claude_cost.display]]
+threshold = 5
+style = 'red bold'
 
 [custom.dotnet_sdk]
 command = 'dotnet --version'

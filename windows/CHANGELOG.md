@@ -20,6 +20,24 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.29.0]
+
+### Added
+
+- **A `claude-code` Starship profile, so Claude Code's statusline reuses the
+  same catppuccin theme as the shell prompt instead of the plain default.**
+  `starship.toml` (deployed identically to all three platforms) now defines
+  `[profiles] claude-code = "$directory$git_branch$claude_model$claude_context$claude_cost"`
+  plus the `claude_model`, `claude_context` and `claude_cost` module configs
+  it references. Since Claude Code's statusline is a standalone line rather
+  than an addition to the shell prompt, the profile repeats
+  `$directory`/`$git_branch` rather than depending on the main `$format`.
+  `claude_context` (a 10-cell gauge) and `claude_cost` colour themselves via
+  threshold, not a flat `style` — green under 60% context / \$1 cost, yellow
+  up to 80%/\$5, red beyond. Wire it up per-machine with `/statusline` in
+  Claude Code, or by hand in `~/.claude/settings.json`:
+  `{"statusLine": {"type": "command", "command": "starship statusline claude-code"}}`.
+
 ## [1.28.0]
 
 ### Added
