@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.19.0'
+BOOTSTRAP_VERSION='1.20.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -669,7 +669,7 @@ fi
 # ============================================================
 # zsh
 # ============================================================
-# oh-my-zsh, powerlevel10k and the plugins, matching the Linux script and the
+# oh-my-zsh, Starship and the plugins, matching the Linux script and the
 # fleet's zsh role so a shell is the same wherever you land.
 
 if [[ "${ZSH_ENABLED:-no}" != "yes" ]]; then
@@ -835,22 +835,6 @@ else
     {
       echo "# managed by macos/bootstrap.sh - edit the manifest, not this file"
       echo
-      echo '# The powerlevel10k instant prompt, and it is FIRST for a reason: it'
-      echo '# replays a cached prompt before the rest of this file runs, so the'
-      echo '# terminal is usable immediately instead of after every eval below.'
-      echo '# Anything that writes to the console above it corrupts the replay,'
-      echo '# which is why it precedes even brew shellenv.'
-      echo '#'
-      echo '# The consequence for ~/.zshrc is that the line sourcing THIS file'
-      echo '# has to be near the top of it. Code that prompts for input - a'
-      echo '# password, a [y/n] - is the one thing that must go above it.'
-      echo '#'
-      echo '# The cache does not exist on the first run, so the guard fails and'
-      echo '# the prompt is simply not instant that once.'
-      echo 'if [ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]; then'
-      echo '  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"'
-      echo 'fi'
-      echo
       echo '# Homebrew first, and unconditional: nothing below can find a brew-'
       echo '# installed binary until the prefix is on PATH. The prefix differs by'
       echo '# architecture - /opt/homebrew on Apple silicon, /usr/local on Intel -'
@@ -892,7 +876,10 @@ else
       echo '#'
       echo '#   history-substring-search is the documented exception and must'
       echo '#   come after the highlighter, which is why it is last.'
-      echo "[ -r \"${BREW_PREFIX}/share/powerlevel10k/powerlevel10k.zsh-theme\" ] && source \"${BREW_PREFIX}/share/powerlevel10k/powerlevel10k.zsh-theme\""
+      echo '# The prompt itself. oh-my-zsh sets its own PROMPT inside oh-my-zsh.sh'
+      echo '# just above, so this has to come after it to win - same position'
+      echo '# powerlevel10k used to load from, same reason.'
+      echo 'eval "$(starship init zsh)"'
       echo "# fzf-tab.zsh, NOT fzf-tab.plugin.zsh. The upstream repository names"
       echo "# it the second way and every oh-my-zsh guide says so; the Homebrew"
       echo "# formula installs it as the first. Getting this wrong fails the -r"
@@ -925,22 +912,40 @@ else
       echo "  bindkey -M vicmd 'j' history-substring-search-down"
       echo 'fi'
       echo
-      echo '# The prompt configuration itself, which is NOT part of the formula.'
-      echo '# powerlevel10k without it runs its configuration wizard on every new'
-      echo '# shell until you answer it, and answering writes ~/.p10k.zsh - which'
-      echo '# then has to be sourced or the answers do nothing. This file is'
-      echo '# yours, not managed here; the theme has to come first, above.'
-      echo '[ -r "$HOME/.p10k.zsh" ] && source "$HOME/.p10k.zsh"'
-      echo
-      echo '# The right prompt - kube context, node version, clock - earns its'
-      echo '# place while you type and is noise the moment the command scrolls'
-      echo '# away: it sits at the far right of every line in the scrollback, so'
-      echo '# selecting a command to copy drags "system kube-ctx 17:17" along'
-      echo '# with it. TRANSIENT_RPROMPT erases it when the line is accepted, so'
-      echo '# only the prompt you are typing at carries it. The left side is the'
-      echo '# same idea under POWERLEVEL9K_TRANSIENT_PROMPT, which lives in'
-      echo '# ~/.p10k.zsh - yours, not managed here.'
-      echo 'setopt TRANSIENT_RPROMPT'
+      echo '# Transient prompt: once a command is submitted, collapse that now-'
+      echo '# historical prompt line to a single arrow instead of leaving the'
+      echo '# full bar - path, git branch/status, language versions, clock -'
+      echo '# sitting in the scrollback forever. Same job the old Oh My Posh'
+      echo '# fork does on the Windows side and p10k used to do here, but built'
+      echo '# into Starship as a real feature - see [profiles] in starship.toml'
+      echo '# for the transient/rtransient formats this renders.'
+      echo '#'
+      echo '# Not a config switch, because zsh (unlike PowerShell and Fish) has'
+      echo '# no first-class transient-prompt hook of its own - this IS the'
+      echo '# community-standard implementation Starship itself points to. It'
+      echo '# works by re-invoking `starship prompt` with --profile once a line'
+      echo '# is accepted, swapped in via string substitution on the PROMPT'
+      echo '# variable starship init zsh just set above. That variable is'
+      echo "# literally \`\$('starship' prompt --terminal-width=...)\`, and the"
+      echo '# substitution below inserts --profile between the binary name and'
+      echo '# its other flags.'
+      echo '#'
+      echo '# BOTH lines derive from $PROMPT, not $RPROMPT, even the one feeding'
+      echo '# RPROMPT below - $RPROMPT already carries --right, and --profile'
+      echo "# and --right cannot be combined (starship's own CLI rejects it)."
+      echo '# A left-shaped invocation assigned to the RPROMPT variable renders'
+      echo '# on the right regardless of which flags built its content, so this'
+      echo '# is correct rather than a workaround.'
+      echo 'TRANSIENT_PROMPT="${PROMPT// prompt / prompt --profile transient }"'
+      echo 'TRANSIENT_RPROMPT="${PROMPT// prompt / prompt --profile rtransient }"'
+      echo 'autoload -Uz add-zle-hook-widget'
+      echo 'transient-prompt() {'
+      echo '  PROMPT="$TRANSIENT_PROMPT"'
+      echo '  RPROMPT="$TRANSIENT_RPROMPT"'
+      echo '  zle .reset-prompt'
+      echo '}'
+      echo 'zle -N transient-prompt'
+      echo 'add-zle-hook-widget zle-line-finish transient-prompt'
       echo
       echo '# Completion styling, and the fzf-tab settings without which fzf-tab'
       echo '# is inert. `menu no` is the load-bearing one: zsh menu selection and'
@@ -1128,34 +1133,43 @@ else
       result 'installed' 'zshrc hook' "appended to $ZSHRC"
     fi
 
-    # Appending is safe but not always right, and the difference is visible
-    # rather than silent, so it is reported instead of guessed at. The fragment
-    # now opens with the powerlevel10k instant prompt, which only does anything
-    # if it runs before the rest of the file - so a hook sitting under 80 lines
-    # of somebody's own config is a working shell with a feature quietly
-    # switched off. Rewriting a file the user owns to fix that is not this
-    # script's call to make; saying so is.
-    if [[ -f "$ZSHRC" ]]; then
-      # Matched on a line that actually SOURCES the fragment, not on any
-      # mention of it. A comment naming the file - and this script encourages
-      # writing one - is not the hook, and counting from it measures nothing.
-      # grep exits 1 with no match, which under pipefail would kill the script
-      # from inside `$(...)`. That is a real path here: the outer if guarded
-      # only on a literal filename mention, so a `.zshrc` that names the file
-      # in a comment but never sources it reaches this line with no match.
-      # `|| true` on the pipeline, and the intended fallback below still runs.
-      HOOK_LINE="$(grep -nE '^[^#]*(source|\.)[[:space:]].*\.zshrc\.bootstrap' "$ZSHRC" | head -1 | cut -d: -f1 || true)"
-      [[ -z "$HOOK_LINE" ]] && HOOK_LINE=1
-      # grep -c exits 1 when the count is zero - the case where the file above
-      # the hook is entirely comments and blanks, which is exactly the shape a
-      # tidy .zshrc has. Under `set -euo pipefail` that kills the script mid-
-      # phase, so the pipeline is guarded and the count defaulted to 0.
-      CODE_ABOVE="$(head -n "$(( HOOK_LINE - 1 ))" "$ZSHRC" | grep -cvE '^[[:space:]]*(#|$)' || true)"
-      CODE_ABOVE="${CODE_ABOVE:-0}"
-      if [[ "${CODE_ABOVE:-0}" -gt 0 ]]; then
-        result 'missing' 'zshrc hook order' \
-          "$CODE_ABOVE lines run before it - move the source line to the top for the instant prompt"
-      fi
+  fi
+fi
+
+# ============================================================
+# Prompt config
+# ============================================================
+# starship.toml at the repo root, not under macos/ - the whole point of
+# moving off powerlevel10k is ONE prompt config read by every shell on
+# every platform, so this is not macOS's file to fork. A straight copy,
+# compared first: unlike the zsh fragment or the ghostty config below,
+# nothing here is generated from manifest values, so there is nothing to
+# template - the file IS the deployed content.
+STARSHIP_TOML_SOURCE="${SCRIPT_DIR}/../starship.toml"
+if ! command -v starship >/dev/null 2>&1; then
+  phase 'Prompt config'
+  result 'missing' 'starship.toml' 'starship is not installed'
+elif [[ ! -r "$STARSHIP_TOML_SOURCE" ]]; then
+  phase 'Prompt config'
+  result 'failed' 'starship.toml' "not found at $STARSHIP_TOML_SOURCE"
+else
+  phase 'Prompt config'
+  STARSHIP_TOML_DIR="${HOME}/.config"
+  STARSHIP_TOML_TARGET="${STARSHIP_TOML_DIR}/starship.toml"
+  if [[ "$DRY_RUN" == "yes" ]]; then
+    result 'would-install' 'starship.toml' "$STARSHIP_TOML_TARGET"
+  else
+    mkdir -p "$STARSHIP_TOML_DIR"
+    if [[ -f "$STARSHIP_TOML_TARGET" ]] && cmp -s "$STARSHIP_TOML_SOURCE" "$STARSHIP_TOML_TARGET"; then
+      result 'current' 'starship.toml' "$STARSHIP_TOML_TARGET"
+    elif [[ -f "$STARSHIP_TOML_TARGET" ]]; then
+      cp "$STARSHIP_TOML_SOURCE" "$STARSHIP_TOML_TARGET"
+      chmod 0644 "$STARSHIP_TOML_TARGET"
+      result 'upgraded' 'starship.toml' "$STARSHIP_TOML_TARGET"
+    else
+      cp "$STARSHIP_TOML_SOURCE" "$STARSHIP_TOML_TARGET"
+      chmod 0644 "$STARSHIP_TOML_TARGET"
+      result 'installed' 'starship.toml' "$STARSHIP_TOML_TARGET"
     fi
   fi
 fi

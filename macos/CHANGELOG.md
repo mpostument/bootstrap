@@ -15,6 +15,44 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.0]
+
+powerlevel10k replaced with Starship, matching the same move on the Linux
+and Windows sides. The reason: powerlevel10k is "basically unmaintained" as
+of 2026, in its own maintainer's words - and Starship reads the exact same
+`starship.toml` on all three platforms instead of a separate theme per
+shell.
+
+### Changed
+
+- **`starship` replaces `powerlevel10k` in the `shell` group's formulae.**
+  `starship.toml` at the repo root - not a per-platform file - is copied
+  to `~/.config/starship.toml` unchanged (nothing here is generated from
+  manifest values, so there is nothing to template). `ZSH_THEME` stays
+  empty in `packages.conf`, now because Starship owns `PROMPT`/`RPROMPT`
+  directly via `starship init zsh` rather than because the theme could not
+  be found by name.
+- **The instant-prompt cache read is gone from the top of the zsh
+  fragment**, and with it the `zshrc hook order` check that existed
+  specifically to warn when that feature was not getting the early
+  sourcing it needed. Starship has no instant-prompt equivalent, so
+  neither the feature nor the warning about it applies any more.
+- **Transient prompt is now a real Starship feature** (`[profiles]` in
+  `starship.toml`, wired through a `zle-line-finish` hook - the
+  community-standard implementation Starship's own docs point to for zsh,
+  which has no first-class transient-prompt hook the way PowerShell and
+  Fish do) **rather than `setopt TRANSIENT_RPROMPT` plus
+  `POWERLEVEL9K_TRANSIENT_PROMPT` living in your own untracked
+  `~/.p10k.zsh`.**
+
+### Removed
+
+- **The `~/.p10k.zsh` sourcing line.** That file is not read by the
+  managed fragment any more; anything you want to keep from it belongs in
+  `starship.toml` now, in Starship's own config shape. The file itself is
+  not deleted - it is yours, was never managed here, and this script has
+  never deleted anything it did not put there itself.
+
 ## [1.19.0]
 
 ### Changed

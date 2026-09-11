@@ -80,8 +80,11 @@ with it on a headless run.
    Homebrew formulae in the `dev` group, not git clones under `$HOME` the way
    the Linux script installs them.
 6. *(no .NET phase — the `dotnet-sdk` cask covers it, in the `dev` group.)*
-7. **zsh** — oh-my-zsh, powerlevel10k and the plugins, plus a managed
+7. **zsh** — oh-my-zsh, Starship and the plugins, plus a managed
    `~/.zshrc.bootstrap` fragment sourced from your own `.zshrc`.
+8. **Prompt config** — `starship.toml` at the repo root, copied to
+   `~/.config/starship.toml` unchanged. The same file Windows deploys too -
+   one prompt config for every shell on every platform.
 
 Claude Code has no phase of its own here: Homebrew carries it as the
 `claude-code` cask, so it is installed and kept current by the package groups
@@ -181,7 +184,7 @@ is reported and used as-is. Homebrew's zsh is deliberately not in the manifest:
 installing it gives you a second zsh that a login shell will not use.
 
 The rest matches the Linux setup, so a shell is the same wherever you land:
-oh-my-zsh, powerlevel10k, and the plugin list in the manifest.
+oh-my-zsh, Starship, and the plugin list in the manifest.
 
 Plugin **order** is load-bearing, not alphabetical:
 
