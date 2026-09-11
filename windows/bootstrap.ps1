@@ -1073,6 +1073,33 @@ if ($SkipShell) {
                 }
             }
         }
+
+        # Set only when unset: an existing value is somebody's choice, not drift.
+        if (-not $git.DeltaEnabled) {
+            Add-Result -Group 'git' -Id 'delta' -Action 'skipped' -Detail 'DeltaEnabled is false'
+        } elseif (-not (Get-Command delta -ErrorAction SilentlyContinue)) {
+            Add-Result -Group 'git' -Id 'delta' -Action 'missing' -Detail 'delta is not installed'
+        } else {
+            foreach ($pair in @(
+                    @{ Key = 'core.pager';            Value = 'delta' },
+                    @{ Key = 'interactive.diffFilter'; Value = 'delta --color-only' })) {
+                $have = (& git config --global --get $pair.Key 2>$null)
+                if ($have -eq $pair.Value) {
+                    Add-Result -Group 'git' -Id $pair.Key -Action 'current' -Detail $pair.Value
+                } elseif ($have) {
+                    Add-Result -Group 'git' -Id $pair.Key -Action 'present' -Detail "$have - left alone"
+                } elseif (-not $PSCmdlet.ShouldProcess($pair.Key, 'git config --global')) {
+                    Add-Result -Group 'git' -Id $pair.Key -Action 'would-install' -Detail $pair.Value
+                } else {
+                    & git config --global $pair.Key $pair.Value
+                    if ($LASTEXITCODE -eq 0) {
+                        Add-Result -Group 'git' -Id $pair.Key -Action 'installed' -Detail $pair.Value
+                    } else {
+                        Add-Result -Group 'git' -Id $pair.Key -Action 'failed' -Detail 'git config --global failed'
+                    }
+                }
+            }
+        }
     }
 }
 

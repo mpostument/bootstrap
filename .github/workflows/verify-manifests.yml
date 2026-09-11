@@ -190,6 +190,7 @@ jobs:
             [ -z "$url" ] && url="https://github.com/${repo}/releases/download/${tag}/${asset}"
             url="${url//\{ARCH\}/amd64}"
             url="${url//\{UNAME_ARCH\}/x86_64}"
+            url="${url//\{GORELEASER_ARCH\}/x86_64}"
             url="${url//\{TAG\}/$tag}"
             url="${url//\{VERSION\}/$version}"
 

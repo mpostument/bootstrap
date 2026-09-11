@@ -390,6 +390,10 @@ phase 'Repositories - third-party apt sources'
 
 DPKG_ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
 UNAME_ARCH="$(uname -m 2>/dev/null || echo x86_64)"
+case "$UNAME_ARCH" in
+  aarch64|arm64) GORELEASER_ARCH=arm64 ;;
+  *)             GORELEASER_ARCH=x86_64 ;;
+esac
 OS_ID="$(. /etc/os-release 2>/dev/null && echo "${ID:-debian}")"
 OS_CODENAME="$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-stable}")"
 
@@ -624,6 +628,15 @@ binary_version() {
   done
 }
 
+install_release_bins() {
+  local b found
+  for b in $1; do
+    found="$(find . -type f -name "$b" -print -quit)"
+    [[ -n "$found" ]] || return 1
+    install -m 0755 "$found" "${RELEASE_BIN_DIR}/$b" || return 1
+  done
+}
+
 unpack_asset() {
   local url="$1" file="$2" binname="$3"
   case "$url" in
@@ -641,6 +654,8 @@ install_release() {
   local bin_var="RELEASE_${name}_BIN" asset_var="RELEASE_${name}_ASSET"
   local desc="${!desc_var:-$name}" repo="${!repo_var}"
   local binname="${!bin_var}" asset="${!asset_var}"
+  local bins_var="RELEASE_${name}_BINS"
+  local bins="${!bins_var:-$binname}"
   local target="${RELEASE_BIN_DIR}/${binname}"
 
   local have=""
@@ -682,6 +697,7 @@ install_release() {
   [[ -z "$url" ]] && url="https://github.com/${repo}/releases/download/${tag}/${asset}"
   url="${url//\{ARCH\}/$DPKG_ARCH}"
   url="${url//\{UNAME_ARCH\}/$UNAME_ARCH}"
+  url="${url//\{GORELEASER_ARCH\}/$GORELEASER_ARCH}"
   url="${url//\{TAG\}/$tag}"
   url="${url//\{VERSION\}/$want}"
 
@@ -691,10 +707,8 @@ install_release() {
     cd "$tmp" &&
     curl -fsSL -o asset "$url" 2>curl.err &&
     unpack_asset "$url" asset "$binname" &&
-    found="$(find . -type f -name "$binname" -print -quit)" &&
-    [[ -n "$found" ]] &&
     mkdir -p "$RELEASE_BIN_DIR" &&
-    install -m 0755 "$found" "$RELEASE_BIN_DIR/$binname"
+    install_release_bins "$bins"
   ); then
     local now
     now="$(binary_version "$target")"
@@ -1066,8 +1080,7 @@ else
         echo
         echo '[ -d "$HOME/.pyenv/bin" ] && export PATH="$HOME/.pyenv/bin:$PATH"'
         echo 'command -v pyenv >/dev/null && eval "$(pyenv init -)"'
-        echo '[ -d "$HOME/.tofuenv/bin" ] && export PATH="$HOME/.tofuenv/bin:$PATH"'
-        echo
+          echo
         echo
         echo '[ -d "$HOME/.dotnet" ] && export PATH="$HOME/.dotnet:$PATH" && export DOTNET_ROOT="$HOME/.dotnet"'
       } > "$NEW_FRAGMENT"
@@ -1123,6 +1136,33 @@ else
       result 'installed' 'starship.toml' "$STARSHIP_TOML_TARGET"
     fi
   fi
+fi
+
+# Git config
+# Set only when unset: an existing value is somebody's choice, not drift.
+phase 'Git config'
+if ! command -v git >/dev/null 2>&1; then
+  result 'missing' 'delta' 'git is not installed'
+elif ! command -v delta >/dev/null 2>&1; then
+  result 'missing' 'delta' 'delta is not installed'
+else
+  GIT_WANT=('core.pager=delta' 'interactive.diffFilter=delta --color-only')
+  for _kv in "${GIT_WANT[@]}"; do
+    _key="${_kv%%=*}"
+    _want="${_kv#*=}"
+    _have="$(git config --global --get "$_key" 2>/dev/null || true)"
+    if [[ "$_have" == "$_want" ]]; then
+      result 'current' "$_key" "$_want"
+    elif [[ -n "$_have" ]]; then
+      result 'present' "$_key" "$_have - left alone"
+    elif [[ "$DRY_RUN" == "yes" ]]; then
+      result 'would-install' "$_key" "$_want"
+    elif git config --global "$_key" "$_want"; then
+      result 'installed' "$_key" "$_want"
+    else
+      result 'failed' "$_key" 'git config --global failed'
+    fi
+  done
 fi
 
 # Terminal config

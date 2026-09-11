@@ -853,6 +853,33 @@ else
   fi
 fi
 
+# Git config
+# Set only when unset: an existing value is somebody's choice, not drift.
+phase 'Git config'
+if ! command -v git >/dev/null 2>&1; then
+  result 'missing' 'delta' 'git is not installed'
+elif ! command -v delta >/dev/null 2>&1; then
+  result 'missing' 'delta' 'delta is not installed'
+else
+  GIT_WANT=('core.pager=delta' 'interactive.diffFilter=delta --color-only')
+  for _kv in "${GIT_WANT[@]}"; do
+    _key="${_kv%%=*}"
+    _want="${_kv#*=}"
+    _have="$(git config --global --get "$_key" 2>/dev/null || true)"
+    if [[ "$_have" == "$_want" ]]; then
+      result 'current' "$_key" "$_want"
+    elif [[ -n "$_have" ]]; then
+      result 'present' "$_key" "$_have - left alone"
+    elif [[ "$DRY_RUN" == "yes" ]]; then
+      result 'would-install' "$_key" "$_want"
+    elif git config --global "$_key" "$_want"; then
+      result 'installed' "$_key" "$_want"
+    else
+      result 'failed' "$_key" 'git config --global failed'
+    fi
+  done
+fi
+
 # Terminal config
 
 if [[ "${GHOSTTY_ENABLED:-no}" != "yes" ]]; then

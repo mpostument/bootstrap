@@ -22,6 +22,24 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 
 ## [1.28.0]
 
+### Added
+
+- **`dandavison.delta` in the `cli` group, and the existing git phase points
+  git at it.** `core.pager = delta` covers `git diff`, `git show` and `git
+  log -p`; `interactive.diffFilter = delta --color-only` covers `git add
+  -p`, which is where word-level highlighting earns its place. The winget id
+  is `dandavison.delta` and the command is `delta`, the usual winget
+  mismatch; `tools` prints the pair. `Git.DeltaEnabled` in the manifest turns
+  it off, the same shape as `LfsEnabled` and `UnityMergeEnabled` beside it.
+
+  Delta shares its syntax-highlighting engine with `bat`, already in this
+  group, so the two agree about what a file looks like.
+
+  The two keys are set **only when unset**. An existing `core.pager` is
+  somebody's decision, not drift, so it is reported `present` and left alone
+  rather than replaced - the same rule already applied to software another
+  installer owns.
+
 ### Changed
 
 - **Comments cut back to what a reader cannot work out from the code.** The

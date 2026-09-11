@@ -19,6 +19,23 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`git-delta` in the `cli` group, and a `Git config` phase that points git
+  at it.** `core.pager = delta` covers `git diff`, `git show` and `git log
+  -p`; `interactive.diffFilter = delta --color-only` covers `git add -p`,
+  which is where word-level highlighting earns its place. The binary is
+  `delta`; only the package is called `git-delta`.
+
+  Delta shares its syntax-highlighting engine with `bat`, already in this
+  group, so the two agree about what a file looks like.
+
+  The two keys are set **only when unset**. An existing `core.pager` is
+  somebody's decision, not drift, so it is reported `present` and left alone
+  rather than replaced - the same rule already applied to software another
+  installer owns.
+
+  This is a new phase on this platform - git config was not managed here
+  before.
+
 - **The context-sensitive right prompt, which this manifest's zsh fragment
   did not have.** 1.22.0 named the drift rather than fixing it: the shared
   `starship.toml` had the profiles, macOS's fragment had the widget that
@@ -28,6 +45,39 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
   puts the same thing on the right of the same prompt on either platform.
 
 ### Changed
+
+- **`tenv` replaces `tofuenv`.** Upstream's own call, not a taste: tofuenv's
+  README announces tenv as "a successor for **tfenv** and **tofuenv**", both
+  are the same `tofuutils` org, and tofuenv's maintenance badge still reads
+  2024 (last commit 2026-02, against 2026-09 for tenv).
+
+  The reason it matters here rather than being housekeeping: tenv manages
+  **Terragrunt** versions as well as OpenTofu and Terraform. A Terragrunt
+  tree pins the terragrunt version it expects the same way it pins the
+  terraform one, and nothing in this manifest could do anything about that
+  before - tofuenv does not know terragrunt exists.
+
+  Not a `TOOLS` git clone like tofuenv was: tenv is a Go binary, so it moves
+  to `RELEASES` alongside tflint and starship, and the `$HOME/.tofuenv/bin`
+  line drops out of the zsh fragment - `~/.local/bin` is already on PATH
+  there.
+
+  Two things in the release mechanism had to grow for it, both small and
+  both reusable:
+
+  - **`RELEASE_*_BINS`**, an optional list, because one tenv archive carries
+    seven binaries - `tenv` plus the `tofu`/`terraform`/`terragrunt`/
+    `terramate`/`atmos`/`tf` proxies that exec it. Installing only the one
+    named in `RELEASE_*_BIN` would have put `tenv` on PATH and none of the
+    commands anybody actually types. All seven are installed, which is also
+    the set Homebrew's formula lays down, so the two platforms carry one
+    list rather than two.
+  - **`{GORELEASER_ARCH}`**, a third arch spelling. goreleaser's default
+    Linux archives are `x86_64`/`arm64`, and neither existing placeholder
+    covers both halves: `{ARCH}` is dpkg's `amd64`/`arm64` and
+    `{UNAME_ARCH}` is uname's `x86_64`/`aarch64`. `verify-manifests.yml`
+    substitutes the new one too - a placeholder it does not know stays
+    literal in the URL and the asset check 404s on it.
 
 - **Comments cut back to what a reader cannot work out from the code.** The
   scripts, manifests, the shared `starship.toml`, the workflows and the

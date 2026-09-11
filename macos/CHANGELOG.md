@@ -17,7 +17,41 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [1.26.0]
 
+### Added
+
+- **`git-delta` in the `cli` group, and a `Git config` phase that points git
+  at it.** `core.pager = delta` covers `git diff`, `git show` and `git log
+  -p`; `interactive.diffFilter = delta --color-only` covers `git add -p`,
+  which is where word-level highlighting earns its place. The binary is
+  `delta`; only the package is called `git-delta`.
+
+  Delta shares its syntax-highlighting engine with `bat`, already in this
+  group, so the two agree about what a file looks like.
+
+  The two keys are set **only when unset**. An existing `core.pager` is
+  somebody's decision, not drift, so it is reported `present` and left alone
+  rather than replaced - the same rule already applied to software another
+  installer owns.
+
+  This is a new phase on this platform - git config was not managed here
+  before.
+
 ### Changed
+
+- **`tenv` replaces `tofuenv`.** Upstream's own call, not a taste: tofuenv's
+  README announces tenv as "a successor for **tfenv** and **tofuenv**", both
+  are the same `tofuutils` org, and tofuenv's maintenance badge still reads
+  2024 (last commit 2026-02, against 2026-09 for tenv).
+
+  The reason it matters here rather than being housekeeping: tenv manages
+  **Terragrunt** versions as well as OpenTofu and Terraform. A Terragrunt
+  tree pins the terragrunt version it expects the same way it pins the
+  terraform one, and nothing in this manifest could do anything about that
+  before - tofuenv does not know terragrunt exists.
+
+  A straight swap, and it has to be: Homebrew's `tenv` declares
+  `conflicts_with tofuenv` - both install a `tofu` binary - so carrying the
+  two in the same group would fail the install rather than shadow one.
 
 - **Comments cut back to what a reader cannot work out from the code.** The
   scripts, manifests, the shared `starship.toml`, the workflows and the

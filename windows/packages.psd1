@@ -17,6 +17,7 @@
             Description = 'Modern CLI bundle - nicer cat, ls, find and grep'
             Packages    = @(
                 'sharkdp.bat'
+                'dandavison.delta'
                 'eza-community.eza'
                 'sharkdp.fd'
                 'BurntSushi.ripgrep.MSVC'
@@ -142,6 +143,8 @@
 
     Git = @{
         LfsEnabled = $true
+
+        DeltaEnabled = $true
 
         UnityMergeEnabled = $true
         UnityEditorRoot   = 'C:\Program Files\Unity\Hub\Editor'
