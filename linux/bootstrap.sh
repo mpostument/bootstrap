@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.19.0'
+BOOTSTRAP_VERSION='1.20.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
