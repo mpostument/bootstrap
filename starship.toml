@@ -1,0 +1,137 @@
+# ============================================================
+# starship.toml - one prompt config, deployed identically to all three
+# platforms
+# ============================================================
+# The whole reason this fleet moved to Starship: PowerShell, zsh (and bash,
+# fish, nu...) all read this SAME file, so a change here changes the prompt
+# everywhere at once. Deployed verbatim by each bootstrap.ps1/bootstrap.sh
+# to that platform's config location (env:STARSHIP_CONFIG on Windows,
+# ~/.config/starship.toml on Linux/macOS) - see the shell phase in each.
+#
+# Edit this file, re-run bootstrap, done - no separate theme fork to
+# maintain (Windows used to carry one specifically to add transient-prompt
+# support, before Starship shipped it as a real feature) and no second
+# config file for the other platform to drift out of step with.
+
+"$schema" = 'https://starship.rs/config-schema.json'
+
+# Catppuccin Mocha, matching the palette already defined for Windows
+# Terminal (packages.psd1's TerminalColorSchemeDef) and ghostty
+# (packages.conf's GHOSTTY_THEME) - the same fleet-wide "looks the same
+# everywhere" rule this file itself is an example of, just for the prompt
+# instead of the terminal chrome.
+palette = 'catppuccin_mocha'
+
+[palettes.catppuccin_mocha]
+rosewater = '#f5e0dc'
+flamingo  = '#f2cdcd'
+pink      = '#f5c2e7'
+mauve     = '#cba6f7'
+red       = '#f38ba8'
+maroon    = '#eba0ac'
+peach     = '#fab387'
+yellow    = '#f9e2af'
+green     = '#a6e3a1'
+teal      = '#94e2d5'
+sky       = '#89dceb'
+sapphire  = '#74c7ec'
+blue      = '#89b4fa'
+lavender  = '#b4befe'
+text      = '#cdd6f4'
+subtext1  = '#bac2de'
+subtext0  = '#a6adc8'
+overlay2  = '#9399b2'
+overlay1  = '#7f849c'
+overlay0  = '#6c7086'
+surface2  = '#585b70'
+surface1  = '#45475a'
+surface0  = '#313244'
+base      = '#1e1e2e'
+mantle    = '#181825'
+crust     = '#11111b'
+
+format = """
+$directory\
+$git_branch\
+$git_status\
+$nodejs\
+$python\
+$golang\
+$rust\
+$dotnet\
+$docker_context\
+$kubernetes\
+$cmd_duration\
+$line_break\
+$character"""
+
+right_format = """$time"""
+
+# Rendered via `starship prompt --profile transient` from the zsh hook, and
+# via Enable-TransientPrompt's own `starship module character` on
+# PowerShell (which does not read this section at all - it is zsh-only).
+# The point is the same one the old oh-my-posh fork and p10k both existed
+# to solve: a past command's full prompt is noise in the scrollback, so
+# once it is submitted this collapses it to a single arrow. See the zsh
+# fragment / profile.ps1 for how each shell wires this in.
+[profiles]
+transient = "[❯](green bold) "
+rtransient = ""
+
+[character]
+success_symbol = '[❯](green bold)'
+error_symbol = '[❯](red bold)'
+vimcmd_symbol = '[❮](green bold)'
+
+[directory]
+style = 'blue bold'
+truncation_length = 4
+truncate_to_repo = true
+
+[git_branch]
+style = 'mauve bold'
+symbol = ' '
+
+[git_status]
+style = 'yellow bold'
+
+[cmd_duration]
+min_time = 2000
+style = 'peach bold'
+format = 'took [$duration]($style) '
+
+[time]
+disabled = false
+style = 'overlay1'
+format = '[$time]($style)'
+time_format = '%H:%M'
+
+[nodejs]
+style = 'green bold'
+symbol = ' '
+
+[python]
+style = 'yellow bold'
+symbol = ' '
+
+[golang]
+style = 'sapphire bold'
+symbol = ' '
+
+[rust]
+style = 'peach bold'
+symbol = ' '
+
+[dotnet]
+style = 'mauve bold'
+symbol = '.NET '
+
+[docker_context]
+symbol = ' '
+style = 'blue bold'
+
+[kubernetes]
+disabled = false
+symbol = '☸ '
+style = 'blue bold'
+format = '[$symbol$context]($style) '
