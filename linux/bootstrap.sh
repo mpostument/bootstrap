@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.14.0'
+BOOTSTRAP_VERSION='1.15.0'
 
 # Resolved once, here, so nothing later has to guess where the script lives.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -142,6 +142,8 @@ Usage: bootstrap.sh [options]
   --dry-run          Show what would change, touch nothing.
   --groups a,b       Limit to named groups. Default is every group.
   --list-groups      Print the groups in the manifest and exit.
+  --list-packages    Print every package/tool name this script manages and
+                     exit - groups, TOOLS, RELEASES and REPOS packages.
   --skip-upgrade     Install what is missing, leave installed versions alone.
   --skip-schedule    Leave the systemd timer alone.
   --gui / --no-gui   Override desktop detection instead of probing for it.
@@ -162,6 +164,7 @@ while [[ $# -gt 0 ]]; do
     --groups)        shift; ONLY_GROUPS="${1:-}" ;;
     --groups=*)      ONLY_GROUPS="${1#*=}" ;;
     --list-groups)   LIST_GROUPS=yes ;;
+    --list-packages) LIST_PACKAGES=yes ;;
     --version)       echo "$BOOTSTRAP_VERSION"; exit 0 ;;
     -h|--help)       usage; exit 0 ;;
     *)               die "unknown option: $1 (try --help)" ;;
@@ -211,6 +214,48 @@ if [[ "${LIST_GROUPS:-no}" == "yes" ]]; then
       "$C_CYAN" "$g" "$C_RESET" "$total" "$C_DIM" "$gui_tag" "$C_RESET" "${!desc_var}"
     unset -n _apt _flat
   done
+  echo
+  exit 0
+fi
+
+if [[ "${LIST_PACKAGES:-no}" == "yes" ]]; then
+  echo
+  for g in "${PKG_GROUPS[@]}"; do
+    printf '  %s%s%s\n' "$C_CYAN" "$g" "$C_RESET"
+    declare -n _apt="GROUP_${g}_APT"
+    declare -n _flat="GROUP_${g}_FLATPAK"
+    for pkg in "${_apt[@]:-}" "${_flat[@]:-}"; do
+      [[ -z "$pkg" ]] && continue
+      printf '    %s%s%s\n' "$C_DIM" "$pkg" "$C_RESET"
+    done
+    unset -n _apt _flat
+  done
+  if [[ "${#TOOLS[@]}" -gt 0 ]]; then
+    printf '  %stools (version managers, git clones)%s\n' "$C_CYAN" "$C_RESET"
+    for tool in "${TOOLS[@]:-}"; do
+      [[ -z "$tool" ]] && continue
+      printf '    %s%s%s\n' "$C_DIM" "$tool" "$C_RESET"
+    done
+  fi
+  if [[ "${#RELEASES[@]}" -gt 0 ]]; then
+    printf '  %srelease binaries (~/.local/bin)%s\n' "$C_CYAN" "$C_RESET"
+    for entry in "${RELEASES[@]:-}"; do
+      [[ -z "$entry" ]] && continue
+      printf '    %s%s%s\n' "$C_DIM" "$entry" "$C_RESET"
+    done
+  fi
+  if [[ "${#REPOS[@]}" -gt 0 ]]; then
+    printf '  %srepository packages%s\n' "$C_CYAN" "$C_RESET"
+    for repo in "${REPOS[@]:-}"; do
+      [[ -z "$repo" ]] && continue
+      declare -n _rpkgs="REPO_${repo}_PACKAGES"
+      for pkg in "${_rpkgs[@]:-}"; do
+        [[ -z "$pkg" ]] && continue
+        printf '    %s%s%s\n' "$C_DIM" "$pkg" "$C_RESET"
+      done
+      unset -n _rpkgs
+    done
+  fi
   echo
   exit 0
 fi

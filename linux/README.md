@@ -68,6 +68,8 @@ Override it with `--gui` or `--no-gui` when you know better.
 --dry-run          Show what would change, touch nothing.
 --groups a,b       Limit to named groups. Default is every group.
 --list-groups      Print the groups in the manifest and exit.
+--list-packages    Print every package/tool name this script manages and
+                   exit - groups, TOOLS, RELEASES and REPOS packages.
 --skip-upgrade     Install what is missing, leave installed versions alone.
 --skip-schedule    Leave the systemd timer alone.
 --gui / --no-gui   Override desktop detection instead of probing for it.
