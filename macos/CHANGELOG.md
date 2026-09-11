@@ -15,6 +15,61 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.26.0]
+
+### Changed
+
+- **The `ctx_*` profiles carry the whole right prompt, not one module.**
+  1.25.0 added them as bare placeholders - `ctx_kube = "$kubernetes"` - to
+  stop `starship prompt --profile ctx_kube` erroring. Each is now the
+  context module *followed by the contents of `right_format`*, so typing
+  `kubectl` adds the cluster beside the clock and the active virtualenv
+  rather than replacing them with it. `ctx_dotnet` is the one that still
+  swaps rather than prepends: `$dotnet` reports the project's target
+  framework, and the moment you type a dotnet command the useful answer
+  becomes which SDK is about to run, `global.json` and all, so it renders
+  `dotnet --version` in that slot instead.
+
+- **Git status says what it means.** `main !?` reads as `main !2 ?1` now,
+  and each state carries its own colour instead of all of them sharing one
+  yellow:
+
+  ```
+  +N staged   !N modified   ?N untracked   ✘N deleted
+  »N renamed  *N stashed    ~N conflicted  ⇡N/⇣N ahead/behind
+  ```
+
+  The symbols are the conventional ones and were already there. What was
+  missing is the count - a bare `!` does not say whether one file is dirty
+  or thirty - and the colour, which is what lets the symbol be confirmation
+  of something you already read rather than the only thing carrying it.
+
+### Fixed
+
+- **`format` and `right_format` in `starship.toml` were never in effect.**
+  Both are top-level keys and both sat *below* `[palettes.catppuccin_mocha]`,
+  so TOML filed them as two more keys of the palette table. Starship reads a
+  palette table for colour names, ignores anything else in it without a
+  warning, finds no `format` at the top level and falls back to its own
+  default - `format = "$all"`, every module it knows, in its order, on two
+  lines. That is the deeper reason the prompt showed a gcloud account and an
+  Azure subscription permanently, and why 1.25.0's `[profiles]` repair could
+  only ever be half of it: the profiles it added were read, and the format
+  around them was not. Both keys now sit above the first table header, where
+  top-level keys have to be. `starship print-config | head` prints the format
+  actually in force.
+
+- **Nothing appeared when a terraform command was typed in a Terragrunt
+  tree.** Starship looks at the current directory only, and the module's
+  default detection is `.tf`/`.tfplan`/`.tfstate` files or a `.terraform`
+  folder. A Terragrunt repository has neither at its root nor in its
+  intermediate directories - just a `terragrunt.hcl`, which is precisely
+  where `terragrunt run-all` gets typed. A repository pinned with tfenv has
+  the same shape: `.terraform-version` at the root, the .tf files a
+  directory or two down. Detection now also counts `terragrunt.hcl`,
+  `.terraform.lock.hcl`, `.terraform-version` and `.tfvars`, which covers
+  both without costing anything - it is the same directory listing either
+  way.
 ## [1.25.0]
 
 ### Added
