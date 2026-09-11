@@ -51,9 +51,15 @@ mantle    = '#181825'
 crust     = '#11111b'
 
 format = """
+$username\
+$hostname\
 $directory\
 $git_branch\
 $git_status\
+$aws\
+$azure\
+$gcloud\
+$terraform\
 $nodejs\
 $python\
 $golang\
@@ -83,6 +89,20 @@ success_symbol = '[❯](green bold)'
 error_symbol = '[❯](red bold)'
 vimcmd_symbol = '[❮](green bold)'
 
+# Both default to showing only when it is not the obvious case: username
+# when root or over SSH (show_always = false, Starship's own default),
+# hostname only over SSH (ssh_only = true, also the default) - so neither
+# clutters a normal local prompt, only tells you when you are somewhere
+# else.
+[username]
+style_user = 'yellow bold'
+format = '[$user]($style)@'
+
+[hostname]
+ssh_symbol = '🌐 '
+style = 'overlay1 bold'
+format = '[$ssh_symbol$hostname]($style) '
+
 [directory]
 style = 'blue bold'
 truncation_length = 4
@@ -94,6 +114,34 @@ symbol = ' '
 
 [git_status]
 style = 'yellow bold'
+
+# Shows only when there is something to show - an active AWS_PROFILE, an
+# az CLI subscription, a gcloud project, a directory with .tf files or a
+# .terraform folder - so none of these cost anything on a prompt that
+# is not touching that cloud right now. `disabled = false` is already
+# Starship's own default for aws/gcloud/terraform; azure is the one
+# exception (disabled by default upstream) and needs it stated here.
+[aws]
+style = 'peach bold'
+disabled = false
+
+[azure]
+style = 'sapphire bold'
+disabled = false
+
+[gcloud]
+style = 'red bold'
+disabled = false
+
+# Recognises `tofu version` as well as `terraform version` out of the box
+# (Starship's own default `commands` list covers both), so this needed no
+# extra config for the switch to OpenTofu - see the dev group in
+# packages.psd1/packages.conf for that swap. $workspace, not just
+# $version: which workspace you are in is the thing that changes what a
+# plan or apply actually touches.
+[terraform]
+style = 'lavender bold'
+disabled = false
 
 [cmd_duration]
 min_time = 2000
