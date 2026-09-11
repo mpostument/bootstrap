@@ -214,7 +214,10 @@
                 # files that diff in git, not a vendor account.
                 'Bruno.Bruno'
                 # DB client. DBeaver Community - fully open source, not a
-                # free tier of a paid app like TablePlus.
+                # free tier of a paid app like TablePlus, for the SQL/JDBC
+                # databases it covers. NoSQL (MongoDB, Cassandra, Redis,
+                # InfluxDB) needs the paid Lite/Enterprise/Ultimate editions -
+                # Community has no driver for them at all, not a limited one.
                 'DBeaver.DBeaver.Community'
                 'VideoLAN.VLC'
                 # VLC and mpv both, on purpose. VLC opens anything and is the

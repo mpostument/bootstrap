@@ -150,6 +150,18 @@ if (Get-Command rg -ErrorAction SilentlyContinue) {
     function grep { rg @args }
 }
 
+# du/df to dust/duf are a bigger change of shape than the pairs above: dust
+# prints a tree with bars, duf a table with different columns, and neither is
+# a drop-in for a script parsing traditional du/df output - that script
+# should keep calling the real binary, not these functions. Windows has no
+# built-in du/df to remove an alias for, unlike cat/ls above.
+if (Get-Command dust -ErrorAction SilentlyContinue) {
+    function du { dust @args }
+}
+if (Get-Command duf -ErrorAction SilentlyContinue) {
+    function df { duf @args }
+}
+
 # ============================================================
 # posh-git -- tab-completion for git subcommands, branches and remotes
 # https://github.com/dahlbyk/posh-git

@@ -20,6 +20,25 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.18.0]
+
+### Added
+
+- **`du`/`df` functions in `profile.ps1`, routing to `dust`/`duf`.** Same
+  muscle-memory idea as cat/ls/find/grep above, requested explicitly rather
+  than assumed - dust prints a tree with bars and duf a table with
+  different columns, so neither is a drop-in for a script parsing
+  traditional du/df output; that script should keep calling the real
+  binary. Same pair added in linux/CHANGELOG.md and macos/CHANGELOG.md.
+
+### Fixed
+
+- **The DBeaver Community comment overstated what it covers.** It has no
+  driver at all for MongoDB, Cassandra, Redis or InfluxDB - those need the
+  paid Lite/Enterprise/Ultimate editions - rather than a limited one.
+  Comment corrected; same fix in linux/CHANGELOG.md and
+  macos/CHANGELOG.md.
+
 ## [1.17.0]
 
 ### Added
