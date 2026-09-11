@@ -15,6 +15,21 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.0]
+
+### Fixed
+
+- **`microsoft-openjdk@21` replaces `temurin` in the `dev` group's
+  casks.** Temurin was an undocumented divergence: the Windows manifest
+  picked Microsoft's OpenJDK build over Oracle's deliberately (no
+  click-through licence) and its own comment claimed macOS matched Linux's
+  default-jdk - which was never true for macOS, which ran a different
+  vendor entirely, floating to whatever major Homebrew currently packages
+  (Java 26 by the time this was caught). Same vendor, same major (21) on
+  all three platforms now; Linux stays there because Debian trixie's
+  default-jdk is frozen at 21 for the release's whole life either way.
+  Same fix in windows/CHANGELOG.md.
+
 ## [1.21.0]
 
 ### Added
