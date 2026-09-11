@@ -20,6 +20,49 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.27.0]
+
+### Added
+
+- **A context-sensitive right prompt: type `kubectl`, `aws`, `az`, `gcloud`,
+  `terraform`/`tofu` or `dotnet` and the matching cluster/profile/
+  subscription/project/workspace/SDK appears at the right in place of the
+  clock, for as long as that word is on the line.** Requested directly,
+  matching a feature that already existed on the zsh side
+  (macos/CHANGELOG.md 1.24.0) but had no PowerShell equivalent at all.
+  PowerShell has neither zsh's separate PROMPT/RPROMPT variables nor its
+  `zle-line-pre-redraw` hook, so this reaches for what it does have: a
+  wrapped `prompt` function that points `STARSHIP_CONFIG` at one of six
+  throwaway copies of `starship.toml` (right_format swapped to the
+  relevant module, regenerated from the deployed config on every shell
+  start) only for the duration of the call that needs it, and Space/
+  Backspace/Delete rebound in PSReadLine to redraw after they run - a
+  word-boundary approximation of zsh's per-keystroke reactivity, not a
+  literal port of it.
+- **Local testing surfaced a bug in the shared file this depends on**:
+  `starship.toml`'s `[profiles]` table had no `ctx_kube`/`ctx_aws`/
+  `ctx_azure`/`ctx_gcloud`/`ctx_terraform`/`ctx_dotnet` entries at all, so
+  `starship prompt --profile ctx_kube` - the exact call both this feature
+  and the zsh one above make - errored with `Profile "ctx_kube" not
+  found` instead of rendering anything. Fixed at the shared file; see
+  linux/CHANGELOG.md and macos/CHANGELOG.md for the same entry on the
+  other two platforms.
+
+## [1.26.0]
+
+### Added
+
+- **`SumatraPDF.SumatraPDF` in the `apps` group.** A PDF reader was missing
+  from the manifest entirely. Okular was the first pick and was reverted -
+  not the right fit; SumatraPDF instead: fast, lightweight, no cloud
+  account or update-nag dialogs, open source, no vendor telemetry riding
+  along with it, same reasoning this manifest already applied to Bruno
+  over Postman and OpenTofu over Terraform. Windows-only, unlike Okular:
+  macOS uses the Preview that already ships on every Mac (see
+  macos/CHANGELOG.md) and Linux takes evince from apt (see
+  linux/CHANGELOG.md) - three different readers rather than one package
+  name in three manifests, each the right fit for its own platform.
+
 ## [1.25.0]
 
 ### Fixed

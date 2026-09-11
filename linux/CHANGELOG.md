@@ -15,6 +15,41 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.0]
+
+### Fixed
+
+- **`starship.toml`'s `[profiles]` table had no `ctx_kube`/`ctx_aws`/
+  `ctx_azure`/`ctx_gcloud`/`ctx_terraform`/`ctx_dotnet` entries**, the
+  names macOS's zsh fragment calls via `starship prompt --profile
+  ctx_$group` for its context-sensitive right prompt (macos/CHANGELOG.md
+  1.24.0). Fixed at the shared file - see macos/CHANGELOG.md and
+  windows/CHANGELOG.md for the same entry.
+  **This manifest's own zsh fragment never grew the widget that calls
+  it, unlike macOS's** - `zsh-parity`-worth of drift worth naming rather
+  than leaving implicit: typing `kubectl`/`aws`/`terraform`/etc. here
+  does not swap the right prompt on Linux today, fixed profile table or
+  not. `$format` itself is untouched either way: aws/azure/gcloud/
+  terraform/kubernetes still render inline on the left exactly as
+  before, on all three platforms.
+
+## [1.21.0]
+
+### Added
+
+- **`evince` (apt) in the `apps` group.** A PDF reader was missing from the
+  manifest entirely. Okular was the first pick and was reverted - not the
+  right fit; GNOME's own reader instead, which also keeps apt from pulling
+  in KDE/Qt dependencies this manifest otherwise has no use for. Open
+  source either way, unlike Adobe Acrobat Reader, for the same reason this
+  manifest already picked Bruno over Postman and OpenTofu over Terraform:
+  no vendor telemetry riding along with it. apt rather than Flathub,
+  unlike Blender and GIMP in the `creative` group: a document reader has
+  no version-lag feature race worth Flathub's overhead. Windows takes
+  SumatraPDF instead and macOS uses the Preview that already ships on
+  every Mac - see windows/CHANGELOG.md and macos/CHANGELOG.md for why each
+  is the right fit there.
+
 ## [1.20.0]
 
 ### Added

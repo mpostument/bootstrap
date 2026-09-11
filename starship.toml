@@ -80,9 +80,30 @@ right_format = """$time"""
 # to solve: a past command's full prompt is noise in the scrollback, so
 # once it is submitted this collapses it to a single arrow. See the zsh
 # fragment / profile.ps1 for how each shell wires this in.
+#
+# ctx_kube/ctx_aws/ctx_azure/ctx_gcloud/ctx_terraform/ctx_dotnet are the
+# other half of that same mechanism, and were missing here from the start -
+# the zsh fragment (macos/bootstrap.sh) and profile.ps1 both call
+# `starship prompt --profile ctx_$group`, and with no matching key in this
+# table that command errored with `Profile "ctx_kube" not found` instead of
+# rendering anything - silently, on the right, where nothing else was
+# competing for attention, so the gap was easy to not notice. Each is a bare
+# module placeholder, not a real format built for the left prompt's
+# `[icon]styled` shape - deliberately, since the point is to show ONLY that
+# one module, right-aligned in place of $time, for as long as the command it
+# belongs to is what is being typed. The same module still renders inline on
+# the left too, in $format below, whenever it has something to say
+# regardless of what is being typed - this table does not remove that, it
+# adds a second, command-gated place the same information can show up.
 [profiles]
 transient = "[❯](green bold) "
 rtransient = ""
+ctx_kube = "$kubernetes"
+ctx_aws = "$aws"
+ctx_azure = "$azure"
+ctx_gcloud = "$gcloud"
+ctx_terraform = "$terraform"
+ctx_dotnet = "$dotnet"
 
 [character]
 success_symbol = '[❯](green bold)'
@@ -121,6 +142,15 @@ style = 'yellow bold'
 # is not touching that cloud right now. `disabled = false` is already
 # Starship's own default for aws/gcloud/terraform; azure is the one
 # exception (disabled by default upstream) and needs it stated here.
+#
+# These same five modules - aws/azure/gcloud/terraform here and kubernetes
+# further down - are ALSO what the ctx_* profiles above render, one module
+# each, for the shell integrations (the zsh fragment / profile.ps1) that
+# swap $time out for the matching one at the right while the command that
+# would use it is being typed. That is additive, not a replacement: this
+# $format still shows a module inline, on the left, whenever it has
+# something to say regardless of what is being typed - the two are
+# independent uses of the same module config.
 [aws]
 style = 'peach bold'
 disabled = false

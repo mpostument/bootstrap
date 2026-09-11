@@ -199,6 +199,147 @@ if (Get-Command starship -ErrorAction SilentlyContinue) {
         &starship module character
     }
     Enable-TransientPrompt
+
+    # --------------------------------------------------------------------
+    # Context-sensitive right prompt: kubectl/aws/az/gcloud/terraform/dotnet
+    # --------------------------------------------------------------------
+    # The zsh side of this fleet (macos/bootstrap.sh's generated fragment)
+    # swaps RPROMPT to the matching ctx_* profile in starship.toml while the
+    # command that would use it is being typed - type `kubectl`, the cluster
+    # appears on the right; delete it, $time comes back. PowerShell has
+    # nothing like zsh's PROMPT/RPROMPT pair or its zle-line-pre-redraw hook
+    # to build the same trick on: `starship prompt --profile ctx_kube`
+    # cannot be substituted in for just the right half of a Windows prompt
+    # the way it can for zsh's separate RPROMPT variable, because PowerShell
+    # renders format and right_format as ONE combined string from ONE
+    # `starship prompt` call, and `--profile` replaces that whole call's
+    # format, not just right_format (`--profile` and `--right`, the flag
+    # that would isolate right_format alone, are mutually exclusive on the
+    # starship CLI itself). So instead of swapping a flag, this swaps the
+    # CONFIG FILE: one throwaway copy of starship.toml per group, each with
+    # right_format replaced by that group's module, generated once below and
+    # pointed at via STARSHIP_CONFIG only for the duration of the one
+    # `prompt` call that needs it - format (and therefore the left side)
+    # renders exactly as it always does.
+    #
+    # "While typing" itself has no PSReadLine equivalent to zle's per-
+    # keystroke hook either - `prompt` normally runs once per submitted
+    # line, not once per character, and there is no supported hook that
+    # fires on arbitrary buffer edits the way zle-line-pre-redraw does.
+    # Space, Backspace and Delete are rebound below to redraw immediately
+    # after they run, which reacts at every WORD boundary rather than every
+    # keystroke - close enough to "while typing" for a command name, and far
+    # cheaper than rebinding all ~90 printable keys to get true per-
+    # character reactivity.
+    $starshipCtxGroups = [ordered]@{
+        kube      = '$kubernetes'
+        aws       = '$aws'
+        azure     = '$azure'
+        gcloud    = '$gcloud'
+        terraform = '$terraform'
+        dotnet    = '$dotnet'
+    }
+    $script:StarshipCtxConfigs = @{}
+    $script:StarshipCtxGroup = ''
+    if (Test-Path $env:STARSHIP_CONFIG) {
+        # Regenerated from the deployed config on every shell start, so
+        # these can never drift from it - there is nothing to keep in sync
+        # by hand, and a starship.toml edit that has not been re-deployed
+        # yet is exactly as stale here as it is for the left prompt too.
+        $starshipBaseConfigLines = Get-Content -Path $env:STARSHIP_CONFIG
+        foreach ($ctxGroup in $starshipCtxGroups.Keys) {
+            $ctxConfigLines = foreach ($configLine in $starshipBaseConfigLines) {
+                if ($configLine -match '^right_format\s*=') {
+                    'right_format = """' + $starshipCtxGroups[$ctxGroup] + '"""'
+                } else {
+                    $configLine
+                }
+            }
+            $ctxConfigPath = Join-Path $env:TEMP "starship-ctx-$ctxGroup.toml"
+            Set-Content -Path $ctxConfigPath -Value $ctxConfigLines -Encoding utf8
+            $script:StarshipCtxConfigs[$ctxGroup] = $ctxConfigPath
+        }
+    }
+
+    # Wraps the `prompt` function starship init just defined above, rather
+    # than replacing it: everything about exit-code propagation, job counts
+    # and transient-prompt handling in the generated function is exactly
+    # what Starship's own integration is tested against, and reimplementing
+    # any of it here is how that quietly drifts out of date on the next
+    # Starship upgrade. `${function:global:prompt}` captures it as a
+    # scriptblock as-is; the `$script:` variables inside it still resolve to
+    # the "starship" dynamic module's own scope where they were defined, not
+    # to this one, however this captured scriptblock is later invoked - that
+    # binding is fixed at definition time, not by the caller.
+    $script:StarshipBasePrompt = ${function:global:prompt}
+
+    function global:prompt {
+        # A prompt drawn for a genuinely empty line is the start of a new
+        # command, not a redraw mid-command - reset here rather than on
+        # Enter, because Enter's own key handler belongs to the transient-
+        # prompt feature above, and duplicating its logic just to hang a
+        # reset off it would be one more copy of Starship's generated code
+        # to keep in sync by hand.
+        $starshipBuffer = $null
+        $starshipCursor = $null
+        try {
+            [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$starshipBuffer, [ref]$starshipCursor)
+        } catch { }
+        if ([string]::IsNullOrWhiteSpace($starshipBuffer)) { $script:StarshipCtxGroup = '' }
+
+        if ($script:StarshipCtxGroup -and $script:StarshipCtxConfigs.ContainsKey($script:StarshipCtxGroup)) {
+            $previousStarshipConfig = $env:STARSHIP_CONFIG
+            $env:STARSHIP_CONFIG = $script:StarshipCtxConfigs[$script:StarshipCtxGroup]
+            try { & $script:StarshipBasePrompt } finally { $env:STARSHIP_CONFIG = $previousStarshipConfig }
+        } else {
+            & $script:StarshipBasePrompt
+        }
+    }
+
+    # First word of the line, skipping VAR=value and sudo-like prefixes so
+    # `sudo kubectl ...` and `AWS_PROFILE=prod aws ...` still resolve to the
+    # tool behind them - the same skip list and command groups
+    # macos/bootstrap.sh's zle widget uses, so typing the same thing shows
+    # the same context on either platform.
+    function global:Update-StarshipContextGroup {
+        $line = $null
+        $cursor = $null
+        [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
+        $words = @($line -split '\s+' | Where-Object { $_ })
+        $i = 0
+        while ($i -lt $words.Count -and ($words[$i] -match '=' -or $words[$i] -in @('sudo', 'doas', 'command', 'env', 'time', 'nice', 'nohup', 'watch'))) {
+            $i++
+        }
+        $cmd = if ($i -lt $words.Count) { [IO.Path]::GetFileNameWithoutExtension($words[$i]) } else { '' }
+        $group = switch -Regex ($cmd) {
+            '^(kubectl(-.*)?|k|kubectx|kubens|kustomize|k9s|stern|helm|helmfile|flux|argocd|velero|skaffold|kubeseal)$' { 'kube'; break }
+            '^(aws|aws-vault|awslocal|eksctl|sam|copilot|yawsso|saml2aws|granted|assume)$'                            { 'aws'; break }
+            '^(az|azd|azcopy|func)$'                                                                                  { 'azure'; break }
+            '^(gcloud|gsutil|bq|firebase|gke-gcloud-auth-plugin)$'                                                    { 'gcloud'; break }
+            '^(terraform|tofu|terragrunt|tflint|terraform-docs|infracost|tfenv|tfswitch)$'                            { 'terraform'; break }
+            '^(dotnet(-.*)?|msbuild|nuget)$'                                                                          { 'dotnet'; break }
+            default                                                                                                   { '' }
+        }
+        if ($group -eq $script:StarshipCtxGroup) { return }
+        $script:StarshipCtxGroup = $group
+        [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt($null, $null)
+    }
+
+    Set-PSReadLineKeyHandler -Key Spacebar -ScriptBlock {
+        param($key, $arg)
+        [Microsoft.PowerShell.PSConsoleReadLine]::SelfInsert($key, $arg)
+        Update-StarshipContextGroup
+    }
+    Set-PSReadLineKeyHandler -Key Backspace -ScriptBlock {
+        param($key, $arg)
+        [Microsoft.PowerShell.PSConsoleReadLine]::BackwardDeleteChar($key, $arg)
+        Update-StarshipContextGroup
+    }
+    Set-PSReadLineKeyHandler -Key Delete -ScriptBlock {
+        param($key, $arg)
+        [Microsoft.PowerShell.PSConsoleReadLine]::DeleteChar($key, $arg)
+        Update-StarshipContextGroup
+    }
 }
 
 # ============================================================

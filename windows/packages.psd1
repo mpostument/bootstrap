@@ -231,6 +231,18 @@
                 # InfluxDB) needs the paid Lite/Enterprise/Ultimate editions -
                 # Community has no driver for them at all, not a limited one.
                 'DBeaver.DBeaver.Community'
+                # PDF reader. Open source, no vendor telemetry - Okular was
+                # the first pick here, and got reverted: not the right fit.
+                # SumatraPDF instead: fast, lightweight, no cloud account or
+                # update-nag dialogs, and it is what this list already
+                # favours over a heavier alternative elsewhere (Bruno over
+                # Postman, OpenTofu over Terraform). Windows-only, unlike
+                # Okular - macOS uses the bundled Preview (nothing to
+                # install) and Linux takes Evince from apt, so this is a
+                # genuinely different reader per platform rather than one
+                # package name in three manifests; see those two files for
+                # why each is the right fit there.
+                'SumatraPDF.SumatraPDF'
                 'VideoLAN.VLC'
                 # VLC and mpv both, on purpose. VLC opens anything and is the
                 # one to hand somebody else; mpv is the one configured for

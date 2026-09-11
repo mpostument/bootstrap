@@ -15,6 +15,36 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.0]
+
+### Added
+
+- **A comment in the `apps` group explaining why there is no PDF reader
+  cask here.** Windows and Linux both gained one this release (see
+  windows/CHANGELOG.md and linux/CHANGELOG.md) - Okular was tried on all
+  three platforms first and reverted, not the right fit anywhere. macOS
+  needed no replacement pick: Preview already ships on every Mac and is a
+  real reader, not a thumbnailer, so installing a second one by default
+  would be the actual gap to avoid, not the absence of a cask.
+
+### Fixed
+
+- **`starship.toml`'s `[profiles]` table had no `ctx_kube`/`ctx_aws`/
+  `ctx_azure`/`ctx_gcloud`/`ctx_terraform`/`ctx_dotnet` entries**, even
+  though the `starship-context-prompt` zle widget added in 1.24.0 below
+  calls `starship prompt --profile ctx_$group` for exactly those six
+  names. Every one of those calls has been erroring since - `Profile
+  "ctx_kube" not found` - rather than rendering anything, which is why the
+  1.24.0 entry's own description of the feature was never actually true:
+  the right side swapped to nothing, silently, wherever `$time` should
+  have been replaced. Found while wiring up the same feature for Windows,
+  which makes the same call and surfaced the same error there. Fixed at
+  the shared file - see linux/CHANGELOG.md and windows/CHANGELOG.md for
+  the same entry on the other two platforms. `$format` itself is
+  untouched: aws/azure/gcloud/terraform/kubernetes still render inline on
+  the left exactly as before whenever they have something to say, on all
+  three platforms - only the right-side, command-gated path was broken.
+
 ## [1.24.0]
 
 ### Added
