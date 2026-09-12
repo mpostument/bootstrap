@@ -15,6 +15,67 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.0]
+
+### Added
+
+- **`atuin` in the `shell` group, and a zsh init line that gives it Ctrl+R.**
+  It replaces the history *search*, not the history file: every command is
+  also recorded in SQLite with its exit code, duration, working directory
+  and session, so the search can filter on all of it. The `setopt` block
+  above it is untouched and `~/.zsh_history` keeps being written, which is
+  what makes this reversible - drop the init line and nothing is lost.
+
+  Init runs *after* the fzf and fzf-tab bindings because the last `bindkey`
+  wins, and it is passed `--disable-up-arrow` so Up stays on
+  `history-substring-search-up`. Those two keys answer different questions:
+  Up continues a prefix you have started typing, Ctrl+R searches everything
+  you have ever run. Sync is opt-in and off until you run `atuin login`.
+
+- **`atuin/config.toml` and a Catppuccin Mocha theme, deployed the way
+  `starship.toml` is - one copy at the repository root, identical on all
+  three platforms.** atuin generates its own `config.toml` on first run, so
+  the first deploy replaces a generated file rather than a hand-written one.
+
+  The search now opens 20 lines tall rather than taking the whole window,
+  shows the selected command in full above the list, shows the filter tabs
+  so the current mode is visible, and runs on Enter instead of only putting
+  the command on the line. Esc restores what you had typed before opening
+  the search rather than the query, and scrolling past the last result
+  closes it rather than wrapping. `history_filter` drops bare `ls`/`cd`/
+  `clear`-class commands - with an argument they are still recorded, because
+  `cd ~/some/deep/path` is worth recalling and `cd` is not.
+
+  The theme is upstream catppuccin/atuin's mocha-blue, whose hexes are the
+  ones `starship.toml`, Ghostty and the Windows Terminal scheme already use.
+
+- **`mise`, from the vendor script at `https://mise.run`.** Not in the
+  Debian archive, so it arrives the same way Claude Code does -
+  `MISE_ENABLED` / `MISE_INSTALLER` in the manifest, a `mise self-update -y`
+  on an existing install, and `present` rather than a fight if another
+  installer owns the binary.
+
+### Removed
+
+- **pyenv, pyenv-virtualenv, nvm and tenv - `mise` replaces all four.**
+  `TOOLS` is now empty, `tenv` is out of `RELEASES`, the `pyenv` and `nvm`
+  oh-my-zsh plugins are out of `ZSH_PLUGINS`, and the fragment's `pyenv
+  init` / `NVM_DIR` lines are replaced by one `mise activate zsh`.
+
+  **This is the breaking half.** tenv was carrying seven binaries, and
+  `tofu`, `terraform` and `terragrunt` were three of them - they are gone
+  from `~/.local/bin` until mise is told to provide them:
+
+  ```
+  mise use -g opentofu@latest terraform@latest terragrunt@latest
+  ```
+
+  Existing `.python-version` and `.nvmrc` files keep working, since mise
+  reads both, but the interpreters themselves are not inherited: what pyenv
+  and nvm installed stays in `~/.pyenv` and `~/.nvm`, unmanaged and no
+  longer on PATH. Re-install what you still use with `mise use -g
+  python@3.14 node@lts`, then delete those two directories by hand.
+
 ## [1.24.0]
 
 ### Added

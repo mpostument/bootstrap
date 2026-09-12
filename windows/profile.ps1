@@ -1,5 +1,13 @@
 # PowerShell profile - managed by windows/bootstrap.ps1
 
+# Force UTF-8 everywhere: console I/O, and cmdlets that write files (Out-File, Set-Content, etc.)
+# default to the system codepage otherwise, which mangles emoji/box-drawing chars from tools
+# like starship, eza, and Terminal-Icons into mojibake (e.g. "≡ƒÄ»" instead of a target emoji).
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+$PSDefaultParameterValues['*:Encoding'] = 'utf8'
+
 # PSReadLine
 # https://learn.microsoft.com/powershell/module/psreadline
 Import-Module PSReadLine -MinimumVersion 2.4.5 -Force -ErrorAction SilentlyContinue
@@ -35,7 +43,13 @@ Import-Module Terminal-Icons -ErrorAction SilentlyContinue
 if (Get-Command fzf -ErrorAction SilentlyContinue) {
     try {
         Import-Module PSFzf -ErrorAction Stop
-        Set-PsFzfOption -PSReadlineChordProvider 'Ctrl+t' -PSReadlineChordReverseHistory 'Ctrl+r'
+        # Ctrl+R goes to atuin when it is installed - it searches the same history
+        # with more to filter on. PSFzf keeps Ctrl+T (files) either way.
+        if (Get-Command atuin -ErrorAction SilentlyContinue) {
+            Set-PsFzfOption -PSReadlineChordProvider 'Ctrl+t'
+        } else {
+            Set-PsFzfOption -PSReadlineChordProvider 'Ctrl+t' -PSReadlineChordReverseHistory 'Ctrl+r'
+        }
 
         Set-PsFzfOption -TabExpansion
 
@@ -49,6 +63,18 @@ if (Get-Command fzf -ErrorAction SilentlyContinue) {
 # https://github.com/ajeetdsouza/zoxide
 if (Get-Command zoxide -ErrorAction SilentlyContinue) {
     Invoke-Expression (& { (zoxide init powershell | Out-String) })
+}
+
+# atuin -- history in SQLite: exit code, duration, directory and session per
+# command, searched with Ctrl+R. Optional end-to-end encrypted sync across machines.
+# https://atuin.sh
+# After PSFzf, so atuin's Ctrl+R is the binding that survives. Up/Down are then
+# re-asserted because atuin's init claims UpArrow too, and HistorySearchBackward
+# (prefix search on what you have already typed) is the better use of that key.
+if (Get-Command atuin -ErrorAction SilentlyContinue) {
+    Invoke-Expression (& { (atuin init powershell | Out-String) })
+    Set-PSReadLineKeyHandler -Key UpArrow -Function HistorySearchBackward
+    Set-PSReadLineKeyHandler -Key DownArrow -Function HistorySearchForward
 }
 
 # Modern CLI bundle -- nicer cat/ls/find/grep
@@ -76,6 +102,14 @@ if (Get-Command dust -ErrorAction SilentlyContinue) {
 }
 if (Get-Command duf -ErrorAction SilentlyContinue) {
     function df { duf @args }
+}
+
+# mise -- one version manager for Python, Node, Go, Java and the Terraform
+# family, driven by a per-project .mise.toml. https://mise.jdx.dev
+# Windows has no pyenv/nvm to replace; mise sits alongside the winget-installed
+# runtimes and wins for any tool a .mise.toml in the current tree pins.
+if (Get-Command mise -ErrorAction SilentlyContinue) {
+    Invoke-Expression (& { (mise activate pwsh | Out-String) })
 }
 
 # posh-git -- tab-completion for git subcommands, branches and remotes

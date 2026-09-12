@@ -1,0 +1,51 @@
+# atuin/config.toml - one history-search config, deployed identically to all
+# three platforms, the same way starship.toml is.
+#
+# Only the keys that differ from atuin's defaults are set. Anything absent is
+# atuin's own default, so this file stays short enough to read.
+
+# full draws the search as a framed, full-height pane; compact hugs the prompt.
+# auto picks full and falls back to compact when the window is too short for it,
+# which is the one that behaves on a split pane and on a full-screen terminal.
+style = "auto"
+
+# Lines the search may take when it is not running full-screen. 0 means "all of
+# them". 20 is about a third of a normal window - enough results to choose from
+# without the search replacing the scrollback you are trying to read.
+inline_height = 20
+
+# Show the selected command in full above the list. Long commands are exactly
+# the ones worth recalling and exactly the ones the list truncates.
+show_preview = true
+
+# The filter tabs (GLOBAL / HOST / SESSION / DIRECTORY / WORKSPACE) along the
+# top, so the mode you are in is visible rather than remembered.
+show_tabs = true
+
+# Enter runs the command. The default leaves it on the line for you to confirm,
+# which is the safer half of a trade and the slower one; Tab still edits without
+# running, so nothing is lost.
+enter_accept = true
+
+# Esc puts back what you had typed before opening the search, rather than the
+# search query. Escaping should undo, not commit.
+exit_mode = "return-original"
+
+# Scrolling past the last result closes the search instead of wrapping around.
+scroll_exits = false
+
+# Redact anything that looks like a key, token or password before it is stored.
+# On by default; set here because it is the one default worth being explicit about.
+secrets_filter = true
+
+# Commands never worth recording. Bare invocations only - anything with an
+# argument is still kept, since `cd ~/some/deep/path` is worth recalling.
+history_filter = [
+  "^ ",
+  "^(ls|ll|la|cd|pwd|clear|exit|htop|btop|top)$",
+]
+
+[theme]
+# themes/catppuccin-mocha.toml, deployed beside this file. Matches the palette
+# starship.toml, Ghostty and Windows Terminal already use.
+name = "catppuccin-mocha"

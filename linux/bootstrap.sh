@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.24.0'
+BOOTSTRAP_VERSION='1.25.0'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -141,6 +141,7 @@ source "$MANIFEST"
 
 for required in PKG_GROUPS MANUAL HELD TOOLS REPOS RELEASES ZSH_PLUGINS ZSH_CUSTOM_PLUGINS \
                 DOTNET_ENABLED ZSH_ENABLED NERD_FONT_ENABLED CLAUDE_CODE_ENABLED \
+                MISE_ENABLED \
                 AWSCLI_ENABLED GHOSTTY_ENABLED SCHEDULE_ENABLED HISTORY_SIZE HISTORY_FILE_SIZE; do
   declare -p "$required" >/dev/null 2>&1 || die "manifest is missing \$$required: $MANIFEST"
 done
@@ -853,6 +854,54 @@ else
   fi
 fi
 
+# mise
+
+mise_version() { "$1" --version 2>/dev/null | grep -oE '[0-9]{4}\.[0-9]+\.[0-9]+' | head -1 || true; }
+
+if [[ "${MISE_ENABLED:-no}" != "yes" ]]; then
+  phase 'mise - disabled in the manifest'
+else
+  phase 'mise - runtime version manager'
+  mise_exe=""
+  if command -v mise >/dev/null 2>&1; then
+    mise_exe="$(command -v mise)"
+  elif [[ -x "${HOME}/.local/bin/mise" ]]; then
+    mise_exe="${HOME}/.local/bin/mise"
+  fi
+
+  if [[ -n "$mise_exe" && "$SKIP_UPGRADE" == "yes" ]]; then
+    result 'skipped' 'mise' "$(mise_version "$mise_exe") - --skip-upgrade"
+  elif [[ -n "$mise_exe" && "$DRY_RUN" == "yes" ]]; then
+    result 'present' 'mise' "$(mise_version "$mise_exe") - would run mise self-update"
+  elif [[ -n "$mise_exe" ]]; then
+    # Vendor-installed, so self-update is the supported path; it exits non-zero
+    # when a distro package owns the binary, which is reported rather than fixed.
+    mise_had="$(mise_version "$mise_exe")"
+    if "$mise_exe" self-update -y >/dev/null 2>&1; then
+      mise_now="$(mise_version "$mise_exe")"
+      if [[ "$mise_now" == "$mise_had" ]]; then
+        result 'current' 'mise' "$mise_had"
+      else
+        result 'upgraded' 'mise' "$mise_had -> $mise_now"
+      fi
+    else
+      result 'present' 'mise' "$mise_had - self-update declined, another installer owns $mise_exe"
+    fi
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    result 'would-install' 'mise' "$MISE_INSTALLER"
+  else
+    mise_script="$(mktemp)"
+    if curl -fsSL "$MISE_INSTALLER" -o "$mise_script" 2>/dev/null &&
+       sh "$mise_script" >/dev/null 2>&1 &&
+       [[ -x "${HOME}/.local/bin/mise" ]]; then
+      result 'installed' 'mise' "$(mise_version "${HOME}/.local/bin/mise")"
+    else
+      result 'failed' 'mise' "installer failed: $MISE_INSTALLER"
+    fi
+    rm -f "$mise_script"
+  fi
+fi
+
 # zsh
 
 if [[ "${ZSH_ENABLED:-no}" != "yes" ]]; then
@@ -929,9 +978,6 @@ else
         echo
         echo "export ZSH=\"$OMZ_DIR\""
         echo "ZSH_THEME=\"$ZSH_THEME\""
-        echo
-        echo 'export NVM_DIR="$HOME/.nvm"'
-        echo "zstyle ':omz:plugins:nvm' lazy yes"
         echo
         printf 'plugins=(%s)\n' "${ZSH_PLUGINS[*]}"
         echo 'source "$ZSH/oh-my-zsh.sh"'
@@ -1048,6 +1094,9 @@ else
         echo 'command -v dust   >/dev/null && alias du="dust"'
         echo 'command -v duf    >/dev/null && alias df="duf"'
         echo 'command -v zoxide >/dev/null && eval "$(zoxide init zsh)"'
+        # Last binding wins, so atuin goes after fzf/fzf-tab to take Ctrl+R.
+        # --disable-up-arrow keeps Up on history-substring-search, bound above.
+        echo 'command -v atuin  >/dev/null && eval "$(atuin init zsh --disable-up-arrow)"'
         echo
         declare -A _cli_cmd=() _cli_desc=()
         if [[ -r "$SCRIPT_DIR/../tools/cli-parity.conf" ]]; then
@@ -1078,9 +1127,8 @@ else
         echo '  echo'
         echo '}'
         echo
-        echo '[ -d "$HOME/.pyenv/bin" ] && export PATH="$HOME/.pyenv/bin:$PATH"'
-        echo 'command -v pyenv >/dev/null && eval "$(pyenv init -)"'
-          echo
+        echo '[ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH"'
+        echo 'command -v mise >/dev/null && eval "$(mise activate zsh)"'
         echo
         echo '[ -d "$HOME/.dotnet" ] && export PATH="$HOME/.dotnet:$PATH" && export DOTNET_ROOT="$HOME/.dotnet"'
       } > "$NEW_FRAGMENT"
@@ -1136,6 +1184,41 @@ else
       result 'installed' 'starship.toml' "$STARSHIP_TOML_TARGET"
     fi
   fi
+fi
+
+# Atuin config
+deploy_config() {   # deploy_config <source> <target> <label>
+  local src="$1" dst="$2" label="$3"
+  if [[ ! -r "$src" ]]; then
+    result 'failed' "$label" "not found at $src"
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    result 'would-install' "$label" "$dst"
+  elif [[ -f "$dst" ]] && cmp -s "$src" "$dst"; then
+    result 'current' "$label" "$dst"
+  else
+    local had=no
+    [[ -f "$dst" ]] && had=yes
+    mkdir -p "$(dirname "$dst")"
+    cp "$src" "$dst"
+    chmod 0644 "$dst"
+    if [[ "$had" == "yes" ]]; then
+      result 'upgraded' "$label" "$dst"
+    else
+      result 'installed' "$label" "$dst"
+    fi
+  fi
+}
+
+ATUIN_SOURCE="${SCRIPT_DIR}/../atuin"
+if ! command -v atuin >/dev/null 2>&1; then
+  phase 'Atuin config'
+  result 'missing' 'atuin config' 'atuin is not installed'
+else
+  phase 'Atuin config'
+  deploy_config "${ATUIN_SOURCE}/config.toml" \
+                "${HOME}/.config/atuin/config.toml" 'atuin config.toml'
+  deploy_config "${ATUIN_SOURCE}/themes/catppuccin-mocha.toml" \
+                "${HOME}/.config/atuin/themes/catppuccin-mocha.toml" 'atuin theme'
 fi
 
 # Git config

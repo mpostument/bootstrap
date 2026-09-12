@@ -15,6 +15,56 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.28.0]
+
+### Added
+
+- **`atuin` in the `shell` group, and a zsh init line that gives it Ctrl+R.**
+  It replaces the history *search*, not the history file: every command is
+  also recorded in SQLite with its exit code, duration, working directory
+  and session, so the search can filter on all of it. `~/.zsh_history` keeps
+  being written, which is what makes this reversible.
+
+  Init runs *after* the fzf and fzf-tab bindings because the last `bindkey`
+  wins, and it is passed `--disable-up-arrow` so Up stays on
+  `history-substring-search-up`. Up continues a prefix you have started
+  typing; Ctrl+R searches everything you have ever run. Sync is opt-in and
+  off until you run `atuin login`.
+
+- **`atuin/config.toml` and a Catppuccin Mocha theme, deployed the way
+  `starship.toml` is** - one copy at the repository root, identical on all
+  three platforms. The search opens 20 lines tall rather than taking the
+  whole window, previews the selected command in full, shows the filter
+  tabs, runs on Enter, restores your original line on Esc, and drops bare
+  `ls`/`cd`/`clear`-class commands from history. Theme hexes are upstream
+  catppuccin/atuin's mocha-blue - the same ones `starship.toml` and Ghostty
+  already use.
+
+- **`mise` in the `dev` group.** One formula in place of four.
+
+### Removed
+
+- **pyenv, pyenv-virtualenv, nvm and tenv - `mise` replaces all four.** The
+  `pyenv` oh-my-zsh plugin goes with them, and the fragment's `pyenv init`,
+  `pyenv virtualenv-init` and the whole lazy-loading `nvm` shim - the
+  `_bootstrap_load_nvm` function and the four command stubs that triggered
+  it - collapse to one `mise activate zsh`.
+
+  **This is the breaking half.** tenv provided `tofu`, `terraform` and
+  `terragrunt`; they are gone until mise is told to provide them:
+
+  ```
+  mise use -g opentofu@latest terraform@latest terragrunt@latest
+  ```
+
+  Existing `.python-version` and `.nvmrc` files keep working, since mise
+  reads both, but the interpreters are not inherited: what pyenv and nvm
+  installed stays in `~/.pyenv` and `~/.nvm`, unmanaged and off PATH.
+  Re-install what you still use with `mise use -g python@3.14 node@lts`,
+  then `brew uninstall` is unnecessary - the formulae are already gone from
+  the manifest, so a run will report them as externally managed, not remove
+  them. Delete the two directories by hand when you are ready.
+
 ## [1.27.0]
 
 ### Added

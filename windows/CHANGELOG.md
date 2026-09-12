@@ -20,6 +20,45 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.30.0]
+
+### Added
+
+- **`Atuinsh.Atuin` in the `shell` group, and Ctrl+R handed to it.** History
+  goes into SQLite alongside PSReadLine's own file, carrying exit code,
+  duration, directory and session per command, so the search can filter on
+  all of it rather than matching substrings.
+
+  Ctrl+R was PSFzf's. The PSFzf block now claims it only when atuin is
+  absent, so the two do not race for the chord; Ctrl+T (files) is unchanged
+  either way, and `Set-PsFzfOption` is called with one argument rather than
+  two in that case. Up/Down are re-asserted to `HistorySearchBackward` /
+  `HistorySearchForward` after atuin's init, which claims UpArrow itself -
+  prefix search on a half-typed line is the better use of that key, and
+  Ctrl+R is where the full search lives. Sync is opt-in, off until `atuin
+  login`.
+
+- **`atuin/config.toml` and a Catppuccin Mocha theme, deployed through
+  `Deploy-ManagedFile` the way `starship.toml` and `profile.ps1` are** - one
+  copy at the repository root, identical on all three platforms. atuin
+  generates its own `config.toml` on first run, which carries no marker of
+  ours, so that first deploy backs it up to `.bak` like any unmanaged file.
+
+  The search opens 20 lines tall rather than taking the whole window,
+  previews the selected command in full, shows the filter tabs, runs on
+  Enter, restores your original line on Esc rather than the query, and drops
+  bare `ls`/`cd`/`clear`-class commands from history. Theme hexes are
+  upstream catppuccin/atuin's mocha-blue - the same values already in
+  `Shell.TerminalColorSchemeDef` in this manifest.
+
+- **`jdx.mise` in the `dev` group, activated in the profile.** Unlike Linux
+  and macOS, Windows had no pyenv/nvm/tenv for it to replace: the winget
+  runtimes (`Python.Python.3.14`, `OpenJS.NodeJS.LTS`, `GoLang.Go`,
+  `Microsoft.OpenJDK.21`, `OpenTofu.Tofu`) stay exactly as they were, and
+  mise sits alongside them. It wins only where a `.mise.toml` in the current
+  tree pins a tool, which is the point - the winget versions remain the
+  machine default, and a project overrides them without a global switch.
+
 ## [1.29.0]
 
 ### Added

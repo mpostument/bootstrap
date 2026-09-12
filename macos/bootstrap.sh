@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.27.0'
+BOOTSTRAP_VERSION='1.28.0'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -747,6 +747,9 @@ else
       echo 'command -v dust   >/dev/null && alias du="dust"'
       echo 'command -v duf    >/dev/null && alias df="duf"'
       echo 'command -v zoxide >/dev/null && eval "$(zoxide init zsh)"'
+      # Last binding wins, so atuin goes after fzf/fzf-tab to take Ctrl+R.
+      # --disable-up-arrow keeps Up on history-substring-search, bound above.
+      echo 'command -v atuin  >/dev/null && eval "$(atuin init zsh --disable-up-arrow)"'
       echo
       _parity_pkg=() _parity_cmd=() _parity_desc=()
       if [[ -r "$SCRIPT_DIR/../tools/cli-parity.conf" ]]; then
@@ -782,23 +785,7 @@ else
       echo
       echo '[ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH"'
       echo
-      echo 'command -v pyenv >/dev/null && eval "$(pyenv init -)"'
-      echo 'command -v pyenv-virtualenv-init >/dev/null && eval "$(pyenv virtualenv-init -)"'
-      echo
-      echo 'export NVM_DIR="$HOME/.nvm"'
-      echo '[ -d "$NVM_DIR" ] || mkdir -p "$NVM_DIR"'
-      echo
-      echo "_bootstrap_load_nvm() {"
-      echo "  unfunction nvm node npm npx _bootstrap_load_nvm 2>/dev/null"
-      echo "  [ -s \"${BREW_PREFIX}/opt/nvm/nvm.sh\" ] && . \"${BREW_PREFIX}/opt/nvm/nvm.sh\""
-      echo "  [ -s \"${BREW_PREFIX}/opt/nvm/etc/bash_completion.d/nvm\" ] && . \"${BREW_PREFIX}/opt/nvm/etc/bash_completion.d/nvm\""
-      echo "}"
-      echo "if [ -s \"${BREW_PREFIX}/opt/nvm/nvm.sh\" ]; then"
-      echo '  for _cmd in nvm node npm npx; do'
-      echo '    eval "${_cmd}() { _bootstrap_load_nvm; ${_cmd} \"\$@\"; }"'
-      echo '  done'
-      echo '  unset _cmd'
-      echo 'fi'
+      echo 'command -v mise >/dev/null && eval "$(mise activate zsh)"'
     } > "$NEW_FRAGMENT"
 
     if [[ -f "$FRAGMENT" ]] && cmp -s "$NEW_FRAGMENT" "$FRAGMENT"; then
@@ -851,6 +838,41 @@ else
       result 'installed' 'starship.toml' "$STARSHIP_TOML_TARGET"
     fi
   fi
+fi
+
+# Atuin config
+deploy_config() {   # deploy_config <source> <target> <label>
+  local src="$1" dst="$2" label="$3"
+  if [[ ! -r "$src" ]]; then
+    result 'failed' "$label" "not found at $src"
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    result 'would-install' "$label" "$dst"
+  elif [[ -f "$dst" ]] && cmp -s "$src" "$dst"; then
+    result 'current' "$label" "$dst"
+  else
+    local had=no
+    [[ -f "$dst" ]] && had=yes
+    mkdir -p "$(dirname "$dst")"
+    cp "$src" "$dst"
+    chmod 0644 "$dst"
+    if [[ "$had" == "yes" ]]; then
+      result 'upgraded' "$label" "$dst"
+    else
+      result 'installed' "$label" "$dst"
+    fi
+  fi
+}
+
+ATUIN_SOURCE="${SCRIPT_DIR}/../atuin"
+if ! command -v atuin >/dev/null 2>&1; then
+  phase 'Atuin config'
+  result 'missing' 'atuin config' 'atuin is not installed'
+else
+  phase 'Atuin config'
+  deploy_config "${ATUIN_SOURCE}/config.toml" \
+                "${HOME}/.config/atuin/config.toml" 'atuin config.toml'
+  deploy_config "${ATUIN_SOURCE}/themes/catppuccin-mocha.toml" \
+                "${HOME}/.config/atuin/themes/catppuccin-mocha.toml" 'atuin theme'
 fi
 
 # Git config

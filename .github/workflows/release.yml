@@ -179,7 +179,8 @@ jobs:
           # shellcheck disable=SC1091
           . linux/packages.conf
           for required in PKG_GROUPS MANUAL HELD TOOLS REPOS RELEASES ZSH_PLUGINS ZSH_CUSTOM_PLUGINS \
-                          DOTNET_ENABLED ZSH_ENABLED NERD_FONT_ENABLED CLAUDE_CODE_ENABLED; do
+                          DOTNET_ENABLED ZSH_ENABLED NERD_FONT_ENABLED CLAUDE_CODE_ENABLED \
+                          MISE_ENABLED; do
             if ! declare -p "$required" >/dev/null 2>&1; then
               echo "::error file=linux/packages.conf::missing \$$required"
               exit 1

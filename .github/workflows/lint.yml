@@ -1,0 +1,87 @@
+name: Lint
+
+# Repository hygiene, kept out of the bootstrap manifests on purpose: these
+# tools check this repository, they are not part of a machine's software.
+# Everything here is pinned, because a linter that updates itself turns an
+# unrelated push red.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ACTIONLINT_VERSION: '1.7.12'
+  TYPOS_VERSION: '1.50.1'
+  TAPLO_VERSION: '0.10.0'
+  SHFMT_VERSION: '3.14.1'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Install the linters
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+
+          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            | tar -xz -C "$HOME/.local/bin" actionlint
+
+          curl -fsSL "https://github.com/crate-ci/typos/releases/download/v${TYPOS_VERSION}/typos-v${TYPOS_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            | tar -xz -C "$HOME/.local/bin" ./typos
+
+          # taplo ships the bare binary gzipped, not a tarball.
+          curl -fsSL "https://github.com/tamasfe/taplo/releases/download/${TAPLO_VERSION}/taplo-linux-x86_64.gz" \
+            | gunzip > "$HOME/.local/bin/taplo"
+
+          curl -fsSL -o "$HOME/.local/bin/shfmt" \
+            "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64"
+
+          chmod 0755 "$HOME/.local/bin"/*
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Versions
+        run: |
+          actionlint --version | head -1
+          typos --version
+          taplo --version
+          shfmt --version
+          shellcheck --version | sed -n 2p
+
+      # actionlint runs the runner's shellcheck over every `run:` block, which is
+      # where this repository keeps ~100 lines of otherwise unreviewed bash.
+      #
+      # SC2016 is ignored for the same reason .shellcheckrc disables it
+      # repo-wide: these scripts WRITE shell rather than run it, and the release
+      # workflow greps for the literal string `$script:BootstrapVersion`, which
+      # has to stay single-quoted to survive. actionlint invokes shellcheck on
+      # extracted snippets rather than on files, so .shellcheckrc is not read
+      # here and the exemption has to be repeated.
+      - name: actionlint
+        run: actionlint -color -ignore 'SC2016'
+
+      - name: typos
+        run: typos --format brief
+
+      # lint, not `fmt --check`: this validates the TOML rather than enforcing
+      # taplo's layout over hand-aligned files like starship.toml.
+      - name: taplo
+        run: taplo lint
+
+      # Non-blocking, and deliberately so. shfmt -i 2 -ci matches the style these
+      # scripts are already written in, and still wants ~760 lines of change;
+      # with its own defaults (tabs) it wants ~4,500. That is a reformatting
+      # commit to take on purpose, not a build to fail on somebody else's push.
+      # Promote this to a blocking step once that commit has landed.
+      - name: shfmt (report only)
+        continue-on-error: true
+        run: shfmt -i 2 -ci -d linux/bootstrap.sh macos/bootstrap.sh tools/parity.sh

@@ -1,0 +1,16 @@
+# Catppuccin Mocha for atuin's search UI. Colours are the upstream
+# catppuccin/atuin "mocha-blue" values, which are the same hexes the Windows
+# Terminal scheme in windows/packages.psd1 and Ghostty's theme already use.
+
+[theme]
+name = "catppuccin-mocha"
+
+[colors]
+AlertInfo = "#a6e3a1"   # green
+AlertWarn = "#fab387"   # peach
+AlertError = "#f38ba8"  # red
+Annotation = "#89b4fa"  # blue
+Base = "#cdd6f4"        # text
+Guidance = "#9399b2"    # overlay2
+Important = "#f38ba8"   # red
+Title = "#89b4fa"       # blue

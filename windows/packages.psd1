@@ -8,6 +8,7 @@
                 'Microsoft.PowerShell'
                 'Microsoft.WindowsTerminal'
                 'Starship.Starship'
+                'Atuinsh.Atuin'
                 'gerardog.gsudo'
             )
         }
@@ -54,6 +55,7 @@
                 'GoLang.Go'
                 'Microsoft.OpenJDK.21'
                 'OpenTofu.Tofu'
+                'jdx.mise'
             )
         }
 
@@ -64,6 +66,7 @@
                 'Kubernetes.kubectl'
                 'Helm.Helm'
                 'Derailed.k9s'
+                'stern.stern'
                 'Amazon.AWSCLI'
                 'Microsoft.AzureCLI'
                 'Google.CloudSDK'

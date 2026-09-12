@@ -43,7 +43,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '1.29.0'
+$script:BootstrapVersion = '1.30.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -55,6 +55,7 @@ if (-not $script:ToolRoot) { $script:ToolRoot = Split-Path -Parent $MyInvocation
 
 $script:ProfileSource = Join-Path $script:ToolRoot 'profile.ps1'
 $script:StarshipTomlSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'starship.toml'
+$script:AtuinSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'atuin'
 $script:MergeScript = Join-Path $script:ToolRoot 'merge-terminal-settings.ps1'
 $script:MpvSource = Join-Path $script:ToolRoot 'mpv'
 
@@ -754,6 +755,17 @@ if ($SkipShell) {
     Deploy-ManagedFile -Source $script:StarshipTomlSource `
         -Target (Join-Path $env:USERPROFILE '.config\starship.toml') `
         -Group 'shell' -Label 'starship.toml'
+
+    # atuin writes its own config.toml on first run, so the first deploy here
+    # replaces a generated file rather than a hand-written one; Deploy-ManagedFile
+    # still backs it up to .bak because it carries no marker of ours.
+    Deploy-ManagedFile -Source (Join-Path $script:AtuinSource 'config.toml') `
+        -Target (Join-Path $env:USERPROFILE '.config\atuin\config.toml') `
+        -Group 'shell' -Label 'atuin config.toml'
+
+    Deploy-ManagedFile -Source (Join-Path $script:AtuinSource 'themes\catppuccin-mocha.toml') `
+        -Target (Join-Path $env:USERPROFILE '.config\atuin\themes\catppuccin-mocha.toml') `
+        -Group 'shell' -Label 'atuin theme'
 
     $editions = @(
         @{ Name = '5.1'; Exe = 'powershell.exe'; Modules = $shell.Modules51 }
