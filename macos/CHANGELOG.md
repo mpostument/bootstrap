@@ -17,6 +17,54 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [1.29.0]
 
+### Added
+
+- **A `network` group: `trippy`, `gping` and `nmap`.** Per-hop loss and
+  latency in one live view, a ping graph for one host or several, and what a
+  host exposes. The zsh fragment aliases `trip` to `trip -u`: macOS is the one
+  platform where trippy traces without root.
+
+- **The `flameshot` cask in `apps`.** Screenshots annotated before they are
+  copied: arrows, boxes, numbered markers, blur. macOS asks for the Screen
+  Recording permission on first capture.
+
+- **`kubecolor` in `cloud`, `uv` in `dev`, `carapace` in `shell`.**
+  - `kubectl` is now an alias for `kubecolor`, which passes every argument
+    through and only adds colour, and `k` one for `kubectl`.
+  - carapace completes the CLIs zsh has nothing for. git is excluded
+    (`CARAPACE_EXCLUDES=git`): zsh's own completion for it is better.
+  - uv handles Python packages and venvs; mise still picks the Python version.
+
+- **`difftastic` in `cli`, and git settings for it.** A structural diff: it
+  compares syntax, so a reformat is not a change. delta stays the pager for
+  `git diff`, `show`, `log` and `add -p`; difftastic is asked for per command:
+  - `git difftool` or `git dft` (`diff.tool=difftastic`, no prompt, paged)
+  - `git ddiff`, `git dshow <rev>`, `git dlog` - difftastic in place of the
+    patch
+
+  Never `diff.external` globally: its output is not a patch, so
+  `git diff > x.patch` and `git apply` would stop working. delta passes
+  difftastic's output through byte for byte, so the pager needs no exception.
+  Like delta's, each key is set only when unset.
+
+- **`git sdiff`** - the delta view side by side
+  (`-c core.pager='delta --side-by-side' diff`), set with delta's keys.
+
+- **Completion for the CLIs carapace has no completer for.**
+  - **stern and yq:** carapace specs in `carapace/specs/`, deployed to
+    `~/Library/Application Support/carapace/specs` - Go's config directory on
+    macOS, which carapace uses unless `$XDG_CONFIG_HOME` is an absolute path.
+    Both are Cobra apps, so each spec is one line handing Tab to the tool's
+    own `__complete`.
+  - **mise:** `mise completion zsh` in the fragment - small, and it asks mise.
+  - **uv:** its zsh script is ~570 KB, so the fragment registers a stub that
+    loads it on the first Tab after `uv` and replaces itself with the real
+    `_uv`; a new shell pays nothing for it.
+
+- **The `onlyoffice` cask in `apps`.** An office suite built around .docx,
+  .xlsx and .pptx, so files from Microsoft Office keep their layout more often
+  than in LibreOffice. AGPL-3.0: free for personal and company use.
+
 ### Changed
 
 - **`atuin/config.toml` points sync at the self-hosted server**

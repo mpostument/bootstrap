@@ -22,6 +22,92 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 
 ## [1.31.0]
 
+### Added
+
+- **`Bitwarden.Bitwarden` in the `apps` group.** The desktop app: the vault
+  outside the browser, and what lets the browser extension unlock with
+  Windows Hello rather than the master password. Autofill itself comes from
+  the extension, which winget cannot install - it comes from the Chrome Web
+  Store.
+
+  `Bitwarden.CLI` is deliberately not added: it only pays off once secrets
+  are being copied into a terminal by hand, and it is one line away when
+  that happens.
+
+- **A `network` group: `FujiApple.Trippy` and `orf.gping`.** Per-hop loss and
+  latency in one live view, and a ping graph for one host or several. Tracing
+  needs an elevated shell on Windows, so the profile runs `trip` through
+  `gsudo`.
+
+  nmap is deliberately absent: winget's `Insecure.Nmap` is stuck at 7.80, from
+  2019.
+
+- **`Flameshot.Flameshot` in the `creative` group**, beside ScreenToGif.
+  Screenshots annotated before they are copied: arrows, boxes, numbered
+  markers, blur, or pinned on screen. Windows 11 still hands the Print Screen
+  key to Snipping Tool until that is switched off in Settings > Accessibility
+  > Keyboard.
+
+- **`rsteube.Carapace` in `shell`.** Completion for 1000+ CLIs through one
+  engine - flags and subcommands for kubectl, gh, az, helm and the rest, where
+  PowerShell otherwise offers file names. git is excluded
+  (`CARAPACE_EXCLUDES=git`) and stays with posh-git. Colour is off
+  (`CARAPACE_COLOR=0`): PSFzf's Tab list prints completion labels verbatim,
+  and carapace's colour codes showed up there as raw escape sequences.
+
+  The trailing space carapace puts on each value is off
+  (`CARAPACE_NOSPACE=*`): PSFzf quotes any completion containing whitespace and
+  adds a space of its own, so picking `get` from `kubectl <Tab>` inserted
+  `kubectl "get " ` and kubectl answered `unknown command "get "`.
+
+  PowerShell 7 only. Windows PowerShell 5.1 drops empty arguments to native
+  programs, including the `''` carapace's completer passes for the word under
+  the cursor; carapace answers `[]`, its script throws on that, and 5.1 fell
+  back to file names after a wasted carapace run on every Tab.
+
+- **`astral-sh.uv` in `dev`.** Python packages and venvs; mise still picks the
+  Python version.
+
+- **`k` for `kubectl`** in the profile. kubecolor, which the Linux and macOS
+  fragments alias `kubectl` to, has no winget package.
+
+- **`Wilfred.difftastic` in `cli`, and git settings for it.** A structural
+  diff: it compares syntax, so a reformat is not a change. delta stays the
+  pager for `git diff`, `show`, `log` and `add -p`; difftastic is asked for
+  per command:
+  - `git difftool` or `git dft` (`diff.tool=difftastic`, no prompt, paged)
+  - `git ddiff`, `git dshow <rev>`, `git dlog` - difftastic in place of the
+    patch
+
+  Never `diff.external` globally: its output is not a patch, so
+  `git diff > x.patch` and `git apply` would stop working. delta passes
+  difftastic's output through byte for byte, so the pager needs no exception.
+  Like delta's, each key is set only when unset, and `Git.DifftasticEnabled`
+  turns them off. `tools` lists it, from its new row in `tools/cli-parity.conf`.
+
+- **`git sdiff`** - the delta view side by side
+  (`-c core.pager='delta --side-by-side' diff`), set with delta's keys.
+
+- **Completion for the CLIs carapace has no completer for.**
+  - **stern and yq:** carapace specs in `carapace/specs/`, deployed to
+    `%APPDATA%\carapace\specs` (or an absolute `XDG_CONFIG_HOME`) through
+    `Deploy-ManagedFile`. Both are Cobra apps, so each spec is one line handing
+    Tab to the tool's own `__complete`.
+  - **uv:** its PowerShell script is ~750 KB and took ~200 ms to load, so the
+    profile registers a stub that loads it on the first Tab after `uv` and
+    answers through it from then on (8 ms a Tab afterwards). The real completer
+    is captured by shadowing `Register-ArgumentCompleter` while the script runs,
+    because a completer cannot re-run completion from inside itself.
+  - **mise:** loaded the same way, with a fix. mise 2026.9's script cuts the
+    command at the cursor with `Extent.Text`, which ends at the last word, so
+    `mise <Tab>` completed the word `mise` again and offered file names. The
+    profile pads the text out to the cursor first; `mise <Tab>` now lists its
+    99 subcommands.
+
+- **`ONLYOFFICE.DesktopEditors` in `apps`.** An office suite built around
+  .docx, .xlsx and .pptx, so files from Microsoft Office keep their layout more
+  often than in LibreOffice. AGPL-3.0: free for personal and company use.
+
 ### Changed
 
 - **`atuin/config.toml` points sync at the self-hosted server**
@@ -33,6 +119,34 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
   Sync is still off until you run `atuin register` (or `atuin login` with the
   key `atuin key` prints): this says where, not whether. Off that network a
   machine records locally and syncs when it is back.
+
+### Removed
+
+- **`OpenTofu.Tofu` from the `dev` group - mise owns OpenTofu, as on Linux and
+  macOS.** Terraform projects pin a required version, and a winget `tofu`
+  upgraded on every daily run drifts from it; mise switches version per
+  directory. The other winget runtimes stay: Windows tooling looks for
+  Python, Node and Java where their installers put them.
+
+  Run once: `mise use -g opentofu@latest`. The bootstrap installs what the
+  manifest lists and never uninstalls, so an existing copy stays until
+  `winget uninstall OpenTofu.Tofu`.
+
+### Fixed
+
+- **Tab never opened fzf.** `Set-PsFzfOption -TabExpansion` only reaches git,
+  through PowerShell's legacy `TabExpansion` hook; it does not bind the key.
+  Tab stayed on `MenuComplete`, which prints a flat, unselectable list once the
+  menu outgrows the window - `kubectl <Tab>`, 46 described subcommands, did.
+  Tab is now bound to `Invoke-FzfTabCompletion`: an fzf list for every command,
+  a single match inserted directly. Ctrl+Space is still `MenuComplete`.
+
+- **git settings with double quotes in them lost the quotes under Windows
+  PowerShell 5.1**, which hands `"` inside an argument to a native program
+  unescaped. `mergetool.unityyamlmerge.cmd` was stored as
+  `... merge -p $BASE $REMOTE $LOCAL $MERGED`, never matched what the script
+  wanted, and was rewritten on every run. Quotes are now escaped for git's
+  parser on 5.1 and 7.0-7.2; 7.3+ already passes them intact.
 
 ## [1.30.0]
 

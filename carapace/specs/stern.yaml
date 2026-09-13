@@ -1,0 +1,7 @@
+# managed by the bootstrap - edits here are overwritten on the next run
+# carapace has no completer for stern. stern is a Cobra app, which answers its
+# own hidden __complete command, and the Cobra bridge hands Tab to that.
+name: stern
+parsing: disabled
+completion:
+  positionalany: ["$carapace.bridge.Cobra([stern])"]

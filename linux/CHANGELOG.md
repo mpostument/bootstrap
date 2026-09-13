@@ -31,6 +31,74 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`com.bitwarden.desktop` from Flathub in the `apps` group.** Not in the
+  Debian archive, so Flathub it is, beside Obsidian, Bruno and DBeaver. The
+  desktop app is the vault outside the browser; autofill itself comes from the
+  browser extension. Like the rest of `apps`, it is skipped on a headless
+  machine.
+
+  The CLI is deliberately not added: it only pays off once secrets are being
+  copied into a terminal by hand.
+
+- **A `network` group: `trippy`, `gping` and `nmap`.** Per-hop loss and
+  latency in one live view, a ping graph for one host or several, and what a
+  host exposes. trippy and gping arrive with trixie; on bookworm they are
+  reported missing, as eza already is. The zsh fragment aliases `trip` to
+  `sudo trip`: trippy needs raw sockets and has no unprivileged mode on Linux.
+
+- **`org.flameshot.Flameshot` from Flathub in the `creative` group**, beside
+  OBS. Screenshots annotated before they are copied: arrows, boxes, numbered
+  markers, blur. Flathub rather than apt because Debian's is 12.1.0 and
+  Flathub's 14.0.0, and the Wayland fixes are in between. It does not take the
+  Print key by itself: on GNOME, bind a custom shortcut to
+  `flatpak run org.flameshot.Flameshot gui`.
+
+- **`kubecolor`, `uv` and `carapace` as release binaries.** Debian's kubecolor
+  is 0.0.20, from before the kubecolor/kubecolor fork; uv and carapace are not
+  in the archive at all.
+  - `kubectl` is now an alias for `kubecolor`, which passes every argument
+    through and only adds colour, and `k` one for `kubectl`.
+  - carapace completes the CLIs zsh has nothing for. git is excluded
+    (`CARAPACE_EXCLUDES=git`): zsh's own completion for it is better.
+  - uv handles Python packages and venvs; mise still picks the Python version.
+
+- **`difftastic` as a release binary, and git settings for it.** A structural
+  diff: it compares syntax, so a reformat is not a change. Not in the Debian
+  archive; the gnu build, because upstream's musl build is x86_64 only. delta
+  stays the pager for `git diff`, `show`, `log` and `add -p`; difftastic is
+  asked for per command:
+  - `git difftool` or `git dft` (`diff.tool=difftastic`, no prompt, paged)
+  - `git ddiff`, `git dshow <rev>`, `git dlog` - difftastic in place of the
+    patch
+
+  Never `diff.external` globally: its output is not a patch, so
+  `git diff > x.patch` and `git apply` would stop working. delta passes
+  difftastic's output through byte for byte, so the pager needs no exception.
+  Like delta's, each key is set only when unset.
+
+- **`git sdiff`** - the delta view side by side
+  (`-c core.pager='delta --side-by-side' diff`), set with delta's keys.
+
+- **`org.onlyoffice.desktopeditors` from Flathub in `apps`.** An office suite
+  built around .docx, .xlsx and .pptx, so files from Microsoft Office keep
+  their layout more often than in LibreOffice. Not in the Debian archive.
+  AGPL-3.0: free for personal and company use.
+
+- **Completion for the CLIs carapace has no completer for.**
+  - **stern and yq:** carapace specs in `carapace/specs/`, deployed to
+    `~/.config/carapace/specs` (or an absolute `$XDG_CONFIG_HOME`). Both are
+    Cobra apps, so each spec is one line handing Tab to the tool's own
+    `__complete`. Set by content, like the atuin config.
+  - **mise:** `mise completion zsh` in the fragment - small, and it asks mise.
+  - **uv:** its zsh script is ~570 KB, so the fragment registers a stub that
+    loads it on the first Tab after `uv` and replaces itself with the real
+    `_uv`; a new shell pays nothing for it.
+
+- **`RELEASE_<name>_VERSION_ARGS`** - the arguments that make a release binary
+  print its own version, where the usual guesses do not. kubecolor hands
+  unknown arguments to kubectl, so without it `kubecolor version` would report
+  kubectl's version and kubecolor would be reinstalled on every run.
+
 - **`--skip-repos`** - add no third-party apt sources and install none of
   their packages. For a host where something else already owns them: two
   definitions of one repo with different `Signed-By` keyrings makes apt
@@ -46,6 +114,9 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 - **starship's asset name 404'd on arm64.** Upstream ships a gnu build for
   x86_64 only; the manifest now asks for the musl build, which exists for
   both.
+- **`tools` never listed the cli tools taken as release binaries.** Rows marked
+  `@releases` in `tools/cli-parity.conf` were skipped, so yq was missing from
+  the list; they are now listed after the apt packages, with difftastic.
 
 ## [1.25.0]
 

@@ -73,7 +73,7 @@ directory to your **user** `PATH`. Set `AddToPath = $false` in the manifest's
 | `Managed` | no | no |
 
 **`Groups`** — ordinary winget software: `shell`, `cli`, `dev`, `cloud`,
-`creative`, `apps`.
+`network`, `creative`, `apps`.
 
 **`Pins`** — hands-off in both directions. Prefer a release channel that
 encodes the rule (`OpenJS.NodeJS.LTS`) over a pin. Every pin carries a written

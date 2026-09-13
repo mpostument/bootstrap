@@ -680,7 +680,7 @@ else
       echo '  done'
       echo '  local group=""'
       echo '  case ${words[1]:t} in'
-      echo '    (kubectl|kubectl-*|k|kubectx|kubens|kustomize|k9s|stern|helm|helmfile|flux|argocd|velero|skaffold|kubeseal)'
+      echo '    (kubectl|kubectl-*|kubecolor|k|kubectx|kubens|kustomize|k9s|stern|helm|helmfile|flux|argocd|velero|skaffold|kubeseal)'
       echo '      group=kube ;;'
       echo '    (aws|aws-vault|awslocal|eksctl|sam|copilot|yawsso|saml2aws|granted|assume)'
       echo '      group=aws ;;'
@@ -750,6 +750,28 @@ else
       # Last binding wins, so atuin goes after fzf/fzf-tab to take Ctrl+R.
       # --disable-up-arrow keeps Up on history-substring-search, bound above.
       echo 'command -v atuin  >/dev/null && eval "$(atuin init zsh --disable-up-arrow)"'
+      # carapace completes the CLIs zsh has nothing for. git is excluded: zsh's
+      # own _git is better, and the git-checkout zstyle above is written for it.
+      echo 'if command -v carapace >/dev/null; then'
+      echo "  export CARAPACE_EXCLUDES='git'"
+      echo '  eval "$(carapace _carapace zsh)"'
+      echo 'fi'
+      # uv's zsh completion is ~570 KB, so it loads on the first Tab after `uv`
+      # rather than in every new shell: the stub swaps itself for the real _uv.
+      echo 'if command -v uv >/dev/null; then'
+      echo '  _uv_lazy() { unfunction _uv_lazy; eval "$(uv generate-shell-completion zsh)"; _uv "$@"; }'
+      echo '  compdef _uv_lazy uv'
+      echo 'fi'
+      echo 'command -v kubectl >/dev/null && alias k="kubectl"'
+      # kubecolor hands every argument to kubectl and only adds colour, so the
+      # alias is invisible otherwise. After carapace, whose kubectl completer
+      # compdef then copies.
+      echo 'if command -v kubecolor >/dev/null; then'
+      echo '  alias kubectl="kubecolor"'
+      echo '  (( $+_comps[kubectl] )) && compdef kubecolor=kubectl'
+      echo 'fi'
+      # macOS is the one platform where trippy traces without root.
+      echo 'command -v trip >/dev/null && alias trip="trip -u"'
       echo
       _parity_pkg=() _parity_cmd=() _parity_desc=()
       if [[ -r "$SCRIPT_DIR/../tools/cli-parity.conf" ]]; then
@@ -786,6 +808,8 @@ else
       echo '[ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH"'
       echo
       echo 'command -v mise >/dev/null && eval "$(mise activate zsh)"'
+      # mise has no carapace completer; its own script is small and asks mise itself.
+      echo 'command -v mise >/dev/null && eval "$(mise completion zsh)"'
     } > "$NEW_FRAGMENT"
 
     if [[ -f "$FRAGMENT" ]] && cmp -s "$NEW_FRAGMENT" "$FRAGMENT"; then
@@ -875,16 +899,60 @@ else
                 "${HOME}/.config/atuin/themes/catppuccin-mocha.toml" 'atuin theme'
 fi
 
+# Carapace specs - completion for CLIs carapace has no completer of its own for
+CARAPACE_SOURCE="${SCRIPT_DIR}/../carapace"
+phase 'Carapace specs'
+if ! command -v carapace >/dev/null 2>&1; then
+  result 'missing' 'carapace specs' 'carapace is not installed'
+else
+  # carapace honours XDG_CONFIG_HOME only when it is an absolute path, and
+  # otherwise uses Go's config dir - Application Support on macOS, not ~/.config.
+  _carapace_cfg="${XDG_CONFIG_HOME:-}"
+  [[ "$_carapace_cfg" == /* ]] || _carapace_cfg="${HOME}/Library/Application Support"
+  for _spec in "${CARAPACE_SOURCE}/specs/"*.yaml; do
+    [[ -e "$_spec" ]] || continue
+    deploy_config "$_spec" "${_carapace_cfg}/carapace/specs/$(basename "$_spec")" \
+                  "carapace spec $(basename "$_spec" .yaml)"
+  done
+fi
+
 # Git config
 # Set only when unset: an existing value is somebody's choice, not drift.
 phase 'Git config'
 if ! command -v git >/dev/null 2>&1; then
-  result 'missing' 'delta' 'git is not installed'
-elif ! command -v delta >/dev/null 2>&1; then
-  result 'missing' 'delta' 'delta is not installed'
+  result 'missing' 'git config' 'git is not installed'
 else
-  GIT_WANT=('core.pager=delta' 'interactive.diffFilter=delta --color-only')
-  for _kv in "${GIT_WANT[@]}"; do
+  GIT_WANT=()
+  # delta is the pager for diff, show, log and add -p; `git sdiff` is the same
+  # view side by side.
+  if command -v delta >/dev/null 2>&1; then
+    GIT_WANT+=(
+      'core.pager=delta'
+      'interactive.diffFilter=delta --color-only'
+      "alias.sdiff=-c core.pager='delta --side-by-side' diff"
+    )
+  else
+    result 'missing' 'delta' 'delta is not installed'
+  fi
+  # difftastic compares syntax, not lines, and is asked for per command - never
+  # diff.external globally, whose output is not a patch `git apply` can read.
+  # delta passes its output through untouched, so the pager needs no exception.
+  if command -v difft >/dev/null 2>&1; then
+    GIT_WANT+=(
+      'diff.tool=difftastic'
+      'difftool.prompt=false'
+      'difftool.difftastic.cmd=difft "$LOCAL" "$REMOTE"'
+      'pager.difftool=true'
+      'alias.dft=difftool'
+      'alias.ddiff=-c diff.external=difft diff'
+      'alias.dshow=-c diff.external=difft show --ext-diff'
+      'alias.dlog=-c diff.external=difft log -p --ext-diff'
+    )
+  else
+    result 'missing' 'difftastic' 'difft is not installed'
+  fi
+  # Guarded expansion: bash 3.2 under set -u calls an empty array unbound.
+  for _kv in ${GIT_WANT[@]+"${GIT_WANT[@]}"}; do
     _key="${_kv%%=*}"
     _want="${_kv#*=}"
     _have="$(git config --global --get "$_key" 2>/dev/null || true)"

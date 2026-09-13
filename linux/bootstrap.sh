@@ -633,6 +633,9 @@ github_latest_tag() {
 binary_version() {
   local bin="$1" out v a
   local -a attempts=('--version' 'version --short' 'version')
+  # RELEASE_<name>_VERSION_ARGS, for a binary that answers the guesses above
+  # with some other program's version.
+  [[ -n "${2:-}" ]] && attempts=("$2")
 
   for a in "${attempts[@]}"; do
     # shellcheck disable=SC2086
@@ -675,10 +678,12 @@ install_release() {
   local binname="${!bin_var}" asset="${!asset_var}"
   local bins_var="RELEASE_${name}_BINS"
   local bins="${!bins_var:-$binname}"
+  local verargs_var="RELEASE_${name}_VERSION_ARGS"
+  local verargs="${!verargs_var:-}"
   local target="${RELEASE_BIN_DIR}/${binname}"
 
   local have=""
-  [[ -x "$target" ]] && have="$(binary_version "$target")"
+  [[ -x "$target" ]] && have="$(binary_version "$target" "$verargs")"
 
   if [[ -n "$have" && "$SKIP_UPGRADE" == "yes" ]]; then
     result 'skipped' "$desc" "$have"
@@ -730,7 +735,7 @@ install_release() {
     install_release_bins "$bins"
   ); then
     local now
-    now="$(binary_version "$target")"
+    now="$(binary_version "$target" "$verargs")"
     if [[ -z "$have" ]]; then
       result 'installed' "$desc" "${now:-$want}"
     elif [[ "$now" == "$have" ]]; then
@@ -1035,7 +1040,7 @@ else
         echo '  done'
         echo '  local group=""'
         echo '  case ${words[1]:t} in'
-        echo '    (kubectl|kubectl-*|k|kubectx|kubens|kustomize|k9s|stern|helm|helmfile|flux|argocd|velero|skaffold|kubeseal)'
+        echo '    (kubectl|kubectl-*|kubecolor|k|kubectx|kubens|kustomize|k9s|stern|helm|helmfile|flux|argocd|velero|skaffold|kubeseal)'
         echo '      group=kube ;;'
         echo '    (aws|aws-vault|awslocal|eksctl|sam|copilot|yawsso|saml2aws|granted|assume)'
         echo '      group=aws ;;'
@@ -1115,14 +1120,44 @@ else
         # Last binding wins, so atuin goes after fzf/fzf-tab to take Ctrl+R.
         # --disable-up-arrow keeps Up on history-substring-search, bound above.
         echo 'command -v atuin  >/dev/null && eval "$(atuin init zsh --disable-up-arrow)"'
+        # carapace completes the CLIs zsh has nothing for. git is excluded: zsh's
+        # own _git is better, and the git-checkout zstyle above is written for it.
+        echo 'if command -v carapace >/dev/null; then'
+        echo "  export CARAPACE_EXCLUDES='git'"
+        echo '  eval "$(carapace _carapace zsh)"'
+        echo 'fi'
+        # uv's zsh completion is ~570 KB, so it loads on the first Tab after `uv`
+        # rather than in every new shell: the stub swaps itself for the real _uv.
+        echo 'if command -v uv >/dev/null; then'
+        echo '  _uv_lazy() { unfunction _uv_lazy; eval "$(uv generate-shell-completion zsh)"; _uv "$@"; }'
+        echo '  compdef _uv_lazy uv'
+        echo 'fi'
+        echo 'command -v kubectl >/dev/null && alias k="kubectl"'
+        # kubecolor hands every argument to kubectl and only adds colour, so the
+        # alias is invisible otherwise. After carapace, whose kubectl completer
+        # compdef then copies.
+        echo 'if command -v kubecolor >/dev/null; then'
+        echo '  alias kubectl="kubecolor"'
+        echo '  (( $+_comps[kubectl] )) && compdef kubecolor=kubectl'
+        echo 'fi'
+        # trippy needs raw sockets, and has no unprivileged mode on Linux.
+        echo 'command -v trip >/dev/null && alias trip="sudo trip"'
         echo
         declare -A _cli_cmd=() _cli_desc=()
+        _cli_rel=()
         if [[ -r "$SCRIPT_DIR/../tools/cli-parity.conf" ]]; then
           while IFS='|' read -r _pty_can _pty_lx _pty_mac _pty_win _pty_note _pty_cmd _pty_desc; do
             _pty_can="$(printf '%s' "$_pty_can" | tr -d '[:space:]')"
             [[ -z "$_pty_can" || "$_pty_can" == \#* ]] && continue
             _pty_lx="$(printf '%s' "$_pty_lx" | tr -d '[:space:]')"
-            [[ -z "$_pty_lx" || "$_pty_lx" == '-' || "$_pty_lx" == '@releases' ]] && continue
+            [[ -z "$_pty_lx" || "$_pty_lx" == '-' ]] && continue
+            # A cli tool taken as a release binary is in no apt list, so it is
+            # listed by its canonical name - the RELEASES entry, with - for _.
+            if [[ "$_pty_lx" == '@releases' ]]; then
+              [[ " ${RELEASES[*]:-} " == *" ${_pty_can//-/_} "* ]] || continue
+              _pty_lx="$_pty_can"
+              _cli_rel+=("$_pty_can")
+            fi
             _pty_cmd="$(printf '%s' "$_pty_cmd" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
             _pty_desc="$(printf '%s' "$_pty_desc" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
             _cli_cmd["$_pty_lx"]="$_pty_cmd"
@@ -1133,7 +1168,7 @@ else
         echo '  echo'
         declare -n _apt="GROUP_cli_APT"
         declare -n _flat="GROUP_cli_FLATPAK"
-        for pkg in "${_apt[@]:-}" "${_flat[@]:-}"; do
+        for pkg in "${_apt[@]:-}" "${_flat[@]:-}" "${_cli_rel[@]:-}"; do
           [[ -z "$pkg" ]] && continue
           if [[ -n "${_cli_cmd[$pkg]:-}" ]]; then
             printf "  echo '  %-12s  %-10s  %s'\n" "$pkg" "${_cli_cmd[$pkg]}" "${_cli_desc[$pkg]}"
@@ -1147,6 +1182,8 @@ else
         echo
         echo '[ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH"'
         echo 'command -v mise >/dev/null && eval "$(mise activate zsh)"'
+        # mise has no carapace completer; its own script is small and asks mise itself.
+        echo 'command -v mise >/dev/null && eval "$(mise completion zsh)"'
         echo
         echo '[ -d "$HOME/.dotnet" ] && export PATH="$HOME/.dotnet:$PATH" && export DOTNET_ROOT="$HOME/.dotnet"'
       } > "$NEW_FRAGMENT"
@@ -1239,16 +1276,59 @@ else
                 "${HOME}/.config/atuin/themes/catppuccin-mocha.toml" 'atuin theme'
 fi
 
+# Carapace specs - completion for CLIs carapace has no completer of its own for
+CARAPACE_SOURCE="${SCRIPT_DIR}/../carapace"
+phase 'Carapace specs'
+if ! command -v carapace >/dev/null 2>&1 && [[ ! -x "${RELEASE_BIN_DIR}/carapace" ]]; then
+  result 'missing' 'carapace specs' 'carapace is not installed'
+else
+  # carapace honours XDG_CONFIG_HOME only when it is an absolute path.
+  _carapace_cfg="${XDG_CONFIG_HOME:-}"
+  [[ "$_carapace_cfg" == /* ]] || _carapace_cfg="${HOME}/.config"
+  for _spec in "${CARAPACE_SOURCE}/specs/"*.yaml; do
+    [[ -e "$_spec" ]] || continue
+    deploy_config "$_spec" "${_carapace_cfg}/carapace/specs/$(basename "$_spec")" \
+                  "carapace spec $(basename "$_spec" .yaml)"
+  done
+fi
+
 # Git config
 # Set only when unset: an existing value is somebody's choice, not drift.
 phase 'Git config'
 if ! command -v git >/dev/null 2>&1; then
-  result 'missing' 'delta' 'git is not installed'
-elif ! command -v delta >/dev/null 2>&1; then
-  result 'missing' 'delta' 'delta is not installed'
+  result 'missing' 'git config' 'git is not installed'
 else
-  GIT_WANT=('core.pager=delta' 'interactive.diffFilter=delta --color-only')
-  for _kv in "${GIT_WANT[@]}"; do
+  GIT_WANT=()
+  # delta is the pager for diff, show, log and add -p; `git sdiff` is the same
+  # view side by side.
+  if command -v delta >/dev/null 2>&1; then
+    GIT_WANT+=(
+      'core.pager=delta'
+      'interactive.diffFilter=delta --color-only'
+      "alias.sdiff=-c core.pager='delta --side-by-side' diff"
+    )
+  else
+    result 'missing' 'delta' 'delta is not installed'
+  fi
+  # difftastic compares syntax, not lines, and is asked for per command - never
+  # diff.external globally, whose output is not a patch `git apply` can read.
+  # delta passes its output through untouched, so the pager needs no exception.
+  # RELEASE_BIN_DIR is checked directly: this script never puts it on PATH.
+  if command -v difft >/dev/null 2>&1 || [[ -x "${RELEASE_BIN_DIR}/difft" ]]; then
+    GIT_WANT+=(
+      'diff.tool=difftastic'
+      'difftool.prompt=false'
+      'difftool.difftastic.cmd=difft "$LOCAL" "$REMOTE"'
+      'pager.difftool=true'
+      'alias.dft=difftool'
+      'alias.ddiff=-c diff.external=difft diff'
+      'alias.dshow=-c diff.external=difft show --ext-diff'
+      'alias.dlog=-c diff.external=difft log -p --ext-diff'
+    )
+  else
+    result 'missing' 'difftastic' 'difft is not installed'
+  fi
+  for _kv in ${GIT_WANT[@]+"${GIT_WANT[@]}"}; do
     _key="${_kv%%=*}"
     _want="${_kv#*=}"
     _have="$(git config --global --get "$_key" 2>/dev/null || true)"

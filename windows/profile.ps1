@@ -53,6 +53,13 @@ if (Get-Command fzf -ErrorAction SilentlyContinue) {
 
         Set-PsFzfOption -TabExpansion
 
+        # -TabExpansion only reaches git, through PowerShell's legacy TabExpansion
+        # hook; it never binds the key. Tab stayed on MenuComplete (above), which
+        # prints a flat list once the menu outgrows the window - kubectl's 46
+        # described subcommands do. This hands Tab to fzf for every command. A
+        # single match is inserted directly; Ctrl+Space is still MenuComplete.
+        Set-PSReadLineKeyHandler -Key Tab -ScriptBlock { Invoke-FzfTabCompletion }
+
         Set-PsFzfOption -EnableAliasFuzzyHistory -EnableAliasFuzzyKillProcess
     } catch {
         Write-Warning "PSFzf failed to load (try closing and reopening the terminal): $($_.Exception.Message)"
@@ -112,6 +119,76 @@ if (Get-Command mise -ErrorAction SilentlyContinue) {
     Invoke-Expression (& { (mise activate pwsh | Out-String) })
 }
 
+# carapace -- flag and subcommand completion for 1000+ CLIs (kubectl, gh, az,
+# helm...) through one engine. https://github.com/carapace-sh/carapace-bin
+# CARAPACE_COLOR=0 because PSFzf's Tab list shows each completion's label as-is,
+# so carapace's colours would arrive there as raw escape sequences. git is
+# excluded and left to posh-git, imported below.
+# PowerShell 7 only: Windows PowerShell 5.1 drops the empty argument carapace's
+# completer passes for the word under the cursor, gets `[]` back and throws - so
+# every Tab cost a carapace run and still ended in file names.
+if ($PSVersionTable.PSVersion.Major -ge 7 -and (Get-Command carapace -ErrorAction SilentlyContinue)) {
+    $env:CARAPACE_COLOR = '0'
+    $env:CARAPACE_EXCLUDES = 'git'
+    # carapace ends each value with a space (`get `) to move MenuComplete on to the
+    # next argument. PSFzf quotes any completion containing whitespace and adds its
+    # own space, so Tab produced `kubectl "get " ` and kubectl rejected `get `.
+    # '*' drops carapace's space for every value; PSFzf still supplies one.
+    $env:CARAPACE_NOSPACE = '*'
+    Invoke-Expression (& { (carapace _carapace powershell | Out-String) })
+}
+
+# uv -- carapace has no completer for it, and uv's own PowerShell script is ~750 KB,
+# ~200 ms to load in every new shell. A stub stands in: the first Tab after `uv`
+# loads the real completer and answers through it from then on. The real one is
+# captured, not registered, because a completer cannot re-run completion itself.
+if (Get-Command uv -ErrorAction SilentlyContinue) {
+    Register-ArgumentCompleter -Native -CommandName uv -ScriptBlock {
+        param($wordToComplete, $commandAst, $cursorPosition)
+        if (-not $script:UvCompleter) {
+            function Register-ArgumentCompleter {
+                param([switch]$Native, [string[]]$CommandName, [scriptblock]$ScriptBlock)
+                $script:UvCompleter = $ScriptBlock
+            }
+            Invoke-Expression ((uv generate-shell-completion powershell) | Out-String)
+        }
+        & $script:UvCompleter $wordToComplete $commandAst $cursorPosition
+    }
+}
+
+# mise -- its own completer, loaded on the first Tab the same way. mise's script
+# cuts the command at the cursor with Extent.Text, but the extent ends at the last
+# word, so after `mise ` it completed the word `mise` again (file names) instead of
+# the next one. The text is padded back out to the cursor before it is handed over.
+if (Get-Command mise -ErrorAction SilentlyContinue) {
+    Register-ArgumentCompleter -Native -CommandName mise -ScriptBlock {
+        param($wordToComplete, $commandAst, $cursorPosition)
+        if (-not $script:MiseCompleter) {
+            function Register-ArgumentCompleter {
+                param([switch]$Native, [string[]]$CommandName, [scriptblock]$ScriptBlock)
+                $script:MiseCompleter = $ScriptBlock
+            }
+            Invoke-Expression ((mise completion powershell) | Out-String)
+        }
+        $extent = $commandAst.Extent
+        $width = [Math]::Max(0, $cursorPosition - $extent.StartOffset)
+        $padded = [pscustomobject]@{
+            Extent = [pscustomobject]@{ Text = $extent.Text.PadRight($width); StartOffset = $extent.StartOffset }
+        }
+        & $script:MiseCompleter $wordToComplete $padded $cursorPosition
+    }
+}
+
+if (Get-Command kubectl -ErrorAction SilentlyContinue) {
+    Set-Alias -Name k -Value kubectl
+}
+
+# trippy -- traceroute and ping in one live view. It needs Administrator on
+# Windows; gsudo elevates just this command, in this window.
+if ((Get-Command trip -ErrorAction SilentlyContinue) -and (Get-Command gsudo -ErrorAction SilentlyContinue)) {
+    function trip { gsudo trip.exe @args }
+}
+
 # posh-git -- tab-completion for git subcommands, branches and remotes
 # https://github.com/dahlbyk/posh-git
 Import-Module posh-git -ErrorAction SilentlyContinue
@@ -133,7 +210,7 @@ if (Get-Command starship -ErrorAction SilentlyContinue) {
     $script:StarshipRightCol = 0
 
     $script:StarshipCtxMap = [ordered]@{
-        kube      = @('kubectl', 'k', 'kubectx', 'kubens', 'kustomize', 'k9s', 'stern',
+        kube      = @('kubectl', 'kubecolor', 'k', 'kubectx', 'kubens', 'kustomize', 'k9s', 'stern',
                       'helm', 'helmfile', 'flux', 'argocd', 'velero', 'skaffold', 'kubeseal')
         aws       = @('aws', 'aws-vault', 'awslocal', 'eksctl', 'sam', 'copilot',
                       'yawsso', 'saml2aws', 'granted', 'assume')

@@ -9,6 +9,7 @@
                 'Microsoft.WindowsTerminal'
                 'Starship.Starship'
                 'Atuinsh.Atuin'
+                'rsteube.Carapace'
                 'gerardog.gsudo'
             )
         }
@@ -19,6 +20,7 @@
             Packages    = @(
                 'sharkdp.bat'
                 'dandavison.delta'
+                'Wilfred.difftastic'
                 'eza-community.eza'
                 'sharkdp.fd'
                 'BurntSushi.ripgrep.MSVC'
@@ -54,8 +56,8 @@
                 'Microsoft.DotNet.SDK.10'
                 'GoLang.Go'
                 'Microsoft.OpenJDK.21'
-                'OpenTofu.Tofu'
                 'jdx.mise'
+                'astral-sh.uv'
             )
         }
 
@@ -74,6 +76,15 @@
         }
 
         @{
+            Name        = 'network'
+            Description = 'Network diagnostics - route and latency'
+            Packages    = @(
+                'FujiApple.Trippy'
+                'orf.gping'
+            )
+        }
+
+        @{
             Name        = 'creative'
             Description = '3D, 2D and capture tooling'
             Packages    = @(
@@ -81,6 +92,7 @@
                 'Unity.UnityHub'
                 'Celsys.ClipStudioPaint'
                 'NickeManarin.ScreenToGif'
+                'Flameshot.Flameshot'
                 'OBSProject.OBSStudio'
                 'SoftFever.OrcaSlicer'
                 'Creality.CrealityPrint'
@@ -92,10 +104,12 @@
             Description = 'Everyday desktop applications'
             Packages    = @(
                 'Google.Chrome'
+                'Bitwarden.Bitwarden'
                 'Microsoft.PowerToys'
                 'Valve.Steam'
                 'Telegram.TelegramDesktop'
                 'Obsidian.Obsidian'
+                'ONLYOFFICE.DesktopEditors'
                 'Anthropic.Claude'
                 'Bruno.Bruno'
                 'DBeaver.DBeaver.Community'
@@ -148,6 +162,8 @@
         LfsEnabled = $true
 
         DeltaEnabled = $true
+
+        DifftasticEnabled = $true
 
         UnityMergeEnabled = $true
         UnityEditorRoot   = 'C:\Program Files\Unity\Hub\Editor'

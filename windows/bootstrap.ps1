@@ -56,6 +56,7 @@ if (-not $script:ToolRoot) { $script:ToolRoot = Split-Path -Parent $MyInvocation
 $script:ProfileSource = Join-Path $script:ToolRoot 'profile.ps1'
 $script:StarshipTomlSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'starship.toml'
 $script:AtuinSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'atuin'
+$script:CarapaceSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'carapace'
 $script:MergeScript = Join-Path $script:ToolRoot 'merge-terminal-settings.ps1'
 $script:MpvSource = Join-Path $script:ToolRoot 'mpv'
 
@@ -767,6 +768,23 @@ if ($SkipShell) {
         -Target (Join-Path $env:USERPROFILE '.config\atuin\themes\catppuccin-mocha.toml') `
         -Group 'shell' -Label 'atuin theme'
 
+    # carapace specs: completion for CLIs carapace has no completer of its own
+    # for. carapace reads them from XDG_CONFIG_HOME when that is an absolute
+    # path, and from %APPDATA% otherwise.
+    if (Get-Command carapace -ErrorAction SilentlyContinue) {
+        $carapaceConfig = $env:APPDATA
+        if ($env:XDG_CONFIG_HOME -and [System.IO.Path]::IsPathRooted($env:XDG_CONFIG_HOME)) {
+            $carapaceConfig = $env:XDG_CONFIG_HOME
+        }
+        foreach ($spec in Get-ChildItem (Join-Path $script:CarapaceSource 'specs') -Filter '*.yaml') {
+            Deploy-ManagedFile -Source $spec.FullName `
+                -Target (Join-Path $carapaceConfig "carapace\specs\$($spec.Name)") `
+                -Group 'shell' -Label "carapace spec: $($spec.BaseName)" -Marker 'managed by the bootstrap'
+        }
+    } else {
+        Add-Result -Group 'shell' -Id 'carapace specs' -Action 'missing' -Detail 'carapace is not installed'
+    }
+
     $editions = @(
         @{ Name = '5.1'; Exe = 'powershell.exe'; Modules = $shell.Modules51 }
         @{ Name = '7'; Exe = 'pwsh.exe'; Modules = $shell.Modules7 }
@@ -1012,6 +1030,20 @@ if ($SkipSchedule) {
 }
 # Git - LFS and Unity's merge tool
 
+# Windows PowerShell 5.1, and 7.0-7.2, hand a native program the double quotes
+# inside an argument unescaped, so its parser eats them: git stored
+# `difft "$LOCAL" "$REMOTE"` as `difft $LOCAL $REMOTE`. 7.3+ escapes them itself,
+# unless $PSNativeCommandArgumentPassing is set back to Legacy.
+function ConvertTo-NativeArgument {
+    param([string]$Value)
+    $v = $PSVersionTable.PSVersion
+    $mode = Get-Variable -Name PSNativeCommandArgumentPassing -ValueOnly -ErrorAction SilentlyContinue
+    if ($v.Major -lt 7 -or ($v.Major -eq 7 -and $v.Minor -lt 3) -or $mode -eq 'Legacy') {
+        return $Value.Replace('"', '\"')
+    }
+    return $Value
+}
+
 $git = $manifest.Git
 
 if ($SkipShell) {
@@ -1074,7 +1106,7 @@ if ($SkipShell) {
                     $action = if ($have) { 'would-upgrade' } else { 'would-install' }
                     Add-Result -Group 'git' -Id 'UnityYAMLMerge' -Action $action -Detail $tool
                 } else {
-                    & git config --global 'mergetool.unityyamlmerge.cmd' $want
+                    & git config --global 'mergetool.unityyamlmerge.cmd' (ConvertTo-NativeArgument $want)
                     & git config --global 'mergetool.unityyamlmerge.trustExitCode' 'false'
                     if ($LASTEXITCODE -eq 0) {
                         $action = if ($have) { 'upgraded' } else { 'installed' }
@@ -1087,28 +1119,53 @@ if ($SkipShell) {
         }
 
         # Set only when unset: an existing value is somebody's choice, not drift.
+        $gitWant = [System.Collections.Generic.List[hashtable]]::new()
+
+        # delta is the pager for diff, show, log and add -p; `git sdiff` is the
+        # same view side by side.
         if (-not $git.DeltaEnabled) {
             Add-Result -Group 'git' -Id 'delta' -Action 'skipped' -Detail 'DeltaEnabled is false'
         } elseif (-not (Get-Command delta -ErrorAction SilentlyContinue)) {
             Add-Result -Group 'git' -Id 'delta' -Action 'missing' -Detail 'delta is not installed'
         } else {
-            foreach ($pair in @(
-                    @{ Key = 'core.pager';            Value = 'delta' },
-                    @{ Key = 'interactive.diffFilter'; Value = 'delta --color-only' })) {
-                $have = (& git config --global --get $pair.Key 2>$null)
-                if ($have -eq $pair.Value) {
-                    Add-Result -Group 'git' -Id $pair.Key -Action 'current' -Detail $pair.Value
-                } elseif ($have) {
-                    Add-Result -Group 'git' -Id $pair.Key -Action 'present' -Detail "$have - left alone"
-                } elseif (-not $PSCmdlet.ShouldProcess($pair.Key, 'git config --global')) {
-                    Add-Result -Group 'git' -Id $pair.Key -Action 'would-install' -Detail $pair.Value
+            $gitWant.Add(@{ Key = 'core.pager';             Value = 'delta' })
+            $gitWant.Add(@{ Key = 'interactive.diffFilter'; Value = 'delta --color-only' })
+            $gitWant.Add(@{ Key = 'alias.sdiff';            Value = "-c core.pager='delta --side-by-side' diff" })
+        }
+
+        # difftastic compares syntax, not lines, and is asked for per command -
+        # never diff.external globally, whose output is not a patch `git apply`
+        # can read. delta passes its output through untouched, so the pager
+        # needs no exception.
+        if (-not $git.DifftasticEnabled) {
+            Add-Result -Group 'git' -Id 'difftastic' -Action 'skipped' -Detail 'DifftasticEnabled is false'
+        } elseif (-not (Get-Command difft -ErrorAction SilentlyContinue)) {
+            Add-Result -Group 'git' -Id 'difftastic' -Action 'missing' -Detail 'difft is not installed'
+        } else {
+            $gitWant.Add(@{ Key = 'diff.tool';               Value = 'difftastic' })
+            $gitWant.Add(@{ Key = 'difftool.prompt';         Value = 'false' })
+            $gitWant.Add(@{ Key = 'difftool.difftastic.cmd'; Value = 'difft "$LOCAL" "$REMOTE"' })
+            $gitWant.Add(@{ Key = 'pager.difftool';          Value = 'true' })
+            $gitWant.Add(@{ Key = 'alias.dft';               Value = 'difftool' })
+            $gitWant.Add(@{ Key = 'alias.ddiff';             Value = '-c diff.external=difft diff' })
+            $gitWant.Add(@{ Key = 'alias.dshow';             Value = '-c diff.external=difft show --ext-diff' })
+            $gitWant.Add(@{ Key = 'alias.dlog';              Value = '-c diff.external=difft log -p --ext-diff' })
+        }
+
+        foreach ($pair in $gitWant) {
+            $have = (& git config --global --get $pair.Key 2>$null)
+            if ($have -eq $pair.Value) {
+                Add-Result -Group 'git' -Id $pair.Key -Action 'current' -Detail $pair.Value
+            } elseif ($have) {
+                Add-Result -Group 'git' -Id $pair.Key -Action 'present' -Detail "$have - left alone"
+            } elseif (-not $PSCmdlet.ShouldProcess($pair.Key, 'git config --global')) {
+                Add-Result -Group 'git' -Id $pair.Key -Action 'would-install' -Detail $pair.Value
+            } else {
+                & git config --global $pair.Key (ConvertTo-NativeArgument $pair.Value)
+                if ($LASTEXITCODE -eq 0) {
+                    Add-Result -Group 'git' -Id $pair.Key -Action 'installed' -Detail $pair.Value
                 } else {
-                    & git config --global $pair.Key $pair.Value
-                    if ($LASTEXITCODE -eq 0) {
-                        Add-Result -Group 'git' -Id $pair.Key -Action 'installed' -Detail $pair.Value
-                    } else {
-                        Add-Result -Group 'git' -Id $pair.Key -Action 'failed' -Detail 'git config --global failed'
-                    }
+                    Add-Result -Group 'git' -Id $pair.Key -Action 'failed' -Detail 'git config --global failed'
                 }
             }
         }
