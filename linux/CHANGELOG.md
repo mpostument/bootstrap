@@ -15,6 +15,38 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.26.0]
+
+### Changed
+
+- **`atuin/config.toml` points sync at the self-hosted server**
+  (`sync_address = "http://192.168.50.6:8087"`) instead of atuin's own
+  `api.atuin.sh` default. That is `roles/atuin` on raspberrypi_master in
+  `mpostument/raspberry-setup`, on the house LAN only - 8087 because the
+  OpenTelemetry collector holds 8888 there.
+
+  Sync is still off until you run `atuin register` (or `atuin login` with the
+  key `atuin key` prints): this says where, not whether. Off that network a
+  machine records locally and syncs when it is back.
+
+### Added
+
+- **`--skip-repos`** - add no third-party apt sources and install none of
+  their packages. For a host where something else already owns them: two
+  definitions of one repo with different `Signed-By` keyrings makes apt
+  refuse to read *any* source, and every package then reads as unavailable.
+  Hit on a Pi whose Docker repo is Ansible's (`docker.asc`) while this script
+  writes `docker.gpg`.
+
+### Fixed
+
+- **`bootstrap.sh` was committed non-executable** (100644, where
+  `macos/bootstrap.sh` is 100755), so a fresh clone could not run it and the
+  systemd timer's `ExecStart` failed the same way. Now 100755.
+- **starship's asset name 404'd on arm64.** Upstream ships a gnu build for
+  x86_64 only; the manifest now asks for the musl build, which exists for
+  both.
+
 ## [1.25.0]
 
 ### Added

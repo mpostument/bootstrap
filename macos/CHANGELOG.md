@@ -15,6 +15,20 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.0]
+
+### Changed
+
+- **`atuin/config.toml` points sync at the self-hosted server**
+  (`sync_address = "http://192.168.50.6:8087"`) instead of atuin's own
+  `api.atuin.sh` default. That is `roles/atuin` on raspberrypi_master in
+  `mpostument/raspberry-setup`, on the house LAN only - 8087 because the
+  OpenTelemetry collector holds 8888 there.
+
+  Sync is still off until you run `atuin register` (or `atuin login` with the
+  key `atuin key` prints): this says where, not whether. Off that network a
+  machine records locally and syncs when it is back.
+
 ## [1.28.0]
 
 ### Added

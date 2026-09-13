@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.25.0'
+BOOTSTRAP_VERSION='1.26.0'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -10,6 +10,7 @@ MANIFEST="${SCRIPT_DIR}/packages.conf"
 DRY_RUN=no
 SKIP_UPGRADE=no
 SKIP_SCHEDULE=no
+SKIP_REPOS=no
 ASSUME_YES=no
 GUI_OVERRIDE=auto
 ONLY_GROUPS=""
@@ -105,6 +106,9 @@ Usage: bootstrap.sh [options]
                      exit - groups, TOOLS, RELEASES and REPOS packages.
   --skip-upgrade     Install what is missing, leave installed versions alone.
   --skip-schedule    Leave the systemd timer alone.
+  --skip-repos       Add no third-party apt sources and install none of
+                     their packages. For a host where something else
+                     already owns those repositories.
   --gui / --no-gui   Override desktop detection instead of probing for it.
   --yes              Pass -y to apt. Implied when not attached to a terminal.
   --version          Print the version and exit.
@@ -117,6 +121,7 @@ while [[ $# -gt 0 ]]; do
     --dry-run)       DRY_RUN=yes ;;
     --skip-upgrade)  SKIP_UPGRADE=yes ;;
     --skip-schedule) SKIP_SCHEDULE=yes ;;
+    --skip-repos)    SKIP_REPOS=yes ;;
     --yes|-y)        ASSUME_YES=yes ;;
     --gui)           GUI_OVERRIDE=yes ;;
     --no-gui)        GUI_OVERRIDE=no ;;
@@ -398,36 +403,49 @@ esac
 OS_ID="$(. /etc/os-release 2>/dev/null && echo "${ID:-debian}")"
 OS_CODENAME="$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-stable}")"
 
-for repo in "${REPOS[@]:-}"; do
-  [[ -z "$repo" ]] && continue
-  setup_repo "$repo"
-done
+# --skip-repos is for a host where something else already owns these
+# repositories. Two definitions of one repo with different Signed-By keyrings
+# is not a duplicate apt tolerates: it refuses to read ANY source, so every
+# later package lookup fails. Seen on a Pi whose Docker repo is managed by
+# Ansible with docker.asc while this script writes docker.gpg.
+if [[ "$SKIP_REPOS" == "yes" ]]; then
+  result 'skipped' 'third-party repositories' '--skip-repos'
+else
+  for repo in "${REPOS[@]:-}"; do
+    [[ -z "$repo" ]] && continue
+    setup_repo "$repo"
+  done
 
-if [[ "$REPOS_CHANGED" == "yes" && "$DRY_RUN" == "no" ]]; then
-  if run_priv apt-get update -qq >/dev/null 2>&1; then
-    result 'current' 'apt index' 'refreshed for new repositories'
-  else
-    result 'failed' 'apt index' 'apt-get update failed after adding repositories'
+  if [[ "$REPOS_CHANGED" == "yes" && "$DRY_RUN" == "no" ]]; then
+    if run_priv apt-get update -qq >/dev/null 2>&1; then
+      result 'current' 'apt index' 'refreshed for new repositories'
+    else
+      result 'failed' 'apt index' 'apt-get update failed after adding repositories'
+    fi
   fi
 fi
 
 phase 'Repository packages'
 
-for repo in "${REPOS[@]:-}"; do
-  [[ -z "$repo" ]] && continue
-  gui_var="REPO_${repo}_GUI"
-  desc_var="REPO_${repo}_DESC"
-  if [[ "${!gui_var:-no}" == "yes" && "$HAS_GUI" != "yes" ]]; then
-    result 'no-gui' "${!desc_var:-$repo}" 'needs a desktop, none detected'
-    continue
-  fi
-  declare -n _rpkgs="REPO_${repo}_PACKAGES"
-  for pkg in "${_rpkgs[@]:-}"; do
-    [[ -z "$pkg" ]] && continue
-    install_apt "$pkg" "$repo"
+if [[ "$SKIP_REPOS" == "yes" ]]; then
+  result 'skipped' 'repository packages' '--skip-repos'
+else
+  for repo in "${REPOS[@]:-}"; do
+    [[ -z "$repo" ]] && continue
+    gui_var="REPO_${repo}_GUI"
+    desc_var="REPO_${repo}_DESC"
+    if [[ "${!gui_var:-no}" == "yes" && "$HAS_GUI" != "yes" ]]; then
+      result 'no-gui' "${!desc_var:-$repo}" 'needs a desktop, none detected'
+      continue
+    fi
+    declare -n _rpkgs="REPO_${repo}_PACKAGES"
+    for pkg in "${_rpkgs[@]:-}"; do
+      [[ -z "$pkg" ]] && continue
+      install_apt "$pkg" "$repo"
+    done
+    unset -n _rpkgs
   done
-  unset -n _rpkgs
-done
+fi
 
 for group in "${selected[@]}"; do
   desc_var="GROUP_${group}_DESC"

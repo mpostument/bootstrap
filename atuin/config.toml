@@ -4,6 +4,17 @@
 # Only the keys that differ from atuin's defaults are set. Anything absent is
 # atuin's own default, so this file stays short enough to read.
 
+# The self-hosted server (roles/atuin on raspberrypi_master in
+# mpostument/raspberry-setup), not atuin's own api.atuin.sh. 8087 rather than
+# atuin's 8888, which the OpenTelemetry collector holds on those hosts.
+#
+# A LAN address: off that network a machine keeps recording locally and syncs
+# when it is back. Setting this syncs nothing on its own - `atuin register`,
+# or `atuin login` with the key from `atuin key`, is what creates the account
+# and the client-side key. auto_sync and sync_frequency stay at their
+# defaults (on, every 5 minutes).
+sync_address = "http://192.168.50.6:8087"
+
 # full draws the search as a framed, full-height pane; compact hugs the prompt.
 # auto picks full and falls back to compact when the window is too short for it,
 # which is the one that behaves on a split pane and on a full-screen terminal.
