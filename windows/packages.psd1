@@ -105,6 +105,7 @@
             Packages    = @(
                 'Google.Chrome'
                 'Bitwarden.Bitwarden'
+                'Bitwarden.CLI'
                 'Microsoft.PowerToys'
                 'Valve.Steam'
                 'Telegram.TelegramDesktop'

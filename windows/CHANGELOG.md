@@ -20,6 +20,16 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.32.0]
+
+### Added
+
+- **`Bitwarden.CLI` in the `apps` group**, beside the desktop app. `bw` reads
+  and writes the vault from a terminal or a script - `bw get password <item>`,
+  or `bw unlock` once and a session token for the rest. Requested directly;
+  1.31.0 had left it out until secrets were being copied into a terminal by
+  hand.
+
 ## [1.31.0]
 
 ### Added

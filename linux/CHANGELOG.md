@@ -15,6 +15,98 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.0]
+
+### Added
+
+- **`GROUP_<name>_UV`** - Python CLIs installed with `uv tool install`, each in
+  its own environment, and kept current with `uv tool upgrade`. Entries are
+  `name` or `name|extra arguments`. The phase runs after the release binaries,
+  which bring uv, and honours `--groups`, `--dry-run` and `--skip-upgrade`.
+- **`GHOSTTY_DEB_REPO`** - where Ghostty's `.deb` comes from; see Changed.
+- **The Bitwarden CLI (`bw`) as a release binary**, for x86_64 and aarch64.
+  In neither archive. Requested directly; 1.26.0 had left it out.
+- **`RELEASE_<name>_TAG_PREFIX`** - for a repository that releases several
+  products under one "latest". bitwarden/clients tags web, desktop, browser
+  and cli releases side by side, and its latest is whichever shipped last; with
+  `cli-v` the newest CLI tag is taken instead. `verify-manifests.yml` does the
+  same.
+- **`RELEASE_<name>_ASSET_<arch>`** - an asset name for one architecture, by
+  `dpkg --print-architecture`, over `RELEASE_<name>_ASSET`. Bitwarden names its
+  x86_64 zip without an architecture and its arm64 zip with one, which no
+  placeholder spells for both.
+
+### Changed
+
+- **atuin and trippy are release binaries, not apt packages.** Ubuntu 24.04
+  carries neither, so on a noble host (WSL included) both were reported
+  missing and never installed. On Debian the archive lagged: trixie's atuin is
+  18.6.1 against the self-hosted sync server's 18.22.0, and its trippy 0.12.2.
+  Both now come from upstream's musl builds, for x86_64 and aarch64, into
+  `~/.local/bin` like starship and uv.
+
+  A copy apt installed earlier is not removed, and `~/.local/bin` is ahead of
+  it on PATH in the zsh fragment; `sudo apt remove atuin trippy` tidies it.
+
+- **The modern CLI bundle is release binaries too**: bat, delta, eza, fd,
+  ripgrep, zoxide, fzf, jq, yt-dlp, btop, procs, dust, duf, glow and lnav, plus
+  gping and shellcheck. Ubuntu 24.04 has no procs, dust or glow, and trails
+  upstream on the rest by one to three years - yt-dlp from April 2024, which
+  YouTube has long since broken, and fzf 0.44, from before `fzf --zsh`. trixie
+  is closer, never current. musl builds where upstream makes them for both
+  architectures; eza and delta are gnu, needing glibc 2.18 and 2.34 on x86_64.
+  yt-dlp is upstream's zipapp, one file for every architecture, run by
+  `python3`. `tools/cli-parity.conf` marks them `@releases`.
+
+  Tags such as `jq-1.8.2` and `gping-v1.21.0` resolve to their version, here
+  and in `verify-manifests.yml`; `${tag#v}` alone would have reinstalled both
+  on every run.
+
+- **gh comes from GitHub's own apt repository** (`REPO_githubcli`): 2.100.0,
+  where Ubuntu 24.04 has 2.45 and trixie 2.46. Its key is a binary keyring,
+  which `gpg --dearmor` rejects, so `setup_repo` now converts only
+  ASCII-armoured keys and installs binary ones as they are.
+
+- **Node and Go leave the apt list for mise**, as OpenTofu did on Windows:
+  Ubuntu 24.04 ships Node 18, past end of life, and Go 1.22. Run once:
+  `mise use -g node@lts go@latest`.
+
+- **ansible, ansible-lint, pre-commit and yamllint are `uv tool` installs** in
+  the `infra` group, which keeps its name: Ubuntu 24.04 has ansible-lint 6.17
+  against 26.8 upstream. `ansible` brings ansible-core's commands through
+  `--with-executables-from ansible-core`.
+
+- **Ghostty comes from the community .deb** that ghostty.org's Debian and
+  Ubuntu instructions point to, `mkasberg/ghostty-ubuntu`. It sat in the
+  `apps` apt list, which neither archive carries before Ubuntu 26.04, so it
+  never installed. The `.deb` is chosen as that project's install.sh chooses -
+  Ubuntu by version, Debian by codename - and handed to apt, instead of piping
+  the script into bash. Releases it does not build for, bookworm among them,
+  are reported missing.
+
+- **Nothing apt installed earlier is removed.** `~/.local/bin` is ahead of
+  `/usr/bin` on a login's PATH, so the new copies win. To tidy up:
+
+  ```
+  sudo apt remove bat eza git-delta fd-find ripgrep zoxide fzf jq yt-dlp btop \
+    procs du-dust duf glow lnav gping shellcheck nodejs npm golang-go \
+    ansible ansible-lint pre-commit yamllint
+  ```
+
+### Fixed
+
+- **`trip` would have failed as a release binary.** The alias was
+  `sudo trip`, and sudo's `secure_path` leaves out `~/.local/bin`. It now
+  resolves the full path when the alias is defined.
+- **The script puts `~/.local/bin` on its own PATH.** It never had, so a step
+  that looked for a release binary by name - delta for the git config, atuin
+  and carapace for theirs - missed one installed earlier in the same run, or
+  under the timer, and skipped. The one-off `RELEASE_BIN_DIR` checks that
+  worked around it are gone.
+- **A leftover apt `fd-find` shadowed the real `fd`.** The fragment aliased
+  `fd` to `fdfind` whenever `fdfind` existed; it now does so only when there is
+  no `fd`.
+
 ## [1.26.0]
 
 ### Changed

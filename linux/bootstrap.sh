@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.26.0'
+BOOTSTRAP_VERSION='1.27.0'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -103,7 +103,8 @@ Usage: bootstrap.sh [options]
   --groups a,b       Limit to named groups. Default is every group.
   --list-groups      Print the groups in the manifest and exit.
   --list-packages    Print every package/tool name this script manages and
-                     exit - groups, TOOLS, RELEASES and REPOS packages.
+                     exit - groups and their uv tools, TOOLS, RELEASES and
+                     REPOS packages.
   --skip-upgrade     Install what is missing, leave installed versions alone.
   --skip-schedule    Leave the systemd timer alone.
   --skip-repos       Add no third-party apt sources and install none of
@@ -151,6 +152,11 @@ for required in PKG_GROUPS MANUAL HELD TOOLS REPOS RELEASES ZSH_PLUGINS ZSH_CUST
   declare -p "$required" >/dev/null 2>&1 || die "manifest is missing \$$required: $MANIFEST"
 done
 
+# Release binaries and uv tools land in RELEASE_BIN_DIR, and later steps look for
+# them by name - delta for the git config, atuin and carapace for theirs, uv for
+# the Python tools. The zsh fragment puts it on a login's PATH; this, on ours.
+export PATH="${RELEASE_BIN_DIR:-$HOME/.local/bin}:${PATH}"
+
 if [[ "${LIST_GROUPS:-no}" == "yes" ]]; then
   echo
   for g in "${PKG_GROUPS[@]}"; do
@@ -158,7 +164,11 @@ if [[ "${LIST_GROUPS:-no}" == "yes" ]]; then
     gui_var="GROUP_${g}_GUI"
     declare -n _apt="GROUP_${g}_APT"
     declare -n _flat="GROUP_${g}_FLATPAK"
-    total=$(( ${#_apt[@]} + ${#_flat[@]} ))
+    uv_count=0
+    if declare -p "GROUP_${g}_UV" >/dev/null 2>&1; then
+      declare -n _uvl="GROUP_${g}_UV"; uv_count=${#_uvl[@]}; unset -n _uvl
+    fi
+    total=$(( ${#_apt[@]} + ${#_flat[@]} + uv_count ))
     gui_tag='               '
     [[ "${!gui_var:-no}" == "yes" ]] && gui_tag='[needs desktop]'
     printf '  %s%-10s%s %-3s packages  %s%s%s  %s\n' \
@@ -179,6 +189,14 @@ if [[ "${LIST_PACKAGES:-no}" == "yes" ]]; then
       [[ -z "$pkg" ]] && continue
       printf '    %s%s%s\n' "$C_DIM" "$pkg" "$C_RESET"
     done
+    if declare -p "GROUP_${g}_UV" >/dev/null 2>&1; then
+      declare -n _uvl="GROUP_${g}_UV"
+      for entry in "${_uvl[@]:-}"; do
+        [[ -z "$entry" ]] && continue
+        printf '    %s%s  (uv tool)%s\n' "$C_DIM" "${entry%%|*}" "$C_RESET"
+      done
+      unset -n _uvl
+    fi
     unset -n _apt _flat
   done
   if [[ "${#TOOLS[@]}" -gt 0 ]]; then
@@ -206,6 +224,9 @@ if [[ "${LIST_PACKAGES:-no}" == "yes" ]]; then
       done
       unset -n _rpkgs
     done
+  fi
+  if [[ "${GHOSTTY_ENABLED:-no}" == "yes" && -n "${GHOSTTY_DEB_REPO:-}" ]]; then
+    printf '  %scommunity .deb%s\n    %sghostty%s\n' "$C_CYAN" "$C_RESET" "$C_DIM" "$C_RESET"
   fi
   echo
   exit 0
@@ -379,7 +400,19 @@ setup_repo() {
   fi
 
   run_priv install -m 0755 -d "$KEYRING_DIR"
-  if ! curl -fsSL "$key_url" | run_priv gpg --dearmor --yes -o "$keyring" 2>/dev/null; then
+  local keytmp keyok=no
+  keytmp="$(mktemp)"
+  if curl -fsSL "$key_url" -o "$keytmp" 2>/dev/null; then
+    # Most vendors publish an ASCII-armoured key; GitHub CLI publishes a binary
+    # keyring, which gpg --dearmor rejects. Only the armoured kind is converted.
+    if grep -q -- '-----BEGIN PGP' "$keytmp"; then
+      run_priv gpg --dearmor --yes -o "$keyring" < "$keytmp" 2>/dev/null && keyok=yes
+    else
+      run_priv install -m 0644 "$keytmp" "$keyring" && keyok=yes
+    fi
+  fi
+  rm -f "$keytmp"
+  if [[ "$keyok" != "yes" ]]; then
     result 'failed' "repo: $desc" "could not fetch or dearmour $key_url"
     return
   fi
@@ -402,6 +435,7 @@ case "$UNAME_ARCH" in
 esac
 OS_ID="$(. /etc/os-release 2>/dev/null && echo "${ID:-debian}")"
 OS_CODENAME="$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-stable}")"
+OS_VERSION_ID="$(. /etc/os-release 2>/dev/null && echo "${VERSION_ID:-}")"
 
 # --skip-repos is for a host where something else already owns these
 # repositories. Two definitions of one repo with different Signed-By keyrings
@@ -624,10 +658,20 @@ fi
 
 # Release binaries
 
-github_latest_tag() {
-  curl -fsSL "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
-    | grep -m1 '"tag_name"' \
-    | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || true
+github_latest_tag() {   # github_latest_tag <owner/repo> [tag prefix]
+  if [[ -z "${2:-}" ]]; then
+    curl -fsSL "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
+      | grep -m1 '"tag_name"' \
+      | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || true
+    return
+  fi
+  # A repository that releases several products has one "latest" for all of
+  # them - bitwarden/clients: web, desktop, browser, cli. Take the newest tag
+  # that is the prefix and a bare version, which also skips -rc tags.
+  curl -fsSL "https://api.github.com/repos/$1/releases?per_page=50" 2>/dev/null \
+    | grep '"tag_name"' \
+    | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' \
+    | grep -m1 -E "^${2}[0-9]+(\.[0-9]+)*\$" || true
 }
 
 binary_version() {
@@ -691,7 +735,8 @@ install_release() {
   fi
 
   local tag want
-  tag="$(github_latest_tag "$repo")"
+  local prefix_var="RELEASE_${name}_TAG_PREFIX"
+  tag="$(github_latest_tag "$repo" "${!prefix_var:-}")"
   if [[ -z "$tag" ]]; then
     if [[ -n "$have" ]]; then
       result 'current' "$desc" "$have (could not reach the GitHub API)"
@@ -700,7 +745,10 @@ install_release() {
     fi
     return
   fi
+  # Most tags are v1.2.3 or 1.2.3; a few carry the project name (jq-1.8.2,
+  # gping-v1.21.0), and the binary reports only the number.
   want="${tag#v}"
+  [[ "$want" =~ ^[0-9] ]] || want="$(printf '%s' "$tag" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
 
   if [[ "$have" == "$want" ]]; then
     result 'current' "$desc" "$have"
@@ -715,6 +763,11 @@ install_release() {
     fi
     return
   fi
+
+  # RELEASE_<name>_ASSET_<dpkg arch>, for upstreams that name one architecture's
+  # file with the architecture and the other without it.
+  local asset_arch_var="RELEASE_${name}_ASSET_${DPKG_ARCH}"
+  [[ -n "${!asset_arch_var:-}" ]] && asset="${!asset_arch_var}"
 
   local url_var="RELEASE_${name}_URL"
   local url="${!url_var:-}"
@@ -757,6 +810,122 @@ if [[ "${#RELEASES[@]}" -gt 0 ]]; then
     [[ -z "$entry" ]] && continue
     install_release "$entry"
   done
+fi
+
+# Python tools - uv tool, per group
+
+uv_tool_version() {   # uv_tool_version <name> - the installed version, or nothing
+  uv tool list 2>/dev/null | awk -v n="$1" '$1 == n { sub(/^v/, "", $2); print $2; exit }'
+}
+
+uv_entries=()
+for group in "${selected[@]}"; do
+  gui_var="GROUP_${group}_GUI"
+  [[ "${!gui_var:-no}" == "yes" && "$HAS_GUI" != "yes" ]] && continue
+  declare -p "GROUP_${group}_UV" >/dev/null 2>&1 || continue
+  declare -n _uvl="GROUP_${group}_UV"
+  for entry in "${_uvl[@]:-}"; do
+    [[ -n "$entry" ]] && uv_entries+=("$entry")
+  done
+  unset -n _uvl
+done
+
+if [[ "${#uv_entries[@]}" -gt 0 ]]; then
+  phase 'Python tools - uv tool, one environment each'
+  if ! command -v uv >/dev/null 2>&1; then
+    result 'missing' 'uv tools' 'uv is not installed'
+  else
+    for entry in "${uv_entries[@]}"; do
+      tool="${entry%%|*}"
+      tool_args=""
+      [[ "$entry" == *"|"* ]] && tool_args="${entry#*|}"
+      have="$(uv_tool_version "$tool")"
+      if [[ -n "$have" && "$SKIP_UPGRADE" == "yes" ]]; then
+        result 'skipped' "$tool" "$have - --skip-upgrade"
+      elif [[ "$DRY_RUN" == "yes" ]]; then
+        if [[ -n "$have" ]]; then
+          result 'present' "$tool" "$have - would run uv tool upgrade"
+        else
+          result 'would-install' "$tool" "uv tool install $tool${tool_args:+ $tool_args}"
+        fi
+      elif [[ -z "$have" ]]; then
+        # shellcheck disable=SC2086  # tool_args is a list of flags, split on purpose
+        if uv tool install --quiet "$tool" $tool_args >/dev/null 2>&1; then
+          result 'installed' "$tool" "$(uv_tool_version "$tool")"
+        else
+          result 'failed' "$tool" "uv tool install $tool failed"
+        fi
+      elif uv tool upgrade --quiet "$tool" >/dev/null 2>&1; then
+        now="$(uv_tool_version "$tool")"
+        if [[ "$now" == "$have" ]]; then
+          result 'current' "$tool" "$have"
+        else
+          result 'upgraded' "$tool" "$have -> $now"
+        fi
+      else
+        result 'failed' "$tool" "uv tool upgrade $tool failed"
+      fi
+    done
+  fi
+fi
+
+# Ghostty - community .deb
+
+# mkasberg/ghostty-ubuntu, where ghostty.org sends Debian and Ubuntu. The asset
+# is chosen the way that project's install.sh chooses - Ubuntu by VERSION_ID,
+# Debian by codename - and handed to apt instead of piping the script to bash.
+if [[ "${GHOSTTY_ENABLED:-no}" == "yes" && -n "${GHOSTTY_DEB_REPO:-}" ]]; then
+  phase 'Ghostty - community .deb'
+  ghostty_have="$(dpkg-query -W -f='${db:Status-Abbrev}|${Version}' ghostty 2>/dev/null || true)"
+  if [[ "$ghostty_have" == ii* ]]; then ghostty_have="${ghostty_have#*|}"; else ghostty_have=""; fi
+  case "$OS_ID" in
+    ubuntu) ghostty_suffix="${DPKG_ARCH}_${OS_VERSION_ID}" ;;
+    debian) ghostty_suffix="${DPKG_ARCH}_${OS_CODENAME}" ;;
+    *)      ghostty_suffix="" ;;
+  esac
+
+  if [[ "$HAS_GUI" != "yes" ]]; then
+    result 'no-gui' 'ghostty' 'needs a desktop, none detected'
+  elif [[ -n "$ghostty_have" && "$SKIP_UPGRADE" == "yes" ]]; then
+    result 'skipped' 'ghostty' "$ghostty_have - --skip-upgrade"
+  elif [[ -z "$ghostty_suffix" ]]; then
+    result 'missing' 'ghostty' "no community .deb for $OS_ID"
+  else
+    ghostty_url="$(curl -fsSL "https://api.github.com/repos/${GHOSTTY_DEB_REPO}/releases/latest" 2>/dev/null \
+      | grep -o '"browser_download_url": *"[^"]*"' | sed 's/.*"\(https[^"]*\)"$/\1/' \
+      | grep "_${ghostty_suffix}\.deb\$" | head -1 || true)"
+    ghostty_want="$(basename "${ghostty_url:-none}" .deb | cut -s -d_ -f2)"
+
+    if [[ -z "$ghostty_url" ]]; then
+      result 'missing' 'ghostty' "no ${ghostty_suffix} .deb in the latest ${GHOSTTY_DEB_REPO} release"
+    # The package calls itself 1.3.1-0~ppa2; GitHub turns the ~ into a dot in the
+    # asset name, so compare with that one character folded.
+    elif [[ "${ghostty_have//\~/.}" == "$ghostty_want" ]]; then
+      result 'current' 'ghostty' "$ghostty_have"
+    elif [[ "$DRY_RUN" == "yes" ]]; then
+      if [[ -n "$ghostty_have" ]]; then
+        result 'would-upgrade' 'ghostty' "$ghostty_have -> $ghostty_want"
+      else
+        result 'would-install' 'ghostty' "$ghostty_want"
+      fi
+    else
+      ghostty_tmp="$(mktemp -d)"
+      # apt reads a local .deb as the _apt user, so it has to be world-readable.
+      chmod 0755 "$ghostty_tmp"
+      if curl -fsSL -o "$ghostty_tmp/ghostty.deb" "$ghostty_url" \
+         && chmod 0644 "$ghostty_tmp/ghostty.deb" \
+         && run_priv apt-get install "${APT_OPTS[@]}" -qq "$ghostty_tmp/ghostty.deb" >/dev/null 2>&1; then
+        if [[ -n "$ghostty_have" ]]; then
+          result 'upgraded' 'ghostty' "$ghostty_have -> $ghostty_want"
+        else
+          result 'installed' 'ghostty' "$ghostty_want"
+        fi
+      else
+        result 'failed' 'ghostty' "could not download or install $ghostty_url"
+      fi
+      rm -rf "$ghostty_tmp"
+    fi
+  fi
 fi
 
 # AWS CLI v2
@@ -1112,7 +1281,9 @@ else
         echo 'command -v eza    >/dev/null && alias ls="eza --icons=auto --group-directories-first"'
         echo 'command -v fdfind >/dev/null && alias find="fdfind"'
         echo 'command -v fd     >/dev/null && alias find="fd"'
-        echo 'command -v fdfind >/dev/null && alias fd="fdfind"'
+        # Only where no real fd exists: an apt fd-find left from before the
+        # release binary would otherwise shadow it.
+        echo 'command -v fd >/dev/null || { command -v fdfind >/dev/null && alias fd="fdfind"; }'
         echo 'command -v rg     >/dev/null && alias grep="rg"'
         echo 'command -v dust   >/dev/null && alias du="dust"'
         echo 'command -v duf    >/dev/null && alias df="duf"'
@@ -1140,8 +1311,10 @@ else
         echo '  alias kubectl="kubecolor"'
         echo '  (( $+_comps[kubectl] )) && compdef kubecolor=kubectl'
         echo 'fi'
-        # trippy needs raw sockets, and has no unprivileged mode on Linux.
-        echo 'command -v trip >/dev/null && alias trip="sudo trip"'
+        # trippy needs raw sockets, and has no unprivileged mode on Linux. The full
+        # path, resolved when the alias is defined: sudo's secure_path does not
+        # include ~/.local/bin, where the release binary lives.
+        echo 'command -v trip >/dev/null && alias trip="sudo $(command -v trip)"'
         echo
         declare -A _cli_cmd=() _cli_desc=()
         _cli_rel=()
@@ -1279,7 +1452,7 @@ fi
 # Carapace specs - completion for CLIs carapace has no completer of its own for
 CARAPACE_SOURCE="${SCRIPT_DIR}/../carapace"
 phase 'Carapace specs'
-if ! command -v carapace >/dev/null 2>&1 && [[ ! -x "${RELEASE_BIN_DIR}/carapace" ]]; then
+if ! command -v carapace >/dev/null 2>&1; then
   result 'missing' 'carapace specs' 'carapace is not installed'
 else
   # carapace honours XDG_CONFIG_HOME only when it is an absolute path.
@@ -1313,8 +1486,7 @@ else
   # difftastic compares syntax, not lines, and is asked for per command - never
   # diff.external globally, whose output is not a patch `git apply` can read.
   # delta passes its output through untouched, so the pager needs no exception.
-  # RELEASE_BIN_DIR is checked directly: this script never puts it on PATH.
-  if command -v difft >/dev/null 2>&1 || [[ -x "${RELEASE_BIN_DIR}/difft" ]]; then
+  if command -v difft >/dev/null 2>&1; then
     GIT_WANT+=(
       'diff.tool=difftastic'
       'difftool.prompt=false'

@@ -49,7 +49,7 @@ jobs:
 
           missing="$(sed -n 's/^MISSING://p' /tmp/apt-result.txt | tr -s ' ')"
 
-          known_absent=" ghostty "
+          known_absent=" "
 
           failed=0
           for p in $missing; do
@@ -179,13 +179,23 @@ jobs:
             url_var="RELEASE_${name}_URL"
             repo="${!repo_var}"; asset="${!asset_var:-}"; url="${!url_var:-}"
 
-            tag="$(curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" \
-                   | sed -n 's/.*"tag_name" *: *"\([^"]*\)".*/\1/p' | head -1)"
+            prefix_var="RELEASE_${name}_TAG_PREFIX"; prefix="${!prefix_var:-}"
+            if [ -z "$prefix" ]; then
+              tag="$(curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" \
+                     | sed -n 's/.*"tag_name" *: *"\([^"]*\)".*/\1/p' | head -1 || true)"
+            else
+              # one repository, several products: the newest tag with the prefix
+              tag="$(curl -fsSL "https://api.github.com/repos/${repo}/releases?per_page=50" \
+                     | sed -n 's/.*"tag_name" *: *"\([^"]*\)".*/\1/p' \
+                     | grep -m1 -E "^${prefix}[0-9]+(\.[0-9]+)*\$" || true)"
+            fi
             if [ -z "$tag" ]; then
               echo "::warning::could not read a latest tag for ${repo} - rate limited?"
               continue
             fi
             version="${tag#v}"
+            # jq-1.8.2, gping-v1.21.0: read the number out, as install_release does
+            case "$version" in [0-9]*) ;; *) version="$(printf '%s' "$tag" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)" ;; esac
 
             [ -z "$url" ] && url="https://github.com/${repo}/releases/download/${tag}/${asset}"
             url="${url//\{ARCH\}/amd64}"

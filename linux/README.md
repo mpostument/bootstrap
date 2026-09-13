@@ -26,20 +26,26 @@ none. Override with `--gui` or `--no-gui`.
 1. **Repositories** — third-party apt sources, each with its own key under
    `/etc/apt/keyrings` and a `Signed-By` line scoping it to that repository.
 2. **Repository packages** — VS Code, Docker, Unity Hub, kubectl, Azure CLI,
-   Google Cloud CLI.
+   Google Cloud CLI, GitHub CLI.
 3. **Package groups** — archive and Flathub, GUI groups gated on the check above.
 4. **Upgrades** — one apt transaction plus `flatpak update`, only when outdated.
-5. **Tools** — `pyenv`, `pyenv-virtualenv`, `tofuenv`, `nvm` as git clones under `$HOME`.
+5. **Tools** — `TOOLS` git clones under `$HOME`; empty since mise replaced
+   pyenv, nvm and tofuenv.
 6. **.NET SDK** — Microsoft's install script into `$HOME/.dotnet`.
-7. **Release binaries** — `tflint`, `terraform-docs`, `helm`, `k9s`, `stern`,
-   `yq`, `starship` into `~/.local/bin`.
-8. **Nerd Font** — Meslo, on desktop machines.
-9. **Claude Code** — Anthropic's script into `~/.local/bin`.
-10. **zsh** — oh-my-zsh, Starship and plugins, plus a managed
+7. **Release binaries** — upstream builds into `~/.local/bin`: the modern CLI
+   bundle (bat, eza, fd, ripgrep, fzf, jq, yt-dlp and the rest), starship,
+   atuin, uv, carapace, and the Kubernetes and Terraform tools. The archive
+   trails upstream by years for most of them, and Ubuntu 24.04 lacks several.
+8. **Python tools** — each group's `GROUP_*_UV` entries, through `uv tool`.
+9. **Ghostty** — the community `.deb` that ghostty.org points Debian and Ubuntu
+   to, on desktop machines.
+10. **Nerd Font** — Meslo, on desktop machines.
+11. **Claude Code** — Anthropic's script into `~/.local/bin`.
+12. **zsh** — oh-my-zsh, Starship and plugins, plus a managed
     `~/.zshrc.bootstrap` sourced from your own `.zshrc`.
-11. **Prompt config** — `starship.toml` from the repo root to
+13. **Prompt config** — `starship.toml` from the repo root to
     `~/.config/starship.toml`, the same file all three platforms deploy.
-12. **Schedule** — a systemd system timer that re-runs this script daily.
+14. **Schedule** — a systemd system timer that re-runs this script daily.
 
 ## Options
 
@@ -68,6 +74,7 @@ of the last run, with what to type and what it does.
 | `GROUP_*_FLATPAK` | yes | yes |
 | `REPOS` | yes, with its key and source file | yes |
 | `RELEASES` | yes, a static binary into `~/.local/bin` | yes, against the newest release tag |
+| `GROUP_*_UV` | yes, `uv tool install` into `~/.local/bin` | yes, `uv tool upgrade` |
 | `TOOLS` | yes, git clone into `$HOME` | yes, `git pull --ff-only` |
 | `HELD` | no | no |
 | `MANUAL` | no | no |
@@ -83,8 +90,9 @@ release.
 `PKG_GROUPS`, not `GROUPS`: the latter is a bash builtin holding the user's
 group IDs, and assigning to it silently turns every group name into a number.
 
-`fd-find` installs as `fdfind` and `bat` as `batcat`; the zsh fragment aliases
-both, guarded on `command -v`.
+An apt `fd-find` or `bat` left from before the CLI bundle moved to `RELEASES`
+installs as `fdfind` / `batcat`; the zsh fragment aliases those only where the
+real names are absent.
 
 ## zsh
 
