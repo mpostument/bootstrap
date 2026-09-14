@@ -33,10 +33,10 @@ show_preview = true
 # top, so the mode you are in is visible rather than remembered.
 show_tabs = true
 
-# Enter runs the command. The default leaves it on the line for you to confirm,
-# which is the safer half of a trade and the slower one; Tab still edits without
-# running, so nothing is lost.
-enter_accept = true
+# Enter puts the selected command on the prompt line instead of running it, so
+# every recalled command gets a look - and an edit, if it needs one - before it
+# executes. This is atuin's own default; it is set here to say it is deliberate.
+enter_accept = false
 
 # Esc puts back what you had typed before opening the search, rather than the
 # search query. Escaping should undo, not commit.
