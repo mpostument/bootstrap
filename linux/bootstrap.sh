@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.27.0'
+BOOTSTRAP_VERSION='1.27.1'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -344,6 +344,15 @@ install_flatpak() {
     fi
     return
   fi
+  # Flathub builds some apps for x86_64 only - Blender, Zoom, Bruno - and on
+  # arm64 their install failed like a real error. Missing on this arch but
+  # present on x86_64 is the case to name; anything else (offline, no remote)
+  # falls through to the install and its own failure.
+  if ! flatpak remote-info flathub "$ref" >/dev/null 2>&1 </dev/null &&
+     flatpak remote-info --arch=x86_64 flathub "$ref" >/dev/null 2>&1 </dev/null; then
+    result 'missing' "$ref" "Flathub has no ${UNAME_ARCH} build"
+    return
+  fi
   if [[ "$DRY_RUN" == "yes" ]]; then
     result 'would-install' "$ref" 'flathub'
     return
@@ -372,10 +381,21 @@ setup_repo() {
     return
   fi
 
+  # A vendor can lag a distribution release: packages.microsoft.com had no
+  # azure-cli suite for trixie, so apt-get update failed on every run.
+  # REPO_<name>_CODENAME_MAP entries (release:published) point {CODENAME} at
+  # the release the vendor does publish.
+  local codename="$OS_CODENAME" entry
+  declare -n _cmap="REPO_${name}_CODENAME_MAP"
+  for entry in "${_cmap[@]:-}"; do
+    [[ "${entry%%:*}" == "$OS_CODENAME" ]] && codename="${entry#*:}"
+  done
+  unset -n _cmap
+
   local key_url="${!key_var}" uri="${!uri_var}" suites="${!suites_var}"
-  key_url="${key_url//\{ID\}/$OS_ID}"; key_url="${key_url//\{CODENAME\}/$OS_CODENAME}"
-  uri="${uri//\{ID\}/$OS_ID}";         uri="${uri//\{CODENAME\}/$OS_CODENAME}"
-  suites="${suites//\{ID\}/$OS_ID}";   suites="${suites//\{CODENAME\}/$OS_CODENAME}"
+  key_url="${key_url//\{ID\}/$OS_ID}"; key_url="${key_url//\{CODENAME\}/$codename}"
+  uri="${uri//\{ID\}/$OS_ID}";         uri="${uri//\{CODENAME\}/$codename}"
+  suites="${suites//\{ID\}/$OS_ID}";   suites="${suites//\{CODENAME\}/$codename}"
 
   local keyring="${KEYRING_DIR}/${name}.gpg"
   local sources="/etc/apt/sources.list.d/${name}.sources"

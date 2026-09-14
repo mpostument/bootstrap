@@ -22,7 +22,7 @@ jobs:
       - name: The cli group is the same on all three platforms
         run: bash tools/parity.sh
 
-      - name: Every apt package exists in the Debian archive
+      - name: Every apt package exists on each release the script runs on
         run: |
           set -euo pipefail
           # shellcheck disable=SC1091
@@ -34,34 +34,35 @@ jobs:
             unset -n _apt
           done
           printf '%s\n' "${pkgs[@]}" | sort -u > /tmp/apt-wanted.txt
-          echo "Checking $(wc -l < /tmp/apt-wanted.txt) apt package names against trixie"
 
-          docker run --rm -v /tmp/apt-wanted.txt:/wanted.txt debian:trixie-slim sh -c '
-            apt-get update -qq >/dev/null 2>&1
-            missing=""
-            while read -r p; do
-              [ -z "$p" ] && continue
-              apt-cache show "$p" >/dev/null 2>&1 || missing="$missing $p"
-            done < /wanted.txt
-            [ -n "$missing" ] && echo "MISSING:$missing"
-            exit 0
-          ' > /tmp/apt-result.txt
-
-          missing="$(sed -n 's/^MISSING://p' /tmp/apt-result.txt | tr -s ' ')"
-
+          # Every release a machine runs, not only the newest: checking trixie
+          # alone never saw that bookworm has no openjdk-21-jdk.
           known_absent=" "
 
           failed=0
-          for p in $missing; do
-            if printf '%s' "$known_absent" | grep -q " $p "; then
-              echo "NOTE $p - not in the Debian archive, and the manifest says so"
-            else
-              echo "::error file=linux/packages.conf::apt package '$p' is not in the Debian archive"
-              failed=1
-            fi
+          for image in debian:bookworm-slim debian:trixie-slim ubuntu:24.04; do
+            echo "Checking $(wc -l < /tmp/apt-wanted.txt) apt package names against $image"
+            missing="$(docker run --rm -v /tmp/apt-wanted.txt:/wanted.txt "$image" sh -c '
+              apt-get update -qq >/dev/null 2>&1
+              while read -r p; do
+                [ -z "$p" ] && continue
+                apt-cache show "$p" >/dev/null 2>&1 || printf "%s " "$p"
+              done < /wanted.txt
+            ')"
+            for p in $missing; do
+              if printf '%s' "$known_absent" | grep -q " $p "; then
+                echo "NOTE $p - not on $image, and the manifest says so"
+              else
+                echo "::error file=linux/packages.conf::apt package '$p' is not on $image"
+                failed=1
+              fi
+            done
           done
-          [ "$failed" -eq 0 ] && echo 'OK   every apt package resolves'
+          [ "$failed" -eq 0 ] && echo 'OK   every apt package resolves on every release'
           exit "$failed"
+
+      - name: Every third-party repository serves each release and architecture
+        run: bash tools/verify-repos.sh
 
       - name: Every Flathub reference exists
         run: |
@@ -76,6 +77,11 @@ jobs:
               n=$(( n + 1 ))
               if curl -fsSL -o /dev/null "https://flathub.org/api/v2/appstream/${ref}"; then
                 echo "OK   $ref"
+                arches="$(curl -fsSL "https://flathub.org/api/v2/summary/${ref}" | grep -o '"arches":\[[^]]*\]' | head -1 || true)"
+                case "$arches" in
+                  ''|*aarch64*) ;;
+                  *) echo "NOTE $ref - no aarch64 build; bootstrap.sh reports it missing on arm64" ;;
+                esac
               else
                 echo "::error file=linux/packages.conf::'$ref' is not on Flathub - check the reverse-DNS spelling, it is case sensitive"
                 failed=1
@@ -175,9 +181,8 @@ jobs:
 
           failed=0
           for name in "${RELEASES[@]}"; do
-            repo_var="RELEASE_${name}_REPO"; asset_var="RELEASE_${name}_ASSET"
-            url_var="RELEASE_${name}_URL"
-            repo="${!repo_var}"; asset="${!asset_var:-}"; url="${!url_var:-}"
+            repo_var="RELEASE_${name}_REPO"; url_var="RELEASE_${name}_URL"
+            repo="${!repo_var}"; url_tpl="${!url_var:-}"
 
             prefix_var="RELEASE_${name}_TAG_PREFIX"; prefix="${!prefix_var:-}"
             if [ -z "$prefix" ]; then
@@ -197,19 +202,28 @@ jobs:
             # jq-1.8.2, gping-v1.21.0: read the number out, as install_release does
             case "$version" in [0-9]*) ;; *) version="$(printf '%s' "$tag" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)" ;; esac
 
-            [ -z "$url" ] && url="https://github.com/${repo}/releases/download/${tag}/${asset}"
-            url="${url//\{ARCH\}/amd64}"
-            url="${url//\{UNAME_ARCH\}/x86_64}"
-            url="${url//\{GORELEASER_ARCH\}/x86_64}"
-            url="${url//\{TAG\}/$tag}"
-            url="${url//\{VERSION\}/$version}"
+            # Both architectures the script installs for, as dpkg, uname and
+            # goreleaser spell them. x86_64 alone missed starship's arm64 404.
+            for spelling in "amd64 x86_64 x86_64" "arm64 aarch64 arm64"; do
+              read -r deb uname gorel <<< "$spelling"
+              arch_asset_var="RELEASE_${name}_ASSET_${deb}"; asset_var="RELEASE_${name}_ASSET"
+              asset="${!arch_asset_var:-${!asset_var:-}}"
 
-            code="$(curl -o /dev/null -sIL -w '%{http_code}' "$url")"
-            if [ "$code" = "200" ]; then
-              echo "OK   $name $tag"
-            else
-              echo "::error file=linux/packages.conf::$name: HTTP $code for $url - the asset naming has probably changed"
-              failed=1
-            fi
+              url="$url_tpl"
+              [ -z "$url" ] && url="https://github.com/${repo}/releases/download/${tag}/${asset}"
+              url="${url//\{ARCH\}/$deb}"
+              url="${url//\{UNAME_ARCH\}/$uname}"
+              url="${url//\{GORELEASER_ARCH\}/$gorel}"
+              url="${url//\{TAG\}/$tag}"
+              url="${url//\{VERSION\}/$version}"
+
+              code="$(curl -o /dev/null -sIL -w '%{http_code}' "$url")"
+              if [ "$code" = "200" ]; then
+                echo "OK   $name $tag $deb"
+              else
+                echo "::error file=linux/packages.conf::$name ($deb): HTTP $code for $url - the asset naming has probably changed"
+                failed=1
+              fi
+            done
           done
           exit "$failed"

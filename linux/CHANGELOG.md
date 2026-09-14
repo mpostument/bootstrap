@@ -15,6 +15,37 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.1]
+
+### Added
+
+- **`REPO_<name>_CODENAME_MAP`** - `release:published` entries that point
+  `{CODENAME}` at a release the vendor does publish.
+- **fx as a release binary**, for x86_64 and aarch64. In neither archive, and
+  until now Homebrew only; `cli-parity.conf` had it absent on Linux.
+
+### Changed
+
+- **Java leaves apt for mise** (`mise use -g java@temurin-21`), as Node and Go
+  did in 1.27.0. bookworm has no `openjdk-21-jdk`, only 17, so the worker
+  reported it missing on every run.
+- **`verify-manifests.yml` checks what the machines run, not only trixie on
+  x86_64.** apt names are resolved on bookworm, trixie and Ubuntu 24.04;
+  release assets on amd64 and arm64; and the new `tools/verify-repos.sh` checks
+  that every `REPOS` suite exists and carries its packages on each release and
+  architecture - the check that would have caught the Azure CLI 404 below.
+
+### Fixed
+
+- **A Flatpak with no build for the machine's architecture reported
+  `failed`.** Blender, Zoom and Bruno are x86_64-only on Flathub; on arm64 they
+  now report `missing`, as an apt package a release lacks does.
+
+- **`apt index` could not refresh on trixie, on every run.** The Azure CLI
+  source asked packages.microsoft.com for a `trixie` suite, which does not
+  exist (404 on its Release file), so every `apt-get update` failed. On
+  trixie it now uses `bookworm`. Bookworm hosts are unchanged.
+
 ## [1.27.0]
 
 ### Added

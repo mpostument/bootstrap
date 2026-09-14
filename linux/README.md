@@ -85,7 +85,9 @@ and scopes it with `Signed-By`.
 
 `{ID}` and `{CODENAME}` in a repository URL are substituted from
 `/etc/os-release` — Docker publishes a separate tree per distribution and
-release.
+release. Where a vendor has not caught up with a release,
+`REPO_<name>_CODENAME_MAP=(trixie:bookworm)` substitutes the release it does
+publish.
 
 `PKG_GROUPS`, not `GROUPS`: the latter is a bash builtin holding the user's
 group IDs, and assigning to it silently turns every group name into a number.
