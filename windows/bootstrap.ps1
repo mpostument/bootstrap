@@ -49,7 +49,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '1.35.0'
+$script:BootstrapVersion = '1.36.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -656,6 +656,11 @@ if ($ListPackages) {
         foreach ($p in $g.Packages) {
             Write-Host ('    {0}' -f $p) -ForegroundColor DarkGray
         }
+        if ($g.Contains('UvTools')) {
+            foreach ($t in $g.UvTools) {
+                Write-Host ('    {0}  (uv tool)' -f $t.Split('|')[0]) -ForegroundColor DarkGray
+            }
+        }
     }
     Write-Host ''
     return
@@ -755,6 +760,76 @@ foreach ($group in $selected) {
 }
 
 Update-SessionPath
+
+# Python tools - uv tool, per group
+#
+# The same shape as GROUP_infra_UV in linux/packages.conf: one environment per
+# tool, its commands linked onto PATH by uv. These have no usable winget
+# package, so uv is how Windows gets them at all; uv itself is astral-sh.uv in
+# the dev group, just installed by the loop above.
+
+function Get-UvToolVersion {
+    param([string]$Name, [string[]]$Listing)
+    foreach ($line in $Listing) {
+        # `uv tool list` prints "name vX.Y.Z" per tool and "- command" beneath it
+        if ($line -match '^(\S+)\s+v(\S+)' -and $Matches[1] -eq $Name) { return $Matches[2] }
+    }
+    return ''
+}
+
+$uvEntries = @()
+foreach ($group in $selected) {
+    if ($group.Contains('UvTools')) { $uvEntries += @($group.UvTools) }
+}
+
+if ($uvEntries.Count -gt 0) {
+    Write-Phase 'Python tools - uv tool, one environment each'
+    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+        Add-Result -Group 'uv' -Id 'uv tools' -Action 'missing' `
+            -Detail 'uv is not on PATH - astral-sh.uv installs it in the dev group'
+    } else {
+        $uvListing = @(& uv tool list 2>$null)
+        foreach ($entry in $uvEntries) {
+            $tool = $entry.Split('|')[0]
+            $extra = @()
+            if ($entry.Contains('|')) {
+                $extra = @($entry.Split('|', 2)[1].Split(' ') | Where-Object { $_ })
+            }
+            $have = Get-UvToolVersion -Name $tool -Listing $uvListing
+
+            if ($have -and $SkipUpgrade) {
+                Add-Result -Group 'uv' -Id $tool -Action 'skipped' -Detail $have
+            } elseif (-not $have) {
+                if (-not $PSCmdlet.ShouldProcess($tool, 'uv tool install')) {
+                    Add-Result -Group 'uv' -Id $tool -Action 'would-install' `
+                        -Detail ('uv tool install {0}' -f ((@($tool) + $extra) -join ' '))
+                    continue
+                }
+                & uv tool install --quiet $tool @extra *> $null
+                if ($LASTEXITCODE -eq 0) {
+                    $now = Get-UvToolVersion -Name $tool -Listing @(& uv tool list 2>$null)
+                    Add-Result -Group 'uv' -Id $tool -Action 'installed' -Detail $now
+                } else {
+                    Add-Result -Group 'uv' -Id $tool -Action 'failed' -Detail ('uv tool install {0} failed' -f $tool)
+                }
+            } elseif (-not $PSCmdlet.ShouldProcess($tool, 'uv tool upgrade')) {
+                Add-Result -Group 'uv' -Id $tool -Action 'present' -Detail ('{0} - would run uv tool upgrade' -f $have)
+            } else {
+                & uv tool upgrade --quiet $tool *> $null
+                if ($LASTEXITCODE -ne 0) {
+                    Add-Result -Group 'uv' -Id $tool -Action 'failed' -Detail ('uv tool upgrade {0} failed' -f $tool)
+                    continue
+                }
+                $now = Get-UvToolVersion -Name $tool -Listing @(& uv tool list 2>$null)
+                if ($now -eq $have) {
+                    Add-Result -Group 'uv' -Id $tool -Action 'current' -Detail $have
+                } else {
+                    Add-Result -Group 'uv' -Id $tool -Action 'upgraded' -Detail ('{0} -> {1}' -f $have, $now)
+                }
+            }
+        }
+    }
+}
 
 # Phase 2 - externally managed software
 

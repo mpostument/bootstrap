@@ -72,6 +72,11 @@ their own updaters — no `--greedy` — and reported as self-updating. An app i
 `/Applications` that Homebrew did not install is reported `present` and left
 alone.
 
+**`HELD`** — software another installer owns, reported and never touched. The
+macOS counterpart of `Managed` in `windows/packages.psd1`: JetBrains Toolbox
+installs and self-updates Rider and DataGrip, and the `rider`/`datagrip` casks
+would fight it, so Toolbox is in the `dev` group and the two IDEs are held.
+
 GNU make installs as `gmake`, since Homebrew will not shadow `/usr/bin/make`;
 the zsh fragment aliases `make` to it. `bat` and `fd` keep their own names here,
 unlike Debian.

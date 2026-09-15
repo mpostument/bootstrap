@@ -15,6 +15,32 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.32.0]
+
+### Changed
+
+- **The `Manual - reported only` phase is skipped when `MANUAL` is empty**,
+  instead of printing a header with nothing under it in every run.
+
+- **`MANUAL` is empty.** `mas` and `colima` were the only entries; neither is
+  wanted on this machine, and both were reported `missing` on every run.
+
+### Added
+
+- **`jetbrains-toolbox` in the `dev` group, and `rider`/`datagrip` in
+  `HELD`.** Toolbox installs and self-updates both IDEs, so a `rider` or
+  `datagrip` cask would fight it - the same reasoning the `Managed` section of
+  `windows/packages.psd1` already carried for Toolbox, Rider and Android
+  Studio. `HELD` was empty until now, which made the omission look like an
+  oversight rather than a decision.
+
+- **`sd`, `xh` and `doggo` in `cli`.** A `sed` replacement that takes literal
+  strings, an HTTP client that speaks JSON without a row of curl flags, and a
+  `dig` that prints a readable table. The zsh fragment aliases `dig` to
+  `doggo` and adds `http`/`https` for `xh`; `sd` deliberately gets no `sed`
+  alias, since its pattern syntax is not sed's and anything pasted from a
+  script would quietly do something else.
+
 ## [1.31.0]
 
 ### Added

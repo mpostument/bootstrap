@@ -36,6 +36,10 @@
                 'muesli.duf'
                 'charmbracelet.glow'
                 'tstack.lnav'
+                'chmln.sd'
+                'ducaale.xh'
+                'MrKaran.Doggo'
+                'vim.vim'
             )
         }
 
@@ -49,6 +53,7 @@
                 'JetBrains.Toolbox'
                 'Microsoft.WSL'
                 'Canonical.Ubuntu'
+                'SUSE.RancherDesktop'
                 'Python.Python.3.14'
                 'Python.Launcher'
                 'OpenJS.NodeJS.LTS'
@@ -68,6 +73,13 @@
             Packages    = @(
                 'TerraformLinters.tflint'
                 'Terraform-docs.Terraform-docs'
+            )
+            # Python CLIs, each in its own environment through `uv tool`, the
+            # same shape as GROUP_infra_UV in linux/packages.conf. None of these
+            # has a usable winget package; uv comes from the dev group above.
+            # "name" or "name|extra arguments for uv tool install".
+            UvTools     = @(
+                'pre-commit'
             )
         }
 

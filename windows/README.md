@@ -29,13 +29,15 @@ once running, but cannot clear it from the file you are starting.
 ## What it does
 
 1. **Packages** — installs or upgrades everything in `packages.psd1` via winget.
-2. **Externally managed software** — detects and reports, changes nothing.
-3. **Shell** — Nerd Font from GitHub, `starship.toml` from the repo root,
+2. **Python tools** — each group's `UvTools` entries, through `uv tool`: one
+   environment per tool, for the CLIs winget has no package for.
+3. **Externally managed software** — detects and reports, changes nothing.
+4. **Shell** — Nerd Font from GitHub, `starship.toml` from the repo root,
    PowerShell modules for 5.1 and 7, the profile, execution policy, and a
    Windows Terminal settings merge that patches keys instead of overwriting.
-4. **mpv** — config, UI and scripts. Skip with `-SkipMpv`.
-5. **Schedule** — a daily unattended run. Skip with `-SkipSchedule`.
-6. **VS Code extensions** — installs what's missing from `packages.psd1`,
+5. **mpv** — config, UI and scripts. Skip with `-SkipMpv`.
+6. **Schedule** — a daily unattended run. Skip with `-SkipSchedule`.
+7. **VS Code extensions** — installs what's missing from `packages.psd1`,
    never removes one that isn't listed. Skip with `-SkipVsCode`.
 
 ## mpv
@@ -71,11 +73,16 @@ directory to your **user** `PATH`. Set `AddToPath = $false` in the manifest's
 | | installed if missing | upgraded on re-run |
 |---|---|---|
 | `Groups` | yes | yes |
+| `Groups[].UvTools` | yes, `uv tool install` | yes, `uv tool upgrade` |
 | `Pins` | no | no |
 | `Managed` | no | no |
 
 **`Groups`** — ordinary winget software: `shell`, `cli`, `dev`, `infra`,
 `cloud`, `network`, `creative`, `apps`.
+
+**`Groups[].UvTools`** — Python CLIs with no usable winget package, each in its
+own environment through `uv tool`, the same shape as `GROUP_*_UV` in
+`linux/packages.conf`. An entry is `name` or `name|extra arguments`.
 
 **`Pins`** — hands-off in both directions. Prefer a release channel that
 encodes the rule (`OpenJS.NodeJS.LTS`) over a pin. Every pin carries a written

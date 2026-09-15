@@ -111,6 +111,24 @@ if (Get-Command duf -ErrorAction SilentlyContinue) {
     function df { duf @args }
 }
 
+# doggo -- dig's job with readable output. Windows has no dig at all, only
+# Resolve-DnsName, so this adds the name rather than shadowing anything.
+# https://github.com/mr-karan/doggo
+if (Get-Command doggo -ErrorAction SilentlyContinue) {
+    function dig { doggo @args }
+}
+
+# xh -- HTTP from the terminal. The tarball's `xhs` (xh --https) is a symlink
+# upstream, so it is a function here instead. https://github.com/ducaale/xh
+if (Get-Command xh -ErrorAction SilentlyContinue) {
+    function http { xh @args }
+    function https { xh --https @args }
+}
+
+# sd deliberately gets no `sed` alias: its pattern and replacement syntax is not
+# sed's, so anything pasted from a script or a README would silently do
+# something else. Call it as sd. https://github.com/chmln/sd
+
 # mise -- one version manager for Python, Node, Go, Java and the Terraform
 # family, driven by a per-project .mise.toml. https://mise.jdx.dev
 # Windows has no pyenv/nvm to replace; mise sits alongside the winget-installed

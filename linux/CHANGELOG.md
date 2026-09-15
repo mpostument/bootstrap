@@ -15,6 +15,28 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.30.0]
+
+### Changed
+
+- **The `Manual - reported only` phase is skipped when `MANUAL` is empty**,
+  instead of printing a header with nothing under it in every run. `MANUAL`
+  has been empty here since before this entry, so the phase never had anything
+  to say.
+
+### Added
+
+- **`sd`, `xh` and `doggo` in `RELEASES`.** A `sed` replacement that takes
+  literal strings, an HTTP client that speaks JSON without a row of curl
+  flags, and a `dig` that prints a readable table - on a fresh Debian or
+  Ubuntu box `doggo` is the only DNS client here, since `dnsutils` is not in
+  the apt list. All three are release binaries: none is in the archive. The
+  zsh fragment aliases `dig` to `doggo` and adds `http`/`https` for `xh`
+  (upstream ships `xhs` as a symlink inside the tarball, which
+  `install_release_bins` does not copy); `sd` deliberately gets no `sed`
+  alias, since its pattern syntax is not sed's and anything pasted from a
+  script would quietly do something else.
+
 ## [1.29.1]
 
 ### Changed

@@ -135,7 +135,7 @@ format = '[$symbol$subscription]($style) '
 disabled = false
 style = 'red bold'
 symbol = 'gcp '
-format = '[$symbol$account(@$domain)(\($region\))]($style) '
+format = '[$symbol$project(\($region\))]($style) '
 
 [terraform]
 disabled = false

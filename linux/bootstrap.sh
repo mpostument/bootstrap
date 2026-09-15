@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.29.1'
+BOOTSTRAP_VERSION='1.30.0'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -1378,6 +1378,16 @@ else
         echo 'command -v rg     >/dev/null && alias grep="rg"'
         echo 'command -v dust   >/dev/null && alias du="dust"'
         echo 'command -v duf    >/dev/null && alias df="duf"'
+        # doggo answers the same questions as dig and prints them as a table.
+        # Debian has no dnsutils here, so on a fresh box this is the only one.
+        echo 'command -v doggo  >/dev/null && alias dig="doggo"'
+        # xh is curl for JSON APIs. Upstream ships xhs (xh --https) as a symlink
+        # inside the tarball, which install_release_bins does not copy.
+        echo 'command -v xh     >/dev/null && alias http="xh"'
+        echo 'command -v xh     >/dev/null && alias https="xh --https"'
+        # sd deliberately gets no `sed` alias: its pattern and replacement syntax
+        # is not sed's, so anything pasted from a script would quietly do
+        # something else. It is called as sd.
         echo 'command -v zoxide >/dev/null && eval "$(zoxide init zsh)"'
         # Last binding wins, so atuin goes after fzf/fzf-tab to take Ctrl+R.
         # --disable-up-arrow keeps Up on history-substring-search, bound above.
@@ -1736,21 +1746,26 @@ else
 fi
 
 # Manual
+#
+# Nothing to report is the normal state, so the phase only appears when the
+# manifest actually lists something - an empty header is noise in every run.
 
-phase 'Manual - reported only'
+if [[ "${#MANUAL[@]}" -gt 0 ]]; then
+  phase 'Manual - reported only'
 
-for entry in "${MANUAL[@]:-}"; do
-  [[ -z "$entry" ]] && continue
-  cmd="${entry%%:*}"
-  rest="${entry#*:}"
-  name="${rest%%:*}"
-  where="${rest#*:}"
-  if command -v "$cmd" >/dev/null 2>&1; then
-    result 'present' "$name" "$(command -v "$cmd")"
-  else
-    result 'missing' "$name" "$where"
-  fi
-done
+  for entry in "${MANUAL[@]:-}"; do
+    [[ -z "$entry" ]] && continue
+    cmd="${entry%%:*}"
+    rest="${entry#*:}"
+    name="${rest%%:*}"
+    where="${rest#*:}"
+    if command -v "$cmd" >/dev/null 2>&1; then
+      result 'present' "$name" "$(command -v "$cmd")"
+    else
+      result 'missing' "$name" "$where"
+    fi
+  done
+fi
 
 # Summary
 

@@ -20,6 +20,34 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.36.0]
+
+### Added
+
+- **`UvTools` on a group, and a phase that installs it - so `pre-commit`
+  finally runs on Windows.** 1.35.0 left `ansible-lint`, `yamllint` and
+  `pre-commit` off Windows because none has a usable winget package and there
+  was no `uv tool install`-style mechanism here to fall back to. This is that
+  mechanism, the same shape as `GROUP_infra_UV` in `linux/packages.conf`:
+  an entry is `name` or `name|extra arguments`, each tool gets its own
+  environment, and uv links its commands onto PATH. `uv` is already
+  `astral-sh.uv` in the `dev` group; the phase reports `missing` rather than
+  failing when it isn't on PATH yet. Only `pre-commit` is listed for now - a
+  repository with a `.pre-commit-config.yaml` was silently unhooked on this
+  machine. `-ListPackages` prints uv tools beside the winget ids.
+
+- **`chmln.sd`, `ducaale.xh` and `MrKaran.Doggo` in `cli`.** A `sed`
+  replacement that takes literal strings, an HTTP client that speaks JSON
+  without a row of curl flags, and a `dig` that prints a readable table -
+  Windows had no DNS client at all beyond `Resolve-DnsName`. `profile.ps1`
+  defines `dig`, `http` and `https`; `sd` deliberately gets no `sed` name,
+  since its pattern syntax is not sed's and anything pasted from a script
+  would quietly do something else.
+
+- **`vim.vim` in `cli`.** `tools/cli-parity.conf` had carried this as a
+  documented GAP - "not a decision, vim.vim is in winget and should be
+  added". Now it is, and the note is gone.
+
 ## [1.35.0]
 
 ### Added
