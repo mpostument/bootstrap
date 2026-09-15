@@ -20,6 +20,17 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.37.0]
+
+### Removed
+
+- **`vim.vim` from `cli`.** 1.36.0 added it to close a documented parity GAP,
+  but the winget package installs to `%LOCALAPPDATA%\Programs\Vim` and never
+  puts itself on `PATH`, so `vim` was never actually runnable after a fresh
+  bootstrap. Pulled back out until there's a phase to fix its `PATH` (or a
+  package that does it itself). `tools/cli-parity.conf` carries the GAP note
+  again.
+
 ## [1.36.0]
 
 ### Added

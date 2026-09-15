@@ -39,7 +39,6 @@
                 'chmln.sd'
                 'ducaale.xh'
                 'MrKaran.Doggo'
-                'vim.vim'
             )
         }
 
