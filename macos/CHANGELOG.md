@@ -19,10 +19,6 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **A `creative` group: `blender`, `gimp`, `inkscape`, `obs`, `flameshot`
-  and `unity-hub` casks.** Linux and Windows both already had this category;
-  macOS had no equivalent group at all.
-
 - **A self-update check in Preflight.** If the checkout is a git clone with a
   GitHub `origin` and at least one tag, `bootstrap.sh` compares it against
   that repository's latest release and prints one line when it's behind -
