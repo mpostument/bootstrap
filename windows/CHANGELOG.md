@@ -20,6 +20,29 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.34.0]
+
+### Added
+
+- **A self-update check in Preflight.** If the checkout is a git clone with a
+  GitHub `origin` and at least one tag, `bootstrap.ps1` compares it against
+  that repository's latest release and prints one line when it's behind -
+  `$script:BootstrapVersion` is this script's own number and never lines up
+  with the bundle's `vYYYY.MM.DD` tag, so the two are compared separately.
+  Never installs anything itself, never fails the run: no git, no GitHub
+  origin (a fork hosted elsewhere), no tags, or no network all skip silently.
+  `-SkipUpdateCheck` opts out.
+
+## [1.33.0]
+
+### Added
+
+- **`VsCodeExtensions` in `packages.psd1`, and a new phase in `bootstrap.ps1`
+  that installs them.** Curated from `code --list-extensions` on this
+  machine: install-only, so it never removes an extension that isn't listed,
+  and it reports `missing` rather than failing when the `code` CLI isn't on
+  PATH yet. `-SkipVsCode` opts out.
+
 ## [1.32.0]
 
 ### Added

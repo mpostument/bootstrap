@@ -35,6 +35,8 @@ once running, but cannot clear it from the file you are starting.
    Windows Terminal settings merge that patches keys instead of overwriting.
 4. **mpv** — config, UI and scripts. Skip with `-SkipMpv`.
 5. **Schedule** — a daily unattended run. Skip with `-SkipSchedule`.
+6. **VS Code extensions** — installs what's missing from `packages.psd1`,
+   never removes one that isn't listed. Skip with `-SkipVsCode`.
 
 ## mpv
 
@@ -100,6 +102,7 @@ Put the id in a group in `packages.psd1` and re-run.
 .\bootstrap.ps1 -SkipShell               # packages only
 .\bootstrap.ps1 -SkipMpv                 # leave %APPDATA%\mpv alone
 .\bootstrap.ps1 -Silent                  # suppress installer UI
+.\bootstrap.ps1 -SkipUpdateCheck         # don't check GitHub for a newer release
 .\bootstrap.ps1 -ShowVersion
 ```
 
@@ -131,6 +134,11 @@ writes next to your profile: the `cli` group as of the last run.
 All three platforms ship in one GitHub release; the tag names the bundle and
 each platform keeps its own number. This one's version is
 `$script:BootstrapVersion` in `bootstrap.ps1`.
+
+Preflight checks this checkout's own GitHub origin for a newer release tag and
+prints one line if it's behind - separate from `$script:BootstrapVersion`
+above, which is this script's own number. Silent on a release zip, a fork, or
+no network. `-SkipUpdateCheck` opts out.
 
 ```sh
 # 1. bump the version in whichever platform(s) changed

@@ -2,13 +2,15 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.29.0'
+BOOTSTRAP_VERSION='1.31.0'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
 
 DRY_RUN=no
 SKIP_UPGRADE=no
+SKIP_VSCODE_EXT=no
+SKIP_UPDATE_CHECK=no
 GUI_OVERRIDE=auto
 ONLY_GROUPS=""
 
@@ -42,6 +44,36 @@ result() {
 }
 
 die() { printf '%serror:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
+
+github_latest_tag() {   # github_latest_tag <owner/repo>
+  curl -fsSL "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
+    | grep -m1 '"tag_name"' \
+    | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || true
+}
+
+# Compares the checkout's own tag against its GitHub origin's latest release -
+# not BOOTSTRAP_VERSION, which is this script's own number and never lines up
+# with the vYYYY.MM.DD bundle tag. Silent whenever it can't be sure: no git
+# checkout (a release tarball), no GitHub origin (a fork hosted elsewhere), no
+# tags, or no network - this never blocks or fails the run over it.
+check_bootstrap_update() {
+  [[ "$SKIP_UPDATE_CHECK" == yes ]] && return 0
+  git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+
+  local origin_url repo_slug local_tag remote_tag
+  origin_url="$(git -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null || true)"
+  repo_slug="$(printf '%s' "${origin_url%.git}" | sed -n 's#.*github\.com[:/]\([^/]*/[^/]*\)$#\1#p')"
+  [[ -n "$repo_slug" ]] || return 0
+
+  local_tag="$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null || true)"
+  [[ -n "$local_tag" ]] || return 0
+
+  remote_tag="$(github_latest_tag "$repo_slug")"
+  [[ -n "$remote_tag" && "$remote_tag" != "$local_tag" ]] || return 0
+
+  printf '  %-16s%s%s available (you have %s)%s - https://github.com/%s/releases/tag/%s\n' \
+    'update' "$C_YELLOW" "$remote_tag" "$local_tag" "$C_RESET" "$repo_slug" "$remote_tag"
+}
 
 # Which Mac is this?
 detect_arch() {
@@ -102,6 +134,10 @@ Usage: bootstrap.sh [options]
                      when you know something is in here somewhere but not
                      which group.
   --skip-upgrade     Install what is missing, leave installed versions alone.
+  --skip-vscode-extensions
+                     Install none of the VS Code extensions in the manifest.
+  --skip-update-check
+                     Don't check the GitHub origin for a newer release tag.
   --gui / --no-gui   Whether to install groups that need a desktop. Default is
                      --gui; use --no-gui on a headless build agent.
   --version          Print the version and exit.
@@ -113,6 +149,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)      DRY_RUN=yes ;;
     --skip-upgrade) SKIP_UPGRADE=yes ;;
+    --skip-vscode-extensions) SKIP_VSCODE_EXT=yes ;;
+    --skip-update-check) SKIP_UPDATE_CHECK=yes ;;
     --gui)          GUI_OVERRIDE=yes ;;
     --no-gui)       GUI_OVERRIDE=no ;;
     --groups)       shift; ONLY_GROUPS="${1:-}" ;;
@@ -152,7 +190,7 @@ parity_row() {    # parity_row <package>
 source "$MANIFEST"
 
 for required in PKG_GROUPS MANUAL HELD TOOLS TAPS ZSH_PLUGINS ZSH_CUSTOM_PLUGINS \
-                ZSH_ENABLED \
+                ZSH_ENABLED VSCODE_EXTENSIONS \
                 GHOSTTY_ENABLED HISTORY_SIZE HISTORY_FILE_SIZE; do
   declare -p "$required" >/dev/null 2>&1 || die "manifest is missing \$$required: $MANIFEST"
 done
@@ -187,6 +225,13 @@ if [[ "${LIST_PACKAGES:-no}" == "yes" ]]; then
     done
     unset _form _cask
   done
+  if [[ "${#VSCODE_EXTENSIONS[@]}" -gt 0 ]]; then
+    printf '  %sVS Code extensions%s\n' "$C_CYAN" "$C_RESET"
+    for ext in "${VSCODE_EXTENSIONS[@]:-}"; do
+      [[ -z "$ext" ]] && continue
+      printf '    %s%s%s\n' "$C_DIM" "$ext" "$C_RESET"
+    done
+  fi
   echo
   exit 0
 fi
@@ -205,6 +250,7 @@ printf '  %-16s%s\n' 'bootstrap' "v$BOOTSTRAP_VERSION"
 printf '  %-16s%s\n' 'macOS' "$(sw_vers -productVersion 2>/dev/null || echo unknown) ($(sw_vers -buildVersion 2>/dev/null || echo '?'))"
 printf '  %-16s%s  %s(%s)%s\n' 'arch' "$ARCH" "$C_DIM" "$ARCH_NOTE" "$C_RESET"
 printf '  %-16s%s\n' 'user' "$(id -un) (uid $(id -u))"
+check_bootstrap_update
 
 if [[ "$ARCH_NOTE" == *Rosetta* ]]; then
   printf '  %-16s%sthis shell is running under Rosetta - targeting the native prefix anyway%s\n' \
@@ -831,6 +877,35 @@ else
       result 'installed' 'zshrc hook' "appended to $ZSHRC"
     fi
 
+  fi
+fi
+
+# VS Code extensions
+
+if [[ "${#VSCODE_EXTENSIONS[@]}" -gt 0 ]]; then
+  if [[ "$SKIP_VSCODE_EXT" == "yes" ]]; then
+    phase 'VS Code extensions - skipped (--skip-vscode-extensions)'
+  elif [[ "$HAS_GUI" != "yes" ]]; then
+    phase 'VS Code extensions - no desktop, skipping'
+    result 'no-gui' 'vscode extensions' 'needs a desktop, none detected'
+  elif ! command -v code >/dev/null 2>&1; then
+    phase 'VS Code extensions - code CLI not on PATH, skipping'
+    result 'missing' 'vscode extensions' 'code CLI not found - install the visual-studio-code cask first'
+  else
+    phase 'VS Code extensions - install what is missing, never remove'
+    vscode_installed="$(code --list-extensions 2>/dev/null || true)"
+    for ext in "${VSCODE_EXTENSIONS[@]}"; do
+      [[ -z "$ext" ]] && continue
+      if grep -qiFx "$ext" <<<"$vscode_installed"; then
+        result 'present' "$ext"
+      elif [[ "$DRY_RUN" == "yes" ]]; then
+        result 'would-install' "$ext"
+      elif code --install-extension "$ext" >/dev/null 2>&1; then
+        result 'installed' "$ext"
+      else
+        result 'failed' "$ext" 'code --install-extension failed'
+      fi
+    done
   fi
 fi
 

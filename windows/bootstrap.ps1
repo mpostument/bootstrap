@@ -12,6 +12,10 @@
     Skip the mpv phase.
 .PARAMETER SkipSchedule
     Skip the schedule phase and leave Task Scheduler alone.
+.PARAMETER SkipVsCode
+    Skip installing VS Code extensions from the manifest.
+.PARAMETER SkipUpdateCheck
+    Don't check the GitHub origin for a newer release tag.
 .PARAMETER IncludeUnknown
     Pass --include-unknown to winget upgrade.
 .PARAMETER Silent
@@ -32,6 +36,8 @@ param(
     [switch]$SkipShell,
     [switch]$SkipMpv,
     [switch]$SkipSchedule,
+    [switch]$SkipVsCode,
+    [switch]$SkipUpdateCheck,
     [switch]$IncludeUnknown,
     [switch]$Silent,
     [switch]$ListGroups,
@@ -43,7 +49,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '1.32.0'
+$script:BootstrapVersion = '1.34.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -107,6 +113,41 @@ function Add-Result {
 }
 
 # Environment
+
+function Get-GitHubLatestTag {
+    param([string]$RepoSlug)
+    try {
+        return (Invoke-RestMethod -Uri "https://api.github.com/repos/$RepoSlug/releases/latest" -TimeoutSec 5 -ErrorAction Stop).tag_name
+    } catch {
+        return $null
+    }
+}
+
+# Compares the checkout's own tag against its GitHub origin's latest release -
+# not $script:BootstrapVersion, which is this script's own number and never
+# lines up with the vYYYY.MM.DD bundle tag. Silent whenever it can't be sure:
+# no git checkout (a release zip), no GitHub origin (a fork hosted elsewhere),
+# no tags, or no network - this never blocks or fails the run over it.
+function Test-BootstrapUpdate {
+    if ($SkipUpdateCheck) { return }
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+
+    git -C $script:ToolRoot rev-parse --is-inside-work-tree *> $null
+    if ($LASTEXITCODE -ne 0) { return }
+
+    $originUrl = (git -C $script:ToolRoot remote get-url origin 2>$null) -replace '\.git$', ''
+    if (-not $originUrl -or $originUrl -notmatch 'github\.com[:/](?<slug>[^/]+/[^/]+)$') { return }
+    $repoSlug = $Matches['slug']
+
+    $localTag = git -C $script:ToolRoot describe --tags --abbrev=0 2>$null
+    if (-not $localTag) { return }
+
+    $remoteTag = Get-GitHubLatestTag -RepoSlug $repoSlug
+    if (-not $remoteTag -or $remoteTag -eq $localTag) { return }
+
+    Write-Host ('  update          {0} available (you have {1}) - https://github.com/{2}/releases/tag/{3}' `
+            -f $remoteTag, $localTag, $repoSlug, $remoteTag) -ForegroundColor Yellow
+}
 
 function Test-Elevated {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -590,7 +631,7 @@ function Install-MpvAddon {
 if (-not (Test-Path $ManifestPath)) { throw "Manifest not found: $ManifestPath" }
 $manifest = Import-PowerShellDataFile -Path $ManifestPath
 
-$required = @('Groups', 'Pins', 'Managed', 'Shell', 'Mpv', 'Schedule', 'Git')
+$required = @('Groups', 'Pins', 'Managed', 'Shell', 'Mpv', 'Schedule', 'Git', 'VsCodeExtensions')
 $missing = @($required | Where-Object { -not $manifest.Contains($_) })
 if ($missing.Count -gt 0) {
     throw ("Manifest is missing required section(s): {0}. Found: {1}. See {2}." -f
@@ -650,6 +691,7 @@ Write-Host ('  winget          {0}' -f (& winget --version)) -ForegroundColor Da
 Write-Host ('  PowerShell      {0}' -f $PSVersionTable.PSVersion) -ForegroundColor DarkGray
 Write-Host ('  elevated        {0}' -f $elevated) -ForegroundColor DarkGray
 Write-Host ('  mode            {0}' -f $mode) -ForegroundColor DarkGray
+Test-BootstrapUpdate
 
 if (-not $elevated) {
     Write-Warning @'
@@ -1028,6 +1070,37 @@ if ($SkipSchedule) {
         }
     }
 }
+
+# Phase 6 - VS Code extensions
+
+if ($SkipVsCode) {
+    Write-Phase 'VS Code extensions - skipped (-SkipVsCode)'
+} else {
+    $codeExe = Get-Command code -ErrorAction SilentlyContinue
+    if (-not $codeExe) {
+        Write-Phase 'VS Code extensions - code CLI not on PATH, skipping'
+        Add-Result -Group 'vscode' -Id 'vscode extensions' -Action 'missing' `
+            -Detail 'code CLI not found - install VS Code, then "Shell Command: Install code command in PATH"'
+    } else {
+        Write-Phase 'VS Code extensions - install what is missing, never remove'
+        $installed = @(& code --list-extensions 2>$null)
+        foreach ($extId in $manifest.VsCodeExtensions) {
+            if ($installed -contains $extId) {
+                Add-Result -Group 'vscode' -Id $extId -Action 'present'
+            } elseif (-not $PSCmdlet.ShouldProcess($extId, 'code --install-extension')) {
+                Add-Result -Group 'vscode' -Id $extId -Action 'would-install'
+            } else {
+                & code --install-extension $extId *> $null
+                if ($LASTEXITCODE -eq 0) {
+                    Add-Result -Group 'vscode' -Id $extId -Action 'installed'
+                } else {
+                    Add-Result -Group 'vscode' -Id $extId -Action 'failed' -Detail 'code --install-extension failed'
+                }
+            }
+        }
+    }
+}
+
 # Git - LFS and Unity's merge tool
 
 # Windows PowerShell 5.1, and 7.0-7.2, hand a native program the double quotes

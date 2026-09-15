@@ -41,11 +41,13 @@ none. Override with `--gui` or `--no-gui`.
    to, on desktop machines.
 10. **Nerd Font** — Meslo, on desktop machines.
 11. **Claude Code** — Anthropic's script into `~/.local/bin`.
-12. **zsh** — oh-my-zsh, Starship and plugins, plus a managed
+12. **VS Code extensions** — `VSCODE_EXTENSIONS`, installed with
+    `code --install-extension`; never removes one that isn't listed.
+13. **zsh** — oh-my-zsh, Starship and plugins, plus a managed
     `~/.zshrc.bootstrap` sourced from your own `.zshrc`.
-13. **Prompt config** — `starship.toml` from the repo root to
+14. **Prompt config** — `starship.toml` from the repo root to
     `~/.config/starship.toml`, the same file all three platforms deploy.
-14. **Schedule** — a systemd system timer that re-runs this script daily.
+15. **Schedule** — a systemd system timer that re-runs this script daily.
 
 ## Options
 
@@ -56,6 +58,10 @@ none. Override with `--gui` or `--no-gui`.
 --list-packages    Print every package/tool this script manages and exit.
 --skip-upgrade     Install what is missing, leave installed versions alone.
 --skip-schedule    Leave the systemd timer alone.
+--skip-vscode-extensions
+                   Install none of the VS Code extensions in the manifest.
+--skip-update-check
+                   Don't check the GitHub origin for a newer release tag.
 --gui / --no-gui   Override desktop detection instead of probing for it.
 --yes              Pass -y to apt. Implied when not attached to a terminal.
 --version          Print the version and exit.
@@ -125,3 +131,8 @@ independently. This one's number is `BOOTSTRAP_VERSION` in `bootstrap.sh`, with
 notes in `CHANGELOG.md`. The release workflow refuses to publish if the current
 version has no changelog section, a script fails to parse, or shellcheck
 complains.
+
+Preflight checks this checkout's own GitHub origin for a newer release tag and
+prints one line if it's behind - separate from `BOOTSTRAP_VERSION` above,
+which is this script's own number. Silent on a release tarball, a fork, or no
+network. `--skip-update-check` opts out.

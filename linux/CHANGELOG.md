@@ -15,6 +15,39 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.1]
+
+### Changed
+
+- **Release-binary upgrade lines now name the package (`uv`, `bat`, `helm`,
+  ...) instead of a hand-written description ("Python package and venv
+  manager").** Matches how `windows/bootstrap.ps1` labels its winget rows.
+  The now-unused `RELEASE_*_DESC` entries are gone from `packages.conf`.
+
+## [1.29.0]
+
+### Added
+
+- **A self-update check in Preflight.** If the checkout is a git clone with a
+  GitHub `origin` and at least one tag, `bootstrap.sh` compares it against
+  that repository's latest release and prints one line when it's behind -
+  `BOOTSTRAP_VERSION` is this script's own number and never lines up with the
+  bundle's `vYYYY.MM.DD` tag, so the two are compared separately. Never
+  installs anything itself, never fails the run: no git, no GitHub origin
+  (a fork hosted elsewhere), no tags, or no network all skip silently.
+  `--skip-update-check` opts out.
+
+## [1.28.0]
+
+### Added
+
+- **`VSCODE_EXTENSIONS` in `packages.conf`, and a new phase in
+  `bootstrap.sh` that installs them.** Curated from `code --list-extensions`
+  on the Windows machine, same list on all three platforms. Install-only:
+  never uninstalls an extension that isn't listed. Skips with `no-gui` on a
+  headless box (VS Code itself needs a desktop) and with `missing` if the
+  `code` CLI isn't on PATH yet; `--skip-vscode-extensions` opts out.
+
 ## [1.27.1]
 
 ### Added

@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.27.1'
+BOOTSTRAP_VERSION='1.29.1'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -11,6 +11,8 @@ DRY_RUN=no
 SKIP_UPGRADE=no
 SKIP_SCHEDULE=no
 SKIP_REPOS=no
+SKIP_VSCODE_EXT=no
+SKIP_UPDATE_CHECK=no
 ASSUME_YES=no
 GUI_OVERRIDE=auto
 ONLY_GROUPS=""
@@ -47,6 +49,46 @@ result() {
 }
 
 die() { printf '%serror:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
+
+github_latest_tag() {   # github_latest_tag <owner/repo> [tag prefix]
+  if [[ -z "${2:-}" ]]; then
+    curl -fsSL "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
+      | grep -m1 '"tag_name"' \
+      | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || true
+    return
+  fi
+  # A repository that releases several products has one "latest" for all of
+  # them - bitwarden/clients: web, desktop, browser, cli. Take the newest tag
+  # that is the prefix and a bare version, which also skips -rc tags.
+  curl -fsSL "https://api.github.com/repos/$1/releases?per_page=50" 2>/dev/null \
+    | grep '"tag_name"' \
+    | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' \
+    | grep -m1 -E "^${2}[0-9]+(\.[0-9]+)*\$" || true
+}
+
+# Compares the checkout's own tag against its GitHub origin's latest release -
+# not BOOTSTRAP_VERSION, which is this script's own number and never lines up
+# with the vYYYY.MM.DD bundle tag. Silent whenever it can't be sure: no git
+# checkout (a release tarball), no GitHub origin (a fork hosted elsewhere), no
+# tags, or no network - this never blocks or fails the run over it.
+check_bootstrap_update() {
+  [[ "$SKIP_UPDATE_CHECK" == yes ]] && return 0
+  git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+
+  local origin_url repo_slug local_tag remote_tag
+  origin_url="$(git -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null || true)"
+  repo_slug="$(printf '%s' "${origin_url%.git}" | sed -n 's#.*github\.com[:/]\([^/]*/[^/]*\)$#\1#p')"
+  [[ -n "$repo_slug" ]] || return 0
+
+  local_tag="$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null || true)"
+  [[ -n "$local_tag" ]] || return 0
+
+  remote_tag="$(github_latest_tag "$repo_slug")"
+  [[ -n "$remote_tag" && "$remote_tag" != "$local_tag" ]] || return 0
+
+  printf '  %-16s%s%s available (you have %s)%s - https://github.com/%s/releases/tag/%s\n' \
+    'update' "$C_YELLOW" "$remote_tag" "$local_tag" "$C_RESET" "$repo_slug" "$remote_tag"
+}
 
 # Is there a desktop on this machine?
 has_desktop() {
@@ -110,6 +152,10 @@ Usage: bootstrap.sh [options]
   --skip-repos       Add no third-party apt sources and install none of
                      their packages. For a host where something else
                      already owns those repositories.
+  --skip-vscode-extensions
+                     Install none of the VS Code extensions in the manifest.
+  --skip-update-check
+                     Don't check the GitHub origin for a newer release tag.
   --gui / --no-gui   Override desktop detection instead of probing for it.
   --yes              Pass -y to apt. Implied when not attached to a terminal.
   --version          Print the version and exit.
@@ -123,6 +169,8 @@ while [[ $# -gt 0 ]]; do
     --skip-upgrade)  SKIP_UPGRADE=yes ;;
     --skip-schedule) SKIP_SCHEDULE=yes ;;
     --skip-repos)    SKIP_REPOS=yes ;;
+    --skip-vscode-extensions) SKIP_VSCODE_EXT=yes ;;
+    --skip-update-check) SKIP_UPDATE_CHECK=yes ;;
     --yes|-y)        ASSUME_YES=yes ;;
     --gui)           GUI_OVERRIDE=yes ;;
     --no-gui)        GUI_OVERRIDE=no ;;
@@ -147,7 +195,7 @@ source "$MANIFEST"
 
 for required in PKG_GROUPS MANUAL HELD TOOLS REPOS RELEASES ZSH_PLUGINS ZSH_CUSTOM_PLUGINS \
                 DOTNET_ENABLED ZSH_ENABLED NERD_FONT_ENABLED CLAUDE_CODE_ENABLED \
-                MISE_ENABLED \
+                MISE_ENABLED VSCODE_EXTENSIONS \
                 AWSCLI_ENABLED GHOSTTY_ENABLED SCHEDULE_ENABLED HISTORY_SIZE HISTORY_FILE_SIZE; do
   declare -p "$required" >/dev/null 2>&1 || die "manifest is missing \$$required: $MANIFEST"
 done
@@ -228,6 +276,13 @@ if [[ "${LIST_PACKAGES:-no}" == "yes" ]]; then
   if [[ "${GHOSTTY_ENABLED:-no}" == "yes" && -n "${GHOSTTY_DEB_REPO:-}" ]]; then
     printf '  %scommunity .deb%s\n    %sghostty%s\n' "$C_CYAN" "$C_RESET" "$C_DIM" "$C_RESET"
   fi
+  if [[ "${#VSCODE_EXTENSIONS[@]}" -gt 0 ]]; then
+    printf '  %sVS Code extensions%s\n' "$C_CYAN" "$C_RESET"
+    for ext in "${VSCODE_EXTENSIONS[@]:-}"; do
+      [[ -z "$ext" ]] && continue
+      printf '    %s%s%s\n' "$C_DIM" "$ext" "$C_RESET"
+    done
+  fi
   echo
   exit 0
 fi
@@ -247,6 +302,7 @@ fi
 printf '  %-16s%s\n' 'bootstrap' "v$BOOTSTRAP_VERSION"
 printf '  %-16s%s\n' 'distro' "$DISTRO"
 printf '  %-16s%s\n' 'user' "$(id -un) (uid $(id -u))"
+check_bootstrap_update
 
 if [[ "$GUI_OVERRIDE" == "auto" ]]; then
   if has_desktop; then HAS_GUI=yes; else HAS_GUI=no; fi
@@ -677,22 +733,8 @@ else
 fi
 
 # Release binaries
-
-github_latest_tag() {   # github_latest_tag <owner/repo> [tag prefix]
-  if [[ -z "${2:-}" ]]; then
-    curl -fsSL "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
-      | grep -m1 '"tag_name"' \
-      | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || true
-    return
-  fi
-  # A repository that releases several products has one "latest" for all of
-  # them - bitwarden/clients: web, desktop, browser, cli. Take the newest tag
-  # that is the prefix and a bare version, which also skips -rc tags.
-  curl -fsSL "https://api.github.com/repos/$1/releases?per_page=50" 2>/dev/null \
-    | grep '"tag_name"' \
-    | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' \
-    | grep -m1 -E "^${2}[0-9]+(\.[0-9]+)*\$" || true
-}
+# github_latest_tag is defined near the top, alongside check_bootstrap_update
+# which is its other caller.
 
 binary_version() {
   local bin="$1" out v a
@@ -736,9 +778,9 @@ unpack_asset() {
 
 install_release() {
   local name="$1"
-  local desc_var="RELEASE_${name}_DESC" repo_var="RELEASE_${name}_REPO"
+  local repo_var="RELEASE_${name}_REPO"
   local bin_var="RELEASE_${name}_BIN" asset_var="RELEASE_${name}_ASSET"
-  local desc="${!desc_var:-$name}" repo="${!repo_var}"
+  local repo="${!repo_var}"
   local binname="${!bin_var}" asset="${!asset_var}"
   local bins_var="RELEASE_${name}_BINS"
   local bins="${!bins_var:-$binname}"
@@ -750,7 +792,7 @@ install_release() {
   [[ -x "$target" ]] && have="$(binary_version "$target" "$verargs")"
 
   if [[ -n "$have" && "$SKIP_UPGRADE" == "yes" ]]; then
-    result 'skipped' "$desc" "$have"
+    result 'skipped' "$name" "$have"
     return
   fi
 
@@ -759,9 +801,9 @@ install_release() {
   tag="$(github_latest_tag "$repo" "${!prefix_var:-}")"
   if [[ -z "$tag" ]]; then
     if [[ -n "$have" ]]; then
-      result 'current' "$desc" "$have (could not reach the GitHub API)"
+      result 'current' "$name" "$have (could not reach the GitHub API)"
     else
-      result 'failed' "$desc" "could not reach the GitHub API for $repo"
+      result 'failed' "$name" "could not reach the GitHub API for $repo"
     fi
     return
   fi
@@ -771,15 +813,15 @@ install_release() {
   [[ "$want" =~ ^[0-9] ]] || want="$(printf '%s' "$tag" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
 
   if [[ "$have" == "$want" ]]; then
-    result 'current' "$desc" "$have"
+    result 'current' "$name" "$have"
     return
   fi
 
   if [[ "$DRY_RUN" == "yes" ]]; then
     if [[ -n "$have" ]]; then
-      result 'would-upgrade' "$desc" "$have -> $want"
+      result 'would-upgrade' "$name" "$have -> $want"
     else
-      result 'would-install' "$desc" "$want into $RELEASE_BIN_DIR"
+      result 'would-install' "$name" "$want into $RELEASE_BIN_DIR"
     fi
     return
   fi
@@ -810,16 +852,16 @@ install_release() {
     local now
     now="$(binary_version "$target" "$verargs")"
     if [[ -z "$have" ]]; then
-      result 'installed' "$desc" "${now:-$want}"
+      result 'installed' "$name" "${now:-$want}"
     elif [[ "$now" == "$have" ]]; then
-      result 'current' "$desc" "$have (release $tag carries the same build)"
+      result 'current' "$name" "$have (release $tag carries the same build)"
     else
-      result 'upgraded' "$desc" "$have -> ${now:-$want}"
+      result 'upgraded' "$name" "$have -> ${now:-$want}"
     fi
   else
     local why=""
     [[ -s "$tmp/curl.err" ]] && why="$(tail -1 "$tmp/curl.err" | sed 's/^curl: //')"
-    result 'failed' "$desc" "${why:-could not fetch or unpack}: $url"
+    result 'failed' "$name" "${why:-could not fetch or unpack}: $url"
   fi
   rm -rf "$tmp"
 }
@@ -1063,6 +1105,35 @@ else
       result 'failed' 'Claude Code' "installer failed: $CLAUDE_CODE_INSTALLER"
     fi
     rm -f "$claude_script"
+  fi
+fi
+
+# VS Code extensions
+
+if [[ "${#VSCODE_EXTENSIONS[@]}" -gt 0 ]]; then
+  if [[ "$SKIP_VSCODE_EXT" == "yes" ]]; then
+    phase 'VS Code extensions - skipped (--skip-vscode-extensions)'
+  elif [[ "$HAS_GUI" != "yes" ]]; then
+    phase 'VS Code extensions - no desktop, skipping'
+    result 'no-gui' 'vscode extensions' 'needs a desktop, none detected'
+  elif ! command -v code >/dev/null 2>&1; then
+    phase 'VS Code extensions - code CLI not on PATH, skipping'
+    result 'missing' 'vscode extensions' 'code CLI not found - install the vscode repo package first'
+  else
+    phase 'VS Code extensions - install what is missing, never remove'
+    vscode_installed="$(code --list-extensions 2>/dev/null || true)"
+    for ext in "${VSCODE_EXTENSIONS[@]}"; do
+      [[ -z "$ext" ]] && continue
+      if grep -qiFx "$ext" <<<"$vscode_installed"; then
+        result 'present' "$ext"
+      elif [[ "$DRY_RUN" == "yes" ]]; then
+        result 'would-install' "$ext"
+      elif code --install-extension "$ext" >/dev/null 2>&1; then
+        result 'installed' "$ext"
+      else
+        result 'failed' "$ext" 'code --install-extension failed'
+      fi
+    done
   fi
 fi
 

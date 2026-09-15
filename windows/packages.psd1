@@ -149,6 +149,45 @@
         }
     )
 
+    # Curated from `code --list-extensions` on this machine, minus duplicates
+    # (docker.docker over the two ms-azuretools Docker/Container Tools
+    # extensions, GitLens over donjayamanne.githistory, hashicorp.terraform
+    # already bundles HCL, the python extension pack over its loose parts).
+    # Install-only: never uninstalls an extension that isn't listed here.
+    VsCodeExtensions = @(
+        'aaron-bond.better-comments'
+        'anthropic.claude-code'
+        'christian-kohler.path-intellisense'
+        'codezombiech.gitignore'
+        'davidanson.vscode-markdownlint'
+        'docker.docker'
+        'eamodio.gitlens'
+        'github.vscode-pull-request-github'
+        'golang.go'
+        'hashicorp.terraform'
+        'ms-azuretools.vscode-azureterraform'
+        'ms-dotnettools.csdevkit'
+        'ms-dotnettools.csharp'
+        'ms-dotnettools.vscode-dotnet-runtime'
+        'ms-kubernetes-tools.vscode-kubernetes-tools'
+        'ms-python.debugpy'
+        'ms-python.python'
+        'ms-python.vscode-pylance'
+        'ms-vscode-remote.remote-containers'
+        'ms-vscode-remote.remote-ssh'
+        'ms-vscode-remote.remote-ssh-edit'
+        'ms-vscode-remote.remote-wsl'
+        'ms-vscode-remote.vscode-remote-extensionpack'
+        'ms-vscode.powershell'
+        'ms-vscode.remote-explorer'
+        'ms-vscode.remote-server'
+        'redhat.vscode-commons'
+        'redhat.vscode-yaml'
+        'visualstudiotoolsforunity.vstuc'
+        'vscode-icons-team.vscode-icons'
+        'yzhang.markdown-all-in-one'
+    )
+
     Schedule = @{
         Enabled  = $true
         TaskName = 'windows-bootstrap daily update'
