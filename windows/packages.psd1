@@ -58,6 +58,16 @@
                 'Microsoft.OpenJDK.21'
                 'jdx.mise'
                 'astral-sh.uv'
+                'koalaman.shellcheck'
+            )
+        }
+
+        @{
+            Name        = 'infra'
+            Description = 'Configuration management and linting'
+            Packages    = @(
+                'TerraformLinters.tflint'
+                'Terraform-docs.Terraform-docs'
             )
         }
 
@@ -66,6 +76,7 @@
             Description = 'Cloud and Kubernetes CLIs'
             Packages    = @(
                 'Kubernetes.kubectl'
+                'Kubecolor.kubecolor'
                 'Helm.Helm'
                 'Derailed.k9s'
                 'stern.stern'
@@ -81,6 +92,7 @@
             Packages    = @(
                 'FujiApple.Trippy'
                 'orf.gping'
+                'Insecure.Nmap'
             )
         }
 

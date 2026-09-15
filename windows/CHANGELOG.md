@@ -20,6 +20,22 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.35.0]
+
+### Added
+
+- **An `infra` group: `TerraformLinters.tflint`, `Terraform-docs.Terraform-docs`.**
+  Linux and macOS both already install these; `ansible-lint`, `yamllint` and
+  `pre-commit` stay off Windows for now since none of them have a usable
+  winget package (checked with `winget search`) and there's no
+  `uv tool install`-style mechanism here yet to fall back to.
+
+- **`Kubecolor.kubecolor` in `cloud`, `Insecure.Nmap` in `network`,
+  `koalaman.shellcheck` in `dev`.** Linux and macOS both already carry these;
+  Windows had fallen behind. `btop` and `fx` are deliberately still not
+  added - `btop4win` is a separate, less-maintained port (see
+  `tools/cli-parity.conf`), and `fx` has no winget package at all.
+
 ## [1.34.0]
 
 ### Added
