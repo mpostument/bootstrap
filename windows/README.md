@@ -32,7 +32,8 @@ once running, but cannot clear it from the file you are starting.
 2. **Python tools** — each group's `UvTools` entries, through `uv tool`: one
    environment per tool, for the CLIs winget has no package for.
 3. **Externally managed software** — detects and reports, changes nothing.
-4. **Shell** — Nerd Font from GitHub, `starship.toml` from the repo root,
+4. **Shell** — Nerd Font from GitHub, `starship.toml` and the bat config and
+   Catppuccin Mocha theme from the repo root,
    PowerShell modules for 5.1 and 7, the profile, execution policy, and a
    Windows Terminal settings merge that patches keys instead of overwriting.
 5. **mpv** — config, UI and scripts. Skip with `-SkipMpv`.

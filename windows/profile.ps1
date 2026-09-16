@@ -2,7 +2,7 @@
 
 # Force UTF-8 everywhere: console I/O, and cmdlets that write files (Out-File, Set-Content, etc.)
 # default to the system codepage otherwise, which mangles emoji/box-drawing chars from tools
-# like starship, eza, and Terminal-Icons into mojibake (e.g. "≡ƒÄ»" instead of a target emoji).
+# like starship and eza into mojibake (e.g. "≡ƒÄ»" instead of a target emoji).
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::InputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -34,9 +34,15 @@ Set-PSReadLineKeyHandler -Key Ctrl+RightArrow -Function ForwardWord
 Set-PSReadLineKeyHandler -Key Ctrl+LeftArrow -Function BackwardWord
 Set-PSReadLineKeyHandler -Key RightArrow -Function ForwardChar
 
-# Terminal-Icons -- file-type icons in Get-ChildItem / ls output
-# https://github.com/devblackops/Terminal-Icons
-Import-Module Terminal-Icons -ErrorAction SilentlyContinue
+# fzf colours: Catppuccin Mocha, the palette starship.toml, the Windows
+# Terminal scheme and atuin use. Set before PSFzf, which shells out to fzf and
+# inherits it. https://github.com/catppuccin/fzf
+$env:FZF_DEFAULT_OPTS = @(
+    '--color=bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8'
+    '--color=fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc'
+    '--color=marker:#b4befe,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8'
+    '--color=selected-bg:#45475a,border:#6c7086,label:#cdd6f4'
+) -join ' '
 
 # PSFzf -- fuzzy history (Ctrl+R), file (Ctrl+T) and git completion
 # https://github.com/kelleyma49/PSFzf
@@ -140,14 +146,17 @@ if (Get-Command mise -ErrorAction SilentlyContinue) {
 # carapace -- flag and subcommand completion for 1000+ CLIs (kubectl, gh, az,
 # helm...) through one engine. https://github.com/carapace-sh/carapace-bin
 # CARAPACE_COLOR=0 because PSFzf's Tab list shows each completion's label as-is,
-# so carapace's colours would arrive there as raw escape sequences. git is
-# excluded and left to posh-git, imported below.
+# so carapace's colours would arrive there as raw escape sequences. git is NOT
+# excluded here, unlike the zsh platforms where zsh's own _git is better: on
+# PowerShell carapace's git completer is the best available - branches by
+# category for checkout/switch, only changed files for add/restore, remotes for
+# push, and the repository's own aliases with their definitions as descriptions.
 # PowerShell 7 only: Windows PowerShell 5.1 drops the empty argument carapace's
 # completer passes for the word under the cursor, gets `[]` back and throws - so
-# every Tab cost a carapace run and still ended in file names.
+# every Tab cost a carapace run and still ended in file names. 5.1 therefore has
+# no git completion at all now that posh-git is gone; 7 is the default profile.
 if ($PSVersionTable.PSVersion.Major -ge 7 -and (Get-Command carapace -ErrorAction SilentlyContinue)) {
     $env:CARAPACE_COLOR = '0'
-    $env:CARAPACE_EXCLUDES = 'git'
     # carapace ends each value with a space (`get `) to move MenuComplete on to the
     # next argument. PSFzf quotes any completion containing whitespace and adds its
     # own space, so Tab produced `kubectl "get " ` and kubectl rejected `get `.
@@ -206,10 +215,6 @@ if (Get-Command kubectl -ErrorAction SilentlyContinue) {
 if ((Get-Command trip -ErrorAction SilentlyContinue) -and (Get-Command gsudo -ErrorAction SilentlyContinue)) {
     function trip { gsudo trip.exe @args }
 }
-
-# posh-git -- tab-completion for git subcommands, branches and remotes
-# https://github.com/dahlbyk/posh-git
-Import-Module posh-git -ErrorAction SilentlyContinue
 
 # Starship
 # https://starship.rs/

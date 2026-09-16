@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.30.0'
+BOOTSTRAP_VERSION='1.32.0'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -49,6 +49,44 @@ result() {
 }
 
 die() { printf '%serror:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
+
+# Temp files and directories
+#
+# Every temp path goes through mktemp_tracked, which remembers it so an
+# interrupted run cleans up after itself. Without this a Ctrl-C between the
+# mktemp and the mv left the half-written file behind: ~/.zshrc.bootstrap.XXXXXX
+# and friends accumulated in $HOME, looking enough like config to confuse.
+# Paths that were moved into place are gone by the time cleanup runs, and
+# rm -f on a missing path is a no-op, so tracking every one is safe.
+BOOTSTRAP_TMP=()
+
+# Assigns to the variable named in $1 rather than printing: a command
+# substitution would run the append in a subshell and the parent would forget
+# the path, which is the whole point of tracking it.
+mktemp_tracked() {   # mktemp_tracked <varname> [mktemp args...]
+  local _var="$1"; shift
+  local _t
+  _t="$(mktemp "$@")" || return 1
+  BOOTSTRAP_TMP+=("$_t")
+  printf -v "$_var" '%s' "$_t"
+}
+
+cleanup_tmp() {
+  local _t
+  # Guarded expansion: bash 3.2 under set -u calls an empty array unbound.
+  for _t in ${BOOTSTRAP_TMP[@]+"${BOOTSTRAP_TMP[@]}"}; do
+    [[ -n "$_t" ]] && rm -rf "$_t" 2>/dev/null
+  done
+  return 0
+}
+
+# EXIT covers a normal end and a die; INT and TERM re-exit with the signal's
+# conventional status, which fires the EXIT trap in turn - cleanup_tmp is
+# idempotent, so running twice costs nothing.
+trap cleanup_tmp EXIT
+trap 'cleanup_tmp; exit 130' INT
+trap 'cleanup_tmp; exit 143' TERM
+
 
 github_latest_tag() {   # github_latest_tag <owner/repo> [tag prefix]
   if [[ -z "${2:-}" ]]; then
@@ -193,7 +231,7 @@ done
 # shellcheck source=packages.conf
 source "$MANIFEST"
 
-for required in PKG_GROUPS MANUAL HELD TOOLS REPOS RELEASES ZSH_PLUGINS ZSH_CUSTOM_PLUGINS \
+for required in PKG_GROUPS MANUAL HELD TOOLS REPOS RELEASES ZSH_PLUGIN_REPOS \
                 DOTNET_ENABLED ZSH_ENABLED NERD_FONT_ENABLED CLAUDE_CODE_ENABLED \
                 MISE_ENABLED VSCODE_EXTENSIONS \
                 AWSCLI_ENABLED GHOSTTY_ENABLED SCHEDULE_ENABLED HISTORY_SIZE HISTORY_FILE_SIZE; do
@@ -477,7 +515,7 @@ setup_repo() {
 
   run_priv install -m 0755 -d "$KEYRING_DIR"
   local keytmp keyok=no
-  keytmp="$(mktemp)"
+  mktemp_tracked keytmp
   if curl -fsSL "$key_url" -o "$keytmp" 2>/dev/null; then
     # Most vendors publish an ASCII-armoured key; GitHub CLI publishes a binary
     # keyring, which gpg --dearmor rejects. Only the armoured kind is converted.
@@ -704,7 +742,7 @@ else
     elif [[ "$DRY_RUN" == "yes" ]]; then
       result 'would-upgrade' 'dotnet SDK' "channel ${DOTNET_CHANNEL}, have ${versions:-none}"
     else
-      tmp_script="$(mktemp)"
+      mktemp_tracked tmp_script
       if curl -fsSL https://dot.net/v1/dotnet-install.sh -o "$tmp_script" 2>/dev/null &&
          bash "$tmp_script" --channel "$DOTNET_CHANNEL" --install-dir "$DOTNET_DIR" >/dev/null 2>&1; then
         after="$("$dotnet_exe" --list-sdks 2>/dev/null | awk '{print $1}' | paste -sd, - || true)"
@@ -721,7 +759,7 @@ else
   elif [[ "$DRY_RUN" == "yes" ]]; then
     result 'would-install' 'dotnet SDK' "channel ${DOTNET_CHANNEL} into ${DOTNET_DIR}"
   else
-    tmp_script="$(mktemp)"
+    mktemp_tracked tmp_script
     if curl -fsSL https://dot.net/v1/dotnet-install.sh -o "$tmp_script" 2>/dev/null &&
        bash "$tmp_script" --channel "$DOTNET_CHANNEL" --install-dir "$DOTNET_DIR" >/dev/null 2>&1; then
       result 'installed' 'dotnet SDK' "$("$dotnet_exe" --list-sdks 2>/dev/null | awk '{print $1}' | paste -sd, - || true)"
@@ -841,7 +879,7 @@ install_release() {
   url="${url//\{VERSION\}/$want}"
 
   local tmp
-  tmp="$(mktemp -d)"
+  mktemp_tracked tmp -d
   if (
     cd "$tmp" &&
     curl -fsSL -o asset "$url" 2>curl.err &&
@@ -971,7 +1009,7 @@ if [[ "${GHOSTTY_ENABLED:-no}" == "yes" && -n "${GHOSTTY_DEB_REPO:-}" ]]; then
         result 'would-install' 'ghostty' "$ghostty_want"
       fi
     else
-      ghostty_tmp="$(mktemp -d)"
+      mktemp_tracked ghostty_tmp -d
       # apt reads a local .deb as the _apt user, so it has to be world-readable.
       chmod 0755 "$ghostty_tmp"
       if curl -fsSL -o "$ghostty_tmp/ghostty.deb" "$ghostty_url" \
@@ -1011,7 +1049,7 @@ else
     fi
   else
     aws_url="${AWSCLI_URL//\{UNAME_ARCH\}/$UNAME_ARCH}"
-    aws_tmp="$(mktemp -d)"
+    mktemp_tracked aws_tmp -d
     aws_mode=()
     [[ -n "$aws_have" ]] && aws_mode=(--update)
     if (
@@ -1059,7 +1097,7 @@ else
     result 'would-install' "font: $NERD_FONT_NAME" "$NERD_FONT_DIR"
   else
     font_url="https://github.com/${NERD_FONT_REPO}/releases/latest/download/${NERD_FONT_NAME}.tar.xz"
-    font_tmp="$(mktemp -d)"
+    mktemp_tracked font_tmp -d
     if (
       cd "$font_tmp" &&
       curl -fsSL -o font.tar.xz "$font_url" &&
@@ -1096,7 +1134,7 @@ else
   elif [[ "$DRY_RUN" == "yes" ]]; then
     result 'would-install' 'Claude Code' "$CLAUDE_CODE_INSTALLER"
   else
-    claude_script="$(mktemp)"
+    mktemp_tracked claude_script
     if curl -fsSL "$CLAUDE_CODE_INSTALLER" -o "$claude_script" 2>/dev/null &&
        bash "$claude_script" >/dev/null 2>&1 &&
        [[ -x "${HOME}/.local/bin/claude" ]]; then
@@ -1173,7 +1211,7 @@ else
   elif [[ "$DRY_RUN" == "yes" ]]; then
     result 'would-install' 'mise' "$MISE_INSTALLER"
   else
-    mise_script="$(mktemp)"
+    mktemp_tracked mise_script
     if curl -fsSL "$MISE_INSTALLER" -o "$mise_script" 2>/dev/null &&
        sh "$mise_script" >/dev/null 2>&1 &&
        [[ -x "${HOME}/.local/bin/mise" ]]; then
@@ -1185,46 +1223,61 @@ else
   fi
 fi
 
+
+# mise global runtimes - node, go and java from one shared list, so the three
+# platforms cannot drift apart. `mise use -g` merges into the user's global
+# config rather than replacing it, so a tool added by hand survives.
+MISE_TOOLS_FILE="${SCRIPT_DIR}/../mise/tools.conf"
+phase 'mise - global runtimes'
+if ! command -v mise >/dev/null 2>&1; then
+  result 'missing' 'mise runtimes' 'mise is not installed'
+elif [[ ! -r "$MISE_TOOLS_FILE" ]]; then
+  result 'failed' 'mise runtimes' "not found at $MISE_TOOLS_FILE"
+else
+  _mise_have="$(mise ls -g 2>/dev/null | awk '{print $1}')"
+  while IFS= read -r _entry || [[ -n "$_entry" ]]; do
+    _entry="${_entry%%#*}"
+    _entry="$(printf '%s' "$_entry" | tr -d '[:space:]')"
+    [[ -z "$_entry" ]] && continue
+    _tool="${_entry%%@*}"
+    if printf '%s\n' "$_mise_have" | grep -qx "$_tool"; then
+      result 'current' "$_entry" "$(mise current "$_tool" 2>/dev/null || echo installed)"
+    elif [[ "$DRY_RUN" == "yes" ]]; then
+      result 'would-install' "$_entry" "mise use -g $_entry"
+    elif mise use -g "$_entry" >/dev/null 2>&1; then
+      result 'installed' "$_entry" "$(mise current "$_tool" 2>/dev/null || echo ok)"
+    else
+      result 'failed' "$_entry" "run by hand: mise use -g $_entry"
+    fi
+  done < "$MISE_TOOLS_FILE"
+fi
+
 # zsh
 
 if [[ "${ZSH_ENABLED:-no}" != "yes" ]]; then
   phase 'zsh - disabled in the manifest'
 else
-  phase 'zsh - oh-my-zsh, theme and plugins'
+  phase 'zsh - completion, keybindings and the managed fragment'
 
-  OMZ_DIR="${ZSH:-$HOME/.oh-my-zsh}"
-  OMZ_CUSTOM="${OMZ_DIR}/custom"
+  # Homebrew packages these on macOS; here they are git checkouts the fragment
+  # sources by absolute path. They used to live under oh-my-zsh's custom/.
+  ZSH_PLUGIN_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/zsh/plugins"
 
   if ! command -v zsh >/dev/null 2>&1; then
     result 'missing' 'zsh' 'install the shell group first'
   else
-    if [[ -d "$OMZ_DIR" ]]; then
-      result 'current' 'oh-my-zsh' "$OMZ_DIR"
-    elif [[ "$DRY_RUN" == "yes" ]]; then
-      result 'would-install' 'oh-my-zsh' "$OMZ_DIR"
-    else
-      if RUNZSH=no CHSH=no sh -c \
-          "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" \
-          "" --unattended >/dev/null 2>&1; then
-        result 'installed' 'oh-my-zsh' "$OMZ_DIR"
-      else
-        result 'failed' 'oh-my-zsh' 'installer failed'
-      fi
-    fi
-
-    if [[ -d "$OMZ_DIR" || "$DRY_RUN" == "yes" ]]; then
-      for entry in "${ZSH_CUSTOM_PLUGINS[@]:-}"; do
-        [[ -z "$entry" ]] && continue
-        git_clone_or_update "plugin: ${entry%%|*}" "${OMZ_CUSTOM}/plugins/${entry%%|*}" "${entry#*|}"
-      done
-    fi
-
-    COMPFIX_DIRS=("$OMZ_DIR" "$OMZ_CUSTOM" "${OMZ_CUSTOM}/plugins" "${OMZ_CUSTOM}/themes")
-    for entry in "${ZSH_CUSTOM_PLUGINS[@]:-}"; do
+    [[ "$DRY_RUN" == "yes" ]] || mkdir -p "$ZSH_PLUGIN_DIR"
+    for entry in "${ZSH_PLUGIN_REPOS[@]:-}"; do
       [[ -z "$entry" ]] && continue
-      COMPFIX_DIRS+=("${OMZ_CUSTOM}/plugins/${entry%%|*}")
-      [[ -d "${OMZ_CUSTOM}/plugins/${entry%%|*}/src" ]] && \
-        COMPFIX_DIRS+=("${OMZ_CUSTOM}/plugins/${entry%%|*}/src")
+      git_clone_or_update "plugin: ${entry%%|*}" "${ZSH_PLUGIN_DIR}/${entry%%|*}" "${entry#*|}"
+    done
+
+    COMPFIX_DIRS=("$ZSH_PLUGIN_DIR")
+    for entry in "${ZSH_PLUGIN_REPOS[@]:-}"; do
+      [[ -z "$entry" ]] && continue
+      COMPFIX_DIRS+=("${ZSH_PLUGIN_DIR}/${entry%%|*}")
+      [[ -d "${ZSH_PLUGIN_DIR}/${entry%%|*}/src" ]] && \
+        COMPFIX_DIRS+=("${ZSH_PLUGIN_DIR}/${entry%%|*}/src")
     done
 
     INSECURE_DIRS=()
@@ -1253,19 +1306,84 @@ else
     if [[ "$DRY_RUN" == "yes" ]]; then
       result 'would-install' 'zsh config' "$FRAGMENT"
     else
-      NEW_FRAGMENT="$(mktemp "${FRAGMENT}.XXXXXX")"
+      mktemp_tracked NEW_FRAGMENT "${FRAGMENT}.XXXXXX"
       chmod 0644 "$NEW_FRAGMENT"
       {
         echo
         echo '[ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH"'
         echo
-        echo "export ZSH=\"$OMZ_DIR\""
-        echo "ZSH_THEME=\"$ZSH_THEME\""
+        echo "fpath+=(\"${ZSH_PLUGIN_DIR}/zsh-completions/src\")"
         echo
-        printf 'plugins=(%s)\n' "${ZSH_PLUGINS[*]}"
-        echo 'source "$ZSH/oh-my-zsh.sh"'
+        # The options oh-my-zsh's lib/ used to set, minus the ones set further
+        # down for history and the ones a theme would have wanted.
+        echo 'setopt EXTENDED_GLOB        # (#q...) qualifiers, used by compinit below'
+        echo 'setopt AUTO_CD              # a bare directory name means cd'
+        echo 'setopt AUTO_PUSHD           # every cd pushes onto the stack'
+        echo 'setopt PUSHD_IGNORE_DUPS'
+        echo 'setopt PUSHD_MINUS          # cd -1 is the previous directory'
+        echo 'setopt ALWAYS_TO_END        # completion leaves the cursor after the word'
+        echo 'setopt COMPLETE_IN_WORD     # complete from the cursor, not the word end'
+        echo 'setopt AUTO_MENU            # a second Tab opens the menu'
+        echo 'setopt INTERACTIVE_COMMENTS # a # starts a comment on the command line'
+        echo 'setopt LONG_LIST_JOBS'
+        echo 'setopt MULTIOS              # echo >file1 >file2'
+        echo 'unsetopt MENU_COMPLETE      # Tab never picks an entry for you'
+        echo 'unsetopt FLOW_CONTROL       # ^S and ^Q stay usable keys'
+        echo 'bindkey -e                  # emacs keymap, whatever $EDITOR says'
+        echo
+        # compinit is the slow half of shell startup. The full security-checked
+        # run happens once a day and the cached one covers the rest; the fpath
+        # permissions it would warn about are fixed by the phase above.
+        echo 'autoload -Uz compinit'
+        echo '_zcompdump="$HOME/.zcompdump"'
+        echo '_zcompdump_fresh=( ${_zcompdump}(#qN.mh-24) )'
+        echo 'if (( $#_zcompdump_fresh )); then'
+        echo '  compinit -C -d "$_zcompdump"'
+        echo 'else'
+        echo '  compinit -d "$_zcompdump"'
+        echo 'fi'
+        echo 'unset _zcompdump _zcompdump_fresh'
+        echo
+        echo "WORDCHARS=''                # ^W and Alt-B stop at every punctuation mark"
+        echo "zstyle ':completion:*' matcher-list 'm:{[:lower:][:upper:]-_}={[:upper:][:lower:]_-}' 'r:|=*' 'l:|=* r:|=*'"
+        echo "zstyle ':completion:*' special-dirs true"
+        echo "zstyle ':completion:*' group-name ''"
+        echo "zstyle ':completion:*:descriptions' format '%F{yellow}%d%f'"
+        echo '[ -d "$HOME/.cache/zsh" ] || mkdir -p "$HOME/.cache/zsh"'
+        echo "zstyle ':completion:*' use-cache yes"
+        echo 'zstyle '"'"':completion:*'"'"' cache-path "$HOME/.cache/zsh"'
+        echo
+        # What omz's command-not-found plugin did: the apt hook that turns an
+        # unknown command into the package that would provide it.
+        echo '[ -r /etc/zsh_command_not_found ] && source /etc/zsh_command_not_found'
+        echo
+        # Catppuccin Mocha, the palette starship.toml, ghostty and atuin use.
+        # fzf-tab shells out to fzf, so it inherits these too. A heredoc, not
+        # echo lines: the value is written with backslash-newline continuations,
+        # and those are literal characters inside the single quotes echo needs.
+        cat <<'FZF_OPTS'
+export FZF_DEFAULT_OPTS="\
+  --color=bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8 \
+  --color=fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc \
+  --color=marker:#b4befe,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8 \
+  --color=selected-bg:#45475a,border:#6c7086,label:#cdd6f4"
+FZF_OPTS
+        echo
+        # What the omz fzf plugin did: Ctrl-R, Ctrl-T, Alt-C and fzf's own
+        # completion. Before atuin further down, which takes Ctrl-R back.
+        # Silenced so a pre-0.48 distro fzf leaves the keys unbound rather
+        # than printing on every shell.
+        echo 'command -v fzf >/dev/null && source <(fzf --zsh 2>/dev/null)'
         echo
         echo 'eval "$(starship init zsh)"'
+        echo
+        # Sourced by path, in the order oh-my-zsh's plugins=() implied:
+        # fzf-tab after compinit, syntax-highlighting before the history
+        # search that wraps its widgets.
+        echo "[ -r \"${ZSH_PLUGIN_DIR}/fzf-tab/fzf-tab.plugin.zsh\" ] && source \"${ZSH_PLUGIN_DIR}/fzf-tab/fzf-tab.plugin.zsh\""
+        echo "[ -r \"${ZSH_PLUGIN_DIR}/zsh-autosuggestions/zsh-autosuggestions.zsh\" ] && source \"${ZSH_PLUGIN_DIR}/zsh-autosuggestions/zsh-autosuggestions.zsh\""
+        echo "[ -r \"${ZSH_PLUGIN_DIR}/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh\" ] && source \"${ZSH_PLUGIN_DIR}/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh\""
+        echo "[ -r \"${ZSH_PLUGIN_DIR}/zsh-history-substring-search/zsh-history-substring-search.zsh\" ] && source \"${ZSH_PLUGIN_DIR}/zsh-history-substring-search/zsh-history-substring-search.zsh\""
         echo
         echo 'STARSHIP_FULL_PROMPT="$PROMPT"'
         echo 'STARSHIP_FULL_RPROMPT="$RPROMPT"'
@@ -1325,14 +1443,47 @@ else
         echo 'zle -N starship-context-prompt'
         echo 'add-zle-hook-widget zle-line-pre-redraw starship-context-prompt'
         echo
+        # What omz's termsupport.zsh did: the directory in the tab title, the
+        # command while one is running.
+        printf '%s\n' 'zsh-title() { print -Pn "\e]2;$1\a" }'
+        echo "zsh-title-precmd()  { zsh-title '%~' }"
+        echo 'zsh-title-preexec() { zsh-title "${1%% *} - %~" }'
+        echo 'add-zsh-hook precmd zsh-title-precmd'
+        echo 'add-zsh-hook preexec zsh-title-preexec'
+        echo
+        echo 'zmodload zsh/terminfo 2>/dev/null'
         echo 'if (( $+widgets[history-substring-search-up] )); then'
         echo "  bindkey '^[[A' history-substring-search-up"
         echo "  bindkey '^[[B' history-substring-search-down"
+        echo '  [ -n "${terminfo[kcuu1]}" ] && bindkey "${terminfo[kcuu1]}" history-substring-search-up'
+        echo '  [ -n "${terminfo[kcud1]}" ] && bindkey "${terminfo[kcud1]}" history-substring-search-down'
         echo "  bindkey -M vicmd 'k' history-substring-search-up"
         echo "  bindkey -M vicmd 'j' history-substring-search-down"
         echo 'fi'
         echo
+        # Home/End/Delete/PageUp/PageDown and word motion: from terminfo where
+        # the terminal reports them, from the usual escapes where it does not.
+        echo '[ -n "${terminfo[khome]}" ] && bindkey "${terminfo[khome]}" beginning-of-line'
+        echo '[ -n "${terminfo[kend]}"   ] && bindkey "${terminfo[kend]}"   end-of-line'
+        echo '[ -n "${terminfo[kdch1]}" ] && bindkey "${terminfo[kdch1]}" delete-char'
+        echo '[ -n "${terminfo[kpp]}"   ] && bindkey "${terminfo[kpp]}"   up-line-or-history'
+        echo '[ -n "${terminfo[knp]}"   ] && bindkey "${terminfo[knp]}"   down-line-or-history'
+        echo '[ -n "${terminfo[kcbt]}"  ] && bindkey "${terminfo[kcbt]}"  reverse-menu-complete'
+        echo "bindkey '^[[H' beginning-of-line"
+        echo "bindkey '^[[F' end-of-line"
+        echo "bindkey '^[[3~' delete-char"
+        echo "bindkey '^[[1;5C' forward-word"
+        echo "bindkey '^[[1;5D' backward-word"
+        echo "bindkey '^[[3;5~' kill-word"
+        echo "bindkey ' ' magic-space     # !! expands as you type the space"
+        echo 'autoload -Uz edit-command-line'
+        echo 'zle -N edit-command-line'
+        echo "bindkey '^X^E' edit-command-line  # the line so far, in \$EDITOR"
+        echo
         echo 'zstyle '"'"':completion:*'"'"' list-colors "${(s.:.)LS_COLORS}"'
+        # The menuselect keymap only exists once complist is loaded; oh-my-zsh
+        # used to load it, and without it the bindkey below is an error.
+        echo 'zmodload zsh/complist'
         echo "bindkey -M menuselect '^[[Z' reverse-menu-complete"
         echo 'if command -v fzf >/dev/null; then'
         echo "  zstyle ':completion:*' menu no"
@@ -1367,8 +1518,18 @@ else
         echo 'setopt HIST_VERIFY           # expand !! for review, do not just run it'
         echo 'setopt HIST_IGNORE_SPACE     # a leading space keeps it out of history'
         echo
+        echo "alias ..='cd ..'"
+        echo "alias ...='cd ../..'"
+        echo "alias ....='cd ../../..'"
+        echo "alias -- -='cd -'"
+        echo
         echo 'command -v batcat >/dev/null && alias cat="batcat --paging=never"'
         echo 'command -v bat    >/dev/null && alias cat="bat --paging=never"'
+        # man pages in bat's theme. col -bx strips the overstrike backspaces
+        # groff emits for bold and underline, which bat would render literally.
+        # batcat first, bat second, so bat wins where both exist.
+        echo 'command -v batcat >/dev/null && export MANPAGER="sh -c '"'"'col -bx | batcat -l man -p'"'"'" MANROFFOPT="-c"'
+        echo 'command -v bat    >/dev/null && export MANPAGER="sh -c '"'"'col -bx | bat -l man -p'"'"'" MANROFFOPT="-c"'
         echo 'command -v eza    >/dev/null && alias ls="eza --icons=auto --group-directories-first"'
         echo 'command -v fdfind >/dev/null && alias find="fdfind"'
         echo 'command -v fd     >/dev/null && alias find="fd"'
@@ -1455,11 +1616,29 @@ else
         echo '}'
         echo
         echo '[ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH"'
+        echo
+        # mise activate below covers interactive shells, PATH and JAVA_HOME
+        # included. The shims directory covers what never sources this file:
+        # a non-interactive `ssh host command`, a cron job, a Makefile an IDE
+        # runs. Activation takes precedence where both apply.
+        # `go install` and the VS Code Go extension drop gopls, dlv and
+        # staticcheck in GOPATH/bin, which is ~/go/bin unless GOPATH says
+        # otherwise. Nothing else puts it on PATH.
+        echo '[ -d "$HOME/go/bin" ] && export PATH="$HOME/go/bin:$PATH"'
+        echo
+        echo '_mise_shims="${XDG_DATA_HOME:-$HOME/.local/share}/mise/shims"'
+        echo '[ -d "$_mise_shims" ] && export PATH="$PATH:$_mise_shims"'
+        echo 'unset _mise_shims'
+        echo
         echo 'command -v mise >/dev/null && eval "$(mise activate zsh)"'
         # mise has no carapace completer; its own script is small and asks mise itself.
         echo 'command -v mise >/dev/null && eval "$(mise completion zsh)"'
         echo
         echo '[ -d "$HOME/.dotnet" ] && export PATH="$HOME/.dotnet:$PATH" && export DOTNET_ROOT="$HOME/.dotnet"'
+        # `dotnet tool install -g` installs here. macOS gets this from the
+        # SDK installer's /etc/paths.d entry; on Windows the installer adds it
+        # to the user PATH. Nothing adds it here.
+        echo '[ -d "$HOME/.dotnet/tools" ] && export PATH="$HOME/.dotnet/tools:$PATH"'
       } > "$NEW_FRAGMENT"
 
       if [[ -f "$FRAGMENT" ]] && cmp -s "$NEW_FRAGMENT" "$FRAGMENT"; then
@@ -1550,6 +1729,31 @@ else
                 "${HOME}/.config/atuin/themes/catppuccin-mocha.toml" 'atuin theme'
 fi
 
+# bat config - the theme bat, and through it delta, render with
+BAT_SOURCE="${SCRIPT_DIR}/../bat"
+phase 'bat config'
+_bat_bin="$(command -v bat 2>/dev/null || command -v batcat 2>/dev/null || true)"
+if [[ -z "$_bat_bin" ]]; then
+  result 'missing' 'bat config' 'bat is not installed'
+else
+  _bat_cfg="$("$_bat_bin" --config-dir 2>/dev/null)"
+  deploy_config "${BAT_SOURCE}/config" "${_bat_cfg}/config" 'bat config'
+  deploy_config "${BAT_SOURCE}/themes/Catppuccin Mocha.tmTheme" \
+                "${_bat_cfg}/themes/Catppuccin Mocha.tmTheme" 'bat theme'
+  # bat since 0.24 reads the themes directory at startup, so this is a no-op
+  # on anything current - kept for an older bat, which only sees a theme once
+  # it is in the cache.
+  if [[ "$DRY_RUN" == "yes" ]]; then
+    result 'would-install' 'bat cache' 'bat cache --build, if the theme is not listed'
+  elif "$_bat_bin" --list-themes 2>/dev/null | grep -qx 'Catppuccin Mocha'; then
+    result 'current' 'bat cache' 'Catppuccin Mocha is in the theme list'
+  elif "$_bat_bin" cache --build >/dev/null 2>&1; then
+    result 'installed' 'bat cache' 'bat cache --build'
+  else
+    result 'failed' 'bat cache' 'run by hand: bat cache --build'
+  fi
+fi
+
 # Carapace specs - completion for CLIs carapace has no completer of its own for
 CARAPACE_SOURCE="${SCRIPT_DIR}/../carapace"
 phase 'Carapace specs'
@@ -1573,6 +1777,29 @@ if ! command -v git >/dev/null 2>&1; then
   result 'missing' 'git config' 'git is not installed'
 else
   GIT_WANT=()
+  # Defaults that have nothing to do with the tools below - each one only takes
+  # effect where the key is unset, so an existing choice is never overwritten.
+  GIT_WANT+=(
+    # `git push` on a new branch sets the upstream itself instead of failing
+    # with "no upstream branch" and a command to paste. git >= 2.37.
+    'push.autoSetupRemote=true'
+    # fetch drops remote-tracking refs for branches deleted upstream, so
+    # completion stops offering months of dead origin/* names.
+    'fetch.prune=true'
+    # histogram reads better than the default myers on moved and reindented
+    # code; delta and difftastic render whatever this produces.
+    'diff.algorithm=histogram'
+    # rebase stashes and restores dirty work itself rather than refusing.
+    'rebase.autoStash=true'
+    # branch and status lists print in columns instead of one name per line.
+    'column.ui=auto'
+    # zdiff3 adds the common ancestor to a conflict, so it shows what each
+    # side changed rather than only the two endings. git >= 2.35.
+    'merge.conflictStyle=zdiff3'
+    # v1.10.0 above v1.9.0. The field is version:refname - plain `-version`
+    # is rejected with "unknown field name: version".
+    'tag.sort=-version:refname'
+  )
   # delta is the pager for diff, show, log and add -p; `git sdiff` is the same
   # view side by side.
   if command -v delta >/dev/null 2>&1; then
@@ -1581,6 +1808,10 @@ else
       'interactive.diffFilter=delta --color-only'
       "alias.sdiff=-c core.pager='delta --side-by-side' diff"
     )
+    # delta highlights through bat's theme store - the same Catppuccin Mocha
+    # the bat phase installs, so a diff and a `bat` of the same file match.
+    { command -v bat >/dev/null 2>&1 || command -v batcat >/dev/null 2>&1; } && \
+      GIT_WANT+=('delta.syntax-theme=Catppuccin Mocha')
   else
     result 'missing' 'delta' 'delta is not installed'
   fi
@@ -1635,7 +1866,7 @@ else
     result 'would-install' 'ghostty config' "$GHOSTTY_CONF"
   else
     mkdir -p "$GHOSTTY_DIR"
-    NEW_GHOSTTY="$(mktemp "${GHOSTTY_CONF}.XXXXXX")"
+    mktemp_tracked NEW_GHOSTTY "${GHOSTTY_CONF}.XXXXXX"
     chmod 0644 "$NEW_GHOSTTY"
     {
       echo
@@ -1683,7 +1914,7 @@ else
   SERVICE_UNIT="/etc/systemd/system/${SCHEDULE_UNIT_NAME}.service"
   TIMER_UNIT="/etc/systemd/system/${SCHEDULE_UNIT_NAME}.timer"
 
-  NEW_SERVICE="$(mktemp)"
+  mktemp_tracked NEW_SERVICE
   {
     echo '[Unit]'
     echo "Description=Runs $SCRIPT_DIR/bootstrap.sh unattended, taking package and script updates"
@@ -1694,7 +1925,7 @@ else
     echo "ExecStart=$SCRIPT_DIR/bootstrap.sh --yes"
   } > "$NEW_SERVICE"
 
-  NEW_TIMER="$(mktemp)"
+  mktemp_tracked NEW_TIMER
   {
     echo '[Unit]'
     echo "Description=Daily trigger for ${SCHEDULE_UNIT_NAME}.service"

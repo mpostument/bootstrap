@@ -21,12 +21,14 @@ which reports `x86_64` on Apple silicon under Rosetta.
 2. **Taps** — third-party Homebrew repositories from the manifest. Empty as shipped.
 3. **Package groups** — formulae and casks, GUI groups gated on `--no-gui`.
 4. **Upgrades** — `brew upgrade`, only when something is outdated.
-5. **zsh** — oh-my-zsh, Starship and plugins, plus a managed
-   `~/.zshrc.bootstrap` sourced from your own `.zshrc`.
+5. **zsh** — Starship, completion and the Homebrew zsh plugins, plus a
+   managed `~/.zshrc.bootstrap` sourced from your own `.zshrc`.
 6. **VS Code extensions** — `VSCODE_EXTENSIONS`, installed with
    `code --install-extension`; never removes one that isn't listed.
 7. **Prompt config** — `starship.toml` from the repo root to
    `~/.config/starship.toml`, the same file all three platforms deploy.
+8. **bat config** — `bat/config` and the Catppuccin Mocha theme from the repo
+   root, the palette starship, ghostty, atuin and delta all render in.
 
 `pyenv`, `pyenv-virtualenv`, `tofuenv`, `nvm`, `dotnet-sdk` and `claude-code`
 are Homebrew packages here, not separate phases as on Linux.

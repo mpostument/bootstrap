@@ -20,6 +20,107 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.38.0]
+
+### Removed
+
+- **posh-git**, replaced by carapace, which was already installed and
+  completing every other command. `CARAPACE_EXCLUDES='git'` is gone here - the
+  zsh platforms keep it, because zsh's own `_git` is better, but PowerShell has
+  no native git completion, so the comparison on Windows is carapace against
+  posh-git, and carapace wins on the cases that matter: branches split into
+  local/remote/heads for `checkout` and `switch`, only *changed* files for
+  `add` and `restore`, remotes for `push`, and the repository's own aliases
+  listed with their definitions as descriptions.
+
+  Upstream was idle anyway - v1.1.0 from 2022-03-31, last commit 2024-09-02 -
+  and its prompt half was never in use: starship initialises after it and
+  overwrites the prompt.
+
+  One consequence: the carapace block is guarded to PowerShell 7+, because 5.1
+  drops the empty argument carapace's completer needs and throws. Windows
+  PowerShell 5.1 therefore has no git completion at all now, falling back to
+  file names. 7 is this machine's default Windows Terminal profile.
+
+  The module phase installs but never uninstalls, so an existing install stays
+  until `Uninstall-Module posh-git`.
+
+- **Terminal-Icons.** Last release 2023-07-06 on the PowerShell Gallery, last
+  commit 2023-11-03, 63 open issues - three years idle, and there is no
+  maintained module doing the same job. It is also largely redundant here:
+  `ls` is a function around `eza --icons=auto`, so the listing this profile
+  actually uses already has icons. Only a bare `Get-ChildItem`/`dir`/`gci`
+  loses them.
+
+  The module phase installs but never uninstalls, so an existing install stays
+  until `Uninstall-Module Terminal-Icons`.
+
+### Added
+
+- **`%USERPROFILE%\go\bin` on the user `PATH`**, for the same reason as the
+  shims: `go install` and the VS Code Go extension put `gopls`, `dlv` and
+  `staticcheck` there, and VS Code and the IDEs read the user PATH rather than
+  the PowerShell profile.
+
+
+- **node, go and java come from mise on all three platforms**, declared once in
+  `mise/tools.conf` at the repo root. They used to come from three different
+  places - brew on macOS, winget on Windows, and *nothing at all* on Linux,
+  where `grep -cE "nodejs|golang-go|openjdk" packages.conf` returned 0 and a
+  fresh machine simply had no Node until somebody ran `mise use -g` by hand.
+  mise was installed everywhere and managing nothing: `mise ls -g` was empty.
+
+  `mise use -g` merges into the user's global config rather than replacing it,
+  so a tool added by hand survives a bootstrap run. Removing the packages from
+  the manifests does not uninstall them - `brew uninstall node go`,
+  `brew uninstall --cask microsoft-openjdk@21` and the winget equivalents are
+  yours to run when you want the disk back.
+
+  Python is deliberately not in the list: OS packages link against the system
+  python3, and a mise shim in front of it breaks them.
+
+- **The mise shims directory on the user `PATH`, and `JAVA_HOME`**, both
+  written persistently by the new phase. The shell activation in `profile.ps1`
+  is not enough here: Rider, Android Studio, Unity and MSBuild start outside
+  PowerShell and would never see a mise runtime. Both values are refreshed on
+  every run, so a version bump cannot leave a stale path behind.
+
+
+- **Seven git defaults**, set the same way the delta and difftastic keys
+  already are - only where the key is unset, so an existing value stays:
+  `push.autoSetupRemote` (push a new branch without the `--set-upstream`
+  dance), `fetch.prune` (stop completing months of deleted `origin/*`),
+  `diff.algorithm=histogram` (better on moved and reindented code, and it is
+  what delta and difftastic then render), `rebase.autoStash`,
+  `column.ui=auto`, `merge.conflictStyle=zdiff3` (the common ancestor in a
+  conflict, not just the two endings) and `tag.sort=-version:refname`
+  (`v1.10.0` above `v1.9.0`).
+
+  The tag field is `version:refname`; a plain `-version` is rejected at use
+  with `fatal: unknown field name: version`.
+
+
+- **`JesseDuffield.lazygit` in the `cli` group.** A git TUI: stage hunks,
+  rebase, stash and branch without leaving the terminal. Same tool on all three
+  platforms, so it gets a `cli-parity.conf` row.
+
+
+- **Catppuccin Mocha for bat, delta and fzf.** The palette was already deployed
+  for starship, ghostty and atuin, and stopped at the three tools you read
+  output in: `bat` rendered in its own default theme, `delta` in bat's, and
+  `fzf` in its own colours.
+
+  - `bat/config` and `bat/themes/Catppuccin Mocha.tmTheme` at the repo root,
+    deployed to `%APPDATA%\bat` inside the Shell phase - the
+    same shared-file shape `starship.toml` and `atuin/` already use. bat since
+    0.24 reads the themes directory at startup, so the `bat cache --build`
+    fallback is a no-op on anything current.
+  - `delta.syntax-theme=Catppuccin Mocha` in the git config phase, set only
+    when bat is installed: delta highlights through bat's theme store, so a
+    diff and a `bat` of the same file now match.
+  - `FZF_DEFAULT_OPTS` with the Catppuccin colours. fzf-tab shells out to fzf
+    and inherits them.
+
 ## [1.37.0]
 
 ### Removed
