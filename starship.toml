@@ -8,7 +8,6 @@ palette = 'catppuccin_mocha'
 add_newline = false
 
 format = """
-\n\
 $username\
 $hostname\
 $directory\

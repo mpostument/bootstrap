@@ -11,7 +11,6 @@ $PSDefaultParameterValues['*:Encoding'] = 'utf8'
 # PSReadLine
 # https://learn.microsoft.com/powershell/module/psreadline
 Import-Module PSReadLine -MinimumVersion 2.4.5 -Force -ErrorAction SilentlyContinue
-
 Import-Module CompletionPredictor -ErrorAction SilentlyContinue
 
 try {
@@ -19,7 +18,10 @@ try {
 } catch {
     try { Set-PSReadLineOption -PredictionSource History } catch { }
 }
-try { Set-PSReadLineOption -PredictionViewStyle ListView } catch { }
+# InlineView (not ListView): a single greyed suggestion on the current line,
+# like zsh/bash autosuggestions - ListView popped a whole dropdown of matches
+# on paste, which was unreadable for multi-line pastes.
+Set-PSReadLineOption -PredictionViewStyle InlineView
 Set-PSReadLineOption -EditMode Windows
 Set-PSReadLineOption -BellStyle None
 Set-PSReadLineOption -HistoryNoDuplicates
