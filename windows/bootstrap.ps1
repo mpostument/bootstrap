@@ -1014,7 +1014,7 @@ foreach (`$name in `$want) {
         Add-Result -Group 'shell' -Id 'execution policy' -Action 'would-install' -Detail "$policy -> RemoteSigned"
     }
 
-    if ($PSCmdlet.ShouldProcess('Windows Terminal settings.json', 'merge font, size, scheme, padding, copyOnSelect, scrollback, PowerShell 7 profile')) {
+    if ($PSCmdlet.ShouldProcess('Windows Terminal settings.json', 'merge font, size, scheme, padding, copyOnSelect, scrollback, PowerShell 7 profile, default profile')) {
         $mergeArgs = @{
             FontFace        = $shell.TerminalFontFace
             FontSize        = $shell.TerminalFontSize
@@ -1024,6 +1024,7 @@ foreach (`$name in `$want) {
             Padding         = $shell.TerminalPadding
             HistorySize     = $shell.TerminalHistorySize
             Pwsh7Guid       = $shell.TerminalPwshGuid
+            SetAsDefault    = $shell.TerminalSetPwshDefault
         }
         $out = (& $script:MergeScript @mergeArgs | Out-String).Trim()
         $action = if ($out -match 'CHANGED') { 'installed' } elseif ($out -match 'SKIPPED') { 'skipped' } else { 'current' }

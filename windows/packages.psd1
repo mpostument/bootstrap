@@ -265,6 +265,7 @@
         TerminalPadding    = '10, 10'
         TerminalHistorySize = 100000
         TerminalPwshGuid  = '{574e775e-4f2a-5b96-ac1e-a2962a402336}'
+        TerminalSetPwshDefault = $true
         Modules51         = @('PSReadLine', 'Terminal-Icons', 'PSFzf', 'posh-git')
         Modules7          = @('PSReadLine', 'Terminal-Icons', 'PSFzf', 'CompletionPredictor', 'posh-git')
         PSReadLineMinimum = '2.4.5'

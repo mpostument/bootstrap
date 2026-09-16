@@ -11,7 +11,8 @@ param(
     [bool]$CopyOnSelect = $true,
     [string]$Padding = "10, 10",
     [int]$HistorySize = 100000,
-    [string]$Pwsh7Guid = "{574e775e-4f2a-5b96-ac1e-a2962a402336}"
+    [string]$Pwsh7Guid = "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
+    [bool]$SetAsDefault = $false
 )
 
 $settingsFile = Get-ChildItem "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_*\LocalState\settings.json" -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -78,6 +79,10 @@ if (-not ($json.profiles.list | Where-Object { $_.guid -eq $Pwsh7Guid })) {
         name        = "PowerShell 7"
     }
     $changed = $true
+}
+
+if ($SetAsDefault) {
+    if (Set-JsonProperty $json 'defaultProfile' $Pwsh7Guid) { $changed = $true }
 }
 
 if ($changed) {
