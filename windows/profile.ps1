@@ -18,10 +18,10 @@ try {
 } catch {
     try { Set-PSReadLineOption -PredictionSource History } catch { }
 }
-# InlineView (not ListView): a single greyed suggestion on the current line,
-# like zsh/bash autosuggestions - ListView popped a whole dropdown of matches
-# on paste, which was unreadable for multi-line pastes.
-Set-PSReadLineOption -PredictionViewStyle InlineView
+# ListView by default: the full dropdown of matches. F2 flips to InlineView
+# (a single greyed suggestion on the current line, like zsh/bash autosuggestions)
+# on demand.
+Set-PSReadLineOption -PredictionViewStyle ListView
 Set-PSReadLineOption -EditMode Windows
 Set-PSReadLineOption -BellStyle None
 Set-PSReadLineOption -HistoryNoDuplicates
@@ -31,8 +31,7 @@ Set-PSReadLineOption -Colors @{ InlinePrediction = '#5A5A5A' }
 
 Set-PSReadLineKeyHandler -Key UpArrow -Function HistorySearchBackward
 Set-PSReadLineKeyHandler -Key DownArrow -Function HistorySearchForward
-# F2: flip to ListView on demand - the full dropdown of matches ListView
-# always showed, without it also flooding the screen on every paste.
+# F2: flip to InlineView on demand.
 Set-PSReadLineKeyHandler -Key F2 -Function SwitchPredictionView
 Set-PSReadLineKeyHandler -Key Tab -Function MenuComplete
 Set-PSReadLineKeyHandler -Key Ctrl+RightArrow -Function ForwardWord
