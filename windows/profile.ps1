@@ -31,6 +31,9 @@ Set-PSReadLineOption -Colors @{ InlinePrediction = '#5A5A5A' }
 
 Set-PSReadLineKeyHandler -Key UpArrow -Function HistorySearchBackward
 Set-PSReadLineKeyHandler -Key DownArrow -Function HistorySearchForward
+# F2: flip to ListView on demand - the full dropdown of matches ListView
+# always showed, without it also flooding the screen on every paste.
+Set-PSReadLineKeyHandler -Key F2 -Function SwitchPredictionView
 Set-PSReadLineKeyHandler -Key Tab -Function MenuComplete
 Set-PSReadLineKeyHandler -Key Ctrl+RightArrow -Function ForwardWord
 Set-PSReadLineKeyHandler -Key Ctrl+LeftArrow -Function BackwardWord
