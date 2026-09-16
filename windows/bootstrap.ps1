@@ -49,7 +49,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '1.37.0'
+$script:BootstrapVersion = '1.38.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -62,6 +62,7 @@ if (-not $script:ToolRoot) { $script:ToolRoot = Split-Path -Parent $MyInvocation
 $script:ProfileSource = Join-Path $script:ToolRoot 'profile.ps1'
 $script:StarshipTomlSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'starship.toml'
 $script:AtuinSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'atuin'
+$script:BatSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'bat'
 $script:CarapaceSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'carapace'
 $script:MergeScript = Join-Path $script:ToolRoot 'merge-terminal-settings.ps1'
 $script:MpvSource = Join-Path $script:ToolRoot 'mpv'
@@ -831,6 +832,92 @@ if ($uvEntries.Count -gt 0) {
     }
 }
 
+# mise global runtimes - node, go and java from mise/tools.conf at the repo
+# root, the one list all three platforms share.
+#
+# Windows needs more than the shell activation in profile.ps1: Rider, Android
+# Studio, Unity and MSBuild start outside PowerShell and would never see a
+# mise runtime. The shims directory goes on the *user* PATH so every process
+# resolves go/node/java, and JAVA_HOME is written from `mise where`, which the
+# JVM build tools read instead of PATH. Both are refreshed on each run, so a
+# version bump does not leave a stale path behind.
+$miseToolsFile = Join-Path (Split-Path $script:ToolRoot -Parent) 'mise\tools.conf'
+Write-Phase 'mise - global runtimes'
+if (-not (Get-Command mise -ErrorAction SilentlyContinue)) {
+    Add-Result -Group 'mise' -Id 'mise runtimes' -Action 'missing' `
+        -Detail 'mise is not on PATH - jdx.mise installs it in the dev group'
+} elseif (-not (Test-Path $miseToolsFile)) {
+    Add-Result -Group 'mise' -Id 'mise runtimes' -Action 'failed' `
+        -Detail ('not found at {0}' -f $miseToolsFile)
+} else {
+    $miseHave = @(& mise ls -g 2>$null | ForEach-Object { ($_ -split '\s+')[0] })
+    $entries = @(Get-Content $miseToolsFile |
+        ForEach-Object { ($_ -split '#')[0].Trim() } |
+        Where-Object { $_ })
+
+    foreach ($entry in $entries) {
+        $tool = $entry.Split('@')[0]
+        if ($miseHave -contains $tool) {
+            Add-Result -Group 'mise' -Id $entry -Action 'current' -Detail (& mise current $tool 2>$null)
+        } elseif (-not $PSCmdlet.ShouldProcess($entry, 'mise use -g')) {
+            Add-Result -Group 'mise' -Id $entry -Action 'would-install' -Detail ('mise use -g {0}' -f $entry)
+        } else {
+            & mise use -g $entry *> $null
+            if ($LASTEXITCODE -eq 0) {
+                Add-Result -Group 'mise' -Id $entry -Action 'installed' -Detail (& mise current $tool 2>$null)
+            } else {
+                Add-Result -Group 'mise' -Id $entry -Action 'failed' -Detail ('run by hand: mise use -g {0}' -f $entry)
+            }
+        }
+    }
+
+    # Shims on the user PATH, for everything that does not run through the
+    # PowerShell profile.
+    $shims = Join-Path $env:LOCALAPPDATA 'mise\shims'
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if (($userPath -split ';') -contains $shims) {
+        Add-Result -Group 'mise' -Id 'shims on PATH' -Action 'current' -Detail $shims
+    } elseif (-not $PSCmdlet.ShouldProcess($shims, 'add to user PATH')) {
+        Add-Result -Group 'mise' -Id 'shims on PATH' -Action 'would-install' -Detail $shims
+    } else {
+        [Environment]::SetEnvironmentVariable('Path', ($shims + ';' + $userPath), 'User')
+        $env:Path = $shims + ';' + $env:Path
+        Add-Result -Group 'mise' -Id 'shims on PATH' -Action 'installed' -Detail $shims
+    }
+
+    # GOPATH/bin, where `go install` and the VS Code Go extension put gopls,
+    # dlv and staticcheck. Same reasoning as the shims: VS Code and the IDEs
+    # read the user PATH, not the PowerShell profile.
+    $goBin = Join-Path $env:USERPROFILE 'go\bin'
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if (($userPath -split ';') -contains $goBin) {
+        Add-Result -Group 'mise' -Id 'GOPATH/bin on PATH' -Action 'current' -Detail $goBin
+    } elseif (-not $PSCmdlet.ShouldProcess($goBin, 'add to user PATH')) {
+        Add-Result -Group 'mise' -Id 'GOPATH/bin on PATH' -Action 'would-install' -Detail $goBin
+    } else {
+        [Environment]::SetEnvironmentVariable('Path', ($userPath + ';' + $goBin), 'User')
+        $env:Path = $env:Path + ';' + $goBin
+        Add-Result -Group 'mise' -Id 'GOPATH/bin on PATH' -Action 'installed' -Detail $goBin
+    }
+
+    # JAVA_HOME, for Gradle, Maven and the IDEs that read it rather than PATH.
+    $javaEntry = $entries | Where-Object { $_ -like 'java@*' } | Select-Object -First 1
+    if ($javaEntry) {
+        $javaHome = (& mise where $javaEntry 2>$null)
+        if (-not $javaHome) {
+            Add-Result -Group 'mise' -Id 'JAVA_HOME' -Action 'missing' -Detail ('mise where {0} returned nothing' -f $javaEntry)
+        } elseif ([Environment]::GetEnvironmentVariable('JAVA_HOME', 'User') -eq $javaHome) {
+            Add-Result -Group 'mise' -Id 'JAVA_HOME' -Action 'current' -Detail $javaHome
+        } elseif (-not $PSCmdlet.ShouldProcess('JAVA_HOME', 'set for the user')) {
+            Add-Result -Group 'mise' -Id 'JAVA_HOME' -Action 'would-install' -Detail $javaHome
+        } else {
+            [Environment]::SetEnvironmentVariable('JAVA_HOME', $javaHome, 'User')
+            $env:JAVA_HOME = $javaHome
+            Add-Result -Group 'mise' -Id 'JAVA_HOME' -Action 'installed' -Detail $javaHome
+        }
+    }
+}
+
 # Phase 2 - externally managed software
 
 Write-Phase 'Externally managed - reported only'
@@ -884,6 +971,40 @@ if ($SkipShell) {
     Deploy-ManagedFile -Source (Join-Path $script:AtuinSource 'themes\catppuccin-mocha.toml') `
         -Target (Join-Path $env:USERPROFILE '.config\atuin\themes\catppuccin-mocha.toml') `
         -Group 'shell' -Label 'atuin theme'
+
+    # bat config: the theme bat, and through it delta, renders with. bat reads
+    # %APPDATA%\bat on Windows, which is what `bat --config-dir` reports.
+    if (Get-Command bat -ErrorAction SilentlyContinue) {
+        $batConfig = (& bat --config-dir 2>$null)
+        if (-not $batConfig) { $batConfig = Join-Path $env:APPDATA 'bat' }
+
+        Deploy-ManagedFile -Source (Join-Path $script:BatSource 'config') `
+            -Target (Join-Path $batConfig 'config') `
+            -Group 'shell' -Label 'bat config'
+
+        Deploy-ManagedFile -Source (Join-Path $script:BatSource 'themes\Catppuccin Mocha.tmTheme') `
+            -Target (Join-Path $batConfig 'themes\Catppuccin Mocha.tmTheme') `
+            -Group 'shell' -Label 'bat theme'
+
+        # bat since 0.24 reads the themes directory at startup, so this is a
+        # no-op on anything current - kept for an older bat, which only sees a
+        # theme once it is in the cache.
+        $themes = @(& bat --list-themes 2>$null)
+        if ($themes -contains 'Catppuccin Mocha') {
+            Add-Result -Group 'shell' -Id 'bat cache' -Action 'current' -Detail 'Catppuccin Mocha is in the theme list'
+        } elseif ($WhatIfPreference) {
+            Add-Result -Group 'shell' -Id 'bat cache' -Action 'would-install' -Detail 'bat cache --build'
+        } else {
+            & bat cache --build *> $null
+            if ($LASTEXITCODE -eq 0) {
+                Add-Result -Group 'shell' -Id 'bat cache' -Action 'installed' -Detail 'bat cache --build'
+            } else {
+                Add-Result -Group 'shell' -Id 'bat cache' -Action 'failed' -Detail 'run by hand: bat cache --build'
+            }
+        }
+    } else {
+        Add-Result -Group 'shell' -Id 'bat config' -Action 'missing' -Detail 'bat is not installed'
+    }
 
     # carapace specs: completion for CLIs carapace has no completer of its own
     # for. carapace reads them from XDG_CONFIG_HOME when that is an absolute
@@ -1270,6 +1391,30 @@ if ($SkipShell) {
         # Set only when unset: an existing value is somebody's choice, not drift.
         $gitWant = [System.Collections.Generic.List[hashtable]]::new()
 
+        # Defaults that have nothing to do with the tools below - each one only
+        # takes effect where the key is unset, so an existing choice is never
+        # overwritten.
+        # push.autoSetupRemote: `git push` on a new branch sets the upstream
+        #   itself instead of failing with a command to paste. git >= 2.37.
+        # fetch.prune: drops remote-tracking refs for branches deleted
+        #   upstream, so completion stops offering dead origin/* names.
+        # diff.algorithm: histogram reads better than myers on moved and
+        #   reindented code; delta and difftastic render what it produces.
+        # rebase.autoStash: rebase stashes dirty work itself, rather than
+        #   refusing to start.
+        # column.ui: branch and status lists print in columns.
+        # merge.conflictStyle: zdiff3 adds the common ancestor to a conflict,
+        #   showing what each side changed. git >= 2.35.
+        # tag.sort: v1.10.0 above v1.9.0. The field is version:refname - plain
+        #   '-version' is rejected with "unknown field name: version".
+        $gitWant.Add(@{ Key = 'push.autoSetupRemote';  Value = 'true' })
+        $gitWant.Add(@{ Key = 'fetch.prune';           Value = 'true' })
+        $gitWant.Add(@{ Key = 'diff.algorithm';        Value = 'histogram' })
+        $gitWant.Add(@{ Key = 'rebase.autoStash';      Value = 'true' })
+        $gitWant.Add(@{ Key = 'column.ui';             Value = 'auto' })
+        $gitWant.Add(@{ Key = 'merge.conflictStyle';   Value = 'zdiff3' })
+        $gitWant.Add(@{ Key = 'tag.sort';              Value = '-version:refname' })
+
         # delta is the pager for diff, show, log and add -p; `git sdiff` is the
         # same view side by side.
         if (-not $git.DeltaEnabled) {
@@ -1280,6 +1425,12 @@ if ($SkipShell) {
             $gitWant.Add(@{ Key = 'core.pager';             Value = 'delta' })
             $gitWant.Add(@{ Key = 'interactive.diffFilter'; Value = 'delta --color-only' })
             $gitWant.Add(@{ Key = 'alias.sdiff';            Value = "-c core.pager='delta --side-by-side' diff" })
+            # delta highlights through bat's theme store - the same Catppuccin
+            # Mocha the shell phase installs, so a diff and a `bat` of the same
+            # file match.
+            if (Get-Command bat -ErrorAction SilentlyContinue) {
+                $gitWant.Add(@{ Key = 'delta.syntax-theme'; Value = 'Catppuccin Mocha' })
+            }
         }
 
         # difftastic compares syntax, not lines, and is asked for per command -

@@ -39,6 +39,7 @@
                 'chmln.sd'
                 'ducaale.xh'
                 'MrKaran.Doggo'
+                'JesseDuffield.lazygit'
             )
         }
 
@@ -55,11 +56,11 @@
                 'SUSE.RancherDesktop'
                 'Python.Python.3.14'
                 'Python.Launcher'
-                'OpenJS.NodeJS.LTS'
                 'DenoLand.Deno'
                 'Microsoft.DotNet.SDK.10'
-                'GoLang.Go'
-                'Microsoft.OpenJDK.21'
+                # node, go and java are not here: they come from
+                # mise/tools.conf at the repo root, the one list all three
+                # platforms share.
                 'jdx.mise'
                 'astral-sh.uv'
                 'koalaman.shellcheck'
@@ -266,8 +267,8 @@
         TerminalHistorySize = 100000
         TerminalPwshGuid  = '{574e775e-4f2a-5b96-ac1e-a2962a402336}'
         TerminalSetPwshDefault = $true
-        Modules51         = @('PSReadLine', 'Terminal-Icons', 'PSFzf', 'posh-git')
-        Modules7          = @('PSReadLine', 'Terminal-Icons', 'PSFzf', 'CompletionPredictor', 'posh-git')
+        Modules51         = @('PSReadLine', 'PSFzf')
+        Modules7          = @('PSReadLine', 'PSFzf', 'CompletionPredictor')
         PSReadLineMinimum = '2.4.5'
     }
 

@@ -15,6 +15,134 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.0]
+
+### Fixed
+
+- **Temp files no longer survive an interrupted run.** Every `mktemp` went
+  through a bare command substitution and was cleaned up only on the happy
+  path, so a Ctrl-C between the `mktemp` and the `mv` left the half-written
+  file behind - two `~/.zshrc.bootstrap.XXXXXX` files from interrupted runs
+  were sitting in `$HOME` on this machine when this was found. Every temp path
+  now goes through `mktemp_tracked`, and `trap` on EXIT, INT and TERM removes
+  whatever is still there; INT and TERM re-exit with 130 and 143 rather than
+  resuming where they were interrupted.
+
+  `mktemp_tracked` assigns to a variable named by its first argument instead of
+  printing the path: a command substitution would run the array append in a
+  subshell, and the parent would forget the path - which is the whole point.
+
+### Added
+
+- **macOS note on the mise JDK:** it is not registered with
+  `/usr/libexec/java_home`, so the JetBrains IDEs, Android Studio and anything
+  else that auto-detects a JDK need the path once -
+  `~/.local/share/mise/installs/java/temurin-21`, a symlink mise maintains
+  across patch bumps. Shells are unaffected: `mise activate` exports
+  `JAVA_HOME`. Registering it properly would mean a `sudo` symlink into
+  `/Library/Java/JavaVirtualMachines`, and this script does not use sudo.
+
+
+- **`~/go/bin` on `PATH`.** `go install` and the VS Code Go extension put
+  `gopls`, `dlv` and `staticcheck` there, and nothing was adding it - the
+  tools installed fine and then were not on `PATH`. Unrelated to where `go`
+  itself comes from; it was missing before this release too.
+
+
+- **node, go and java come from mise on all three platforms**, declared once in
+  `mise/tools.conf` at the repo root. They used to come from three different
+  places - brew on macOS, winget on Windows, and *nothing at all* on Linux,
+  where `grep -cE "nodejs|golang-go|openjdk" packages.conf` returned 0 and a
+  fresh machine simply had no Node until somebody ran `mise use -g` by hand.
+  mise was installed everywhere and managing nothing: `mise ls -g` was empty.
+
+  `mise use -g` merges into the user's global config rather than replacing it,
+  so a tool added by hand survives a bootstrap run. Removing the packages from
+  the manifests does not uninstall them - `brew uninstall node go`,
+  `brew uninstall --cask microsoft-openjdk@21` and the winget equivalents are
+  yours to run when you want the disk back.
+
+  Python is deliberately not in the list: OS packages link against the system
+  python3, and a mise shim in front of it breaks them.
+
+- **The mise shims directory on `PATH`** in the zsh fragment. `mise activate`
+  covers interactive shells, `JAVA_HOME` included, but never sees a
+  non-interactive `ssh host command`, a cron job, or a Makefile an IDE runs.
+  Activation still takes precedence where both apply.
+
+
+- **Seven git defaults**, set the same way the delta and difftastic keys
+  already are - only where the key is unset, so an existing value stays:
+  `push.autoSetupRemote` (push a new branch without the `--set-upstream`
+  dance), `fetch.prune` (stop completing months of deleted `origin/*`),
+  `diff.algorithm=histogram` (better on moved and reindented code, and it is
+  what delta and difftastic then render), `rebase.autoStash`,
+  `column.ui=auto`, `merge.conflictStyle=zdiff3` (the common ancestor in a
+  conflict, not just the two endings) and `tag.sort=-version:refname`
+  (`v1.10.0` above `v1.9.0`).
+
+  The tag field is `version:refname`; a plain `-version` is rejected at use
+  with `fatal: unknown field name: version`.
+
+
+- **`lazygit` in the `cli` group.** A git TUI: stage hunks, rebase, stash and
+  branch without leaving the terminal. Same tool on all three platforms, so it
+  gets a `cli-parity.conf` row and `tools/parity.sh` checks it.
+
+
+- **Catppuccin Mocha for bat, delta and fzf.** The palette was already deployed
+  for starship, ghostty and atuin, and stopped at the three tools you read
+  output in: `bat` rendered in its own default theme, `delta` in bat's, and
+  `fzf` in its own colours.
+
+  - `bat/config` and `bat/themes/Catppuccin Mocha.tmTheme` at the repo root,
+    deployed to bat's config directory by a new **bat config** phase - the
+    same shared-file shape `starship.toml` and `atuin/` already use. bat since
+    0.24 reads the themes directory at startup, so the `bat cache --build`
+    fallback is a no-op on anything current.
+  - `delta.syntax-theme=Catppuccin Mocha` in the git config phase, set only
+    when bat is installed: delta highlights through bat's theme store, so a
+    diff and a `bat` of the same file now match.
+  - `FZF_DEFAULT_OPTS` with the Catppuccin colours. fzf-tab shells out to fzf
+    and inherits them.
+
+- **`MANPAGER` through bat**, so man pages get the same theme. `col -bx`
+  strips the overstrike backspaces groff emits for bold and underline, which
+  bat would otherwise render literally.
+
+## [1.33.0]
+
+### Removed
+
+- **oh-my-zsh.** It was installing and sourcing a framework to do four things,
+  and costing ~210ms of a ~500ms startup for them (measured on this machine:
+  0.50s with, 0.29s without, same fragment otherwise). `ZSH_THEME` has been
+  empty since starship took the prompt, which left the whole theme half dead
+  weight, and history on this machine shows `git` typed in full 156 times and
+  its plugin aliases - `gst`, `gco`, `gp` - zero times. `ZSH_THEME`,
+  `ZSH_PLUGINS` and `ZSH_CUSTOM_PLUGINS` are gone from `packages.conf` and
+  from the manifest validation; `ZSH_ENABLED` still gates the whole phase.
+  An existing `~/.oh-my-zsh` is left alone - nothing sources it any more, so
+  removing it is a manual `rm -rf` whenever you want the disk back.
+
+### Added
+
+- **The four things oh-my-zsh was actually still doing**, written into the
+  fragment directly:
+  - `compinit`, run security-checked once a day and from cache otherwise,
+    rather than on every shell. Completion caching moves to `~/.cache/zsh`.
+  - `source <(fzf --zsh)` for Ctrl-R, Ctrl-T and Alt-C, which only the omz
+    `fzf` plugin was binding - fzf-tab covers Tab and nothing else.
+  - The completion styles worth keeping from `lib/completion.zsh`:
+    case-insensitive matching, `special-dirs`, group names, `WORDCHARS=''`.
+  - The keys from `lib/key-bindings.zsh`: Home, End, Delete, PageUp/PageDown,
+    Ctrl-arrow word motion, `magic-space`, `^X^E` to edit the line in
+    `$EDITOR`, and `bindkey -e` so the keymap no longer depends on `$EDITOR`.
+
+  Plus the two small things that would have been missed: the `..`/`...`/`-`
+  directory aliases with `AUTO_CD` and `AUTO_PUSHD`, and the tab title from
+  `termsupport.zsh`.
+
 ## [1.32.0]
 
 ### Changed

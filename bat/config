@@ -1,0 +1,7 @@
+# bat config - deployed by bootstrap.sh on every platform.
+#
+# The theme file next to this one is Catppuccin Mocha, the same palette
+# starship.toml, the ghostty config and the atuin theme use. bat only sees it
+# after `bat cache --build`, which the bootstrap runs when the theme is not
+# already in bat's list.
+--theme="Catppuccin Mocha"
