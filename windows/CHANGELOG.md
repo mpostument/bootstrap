@@ -20,6 +20,36 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.39.0]
+
+### Added
+
+- **`TerminalSetPwshDefault`** in the `Shell` manifest (default `$true`).
+  `merge-terminal-settings.ps1` now writes Windows Terminal's
+  `defaultProfile` to the PowerShell 7 profile guid it already creates, so
+  a new terminal tab opens PowerShell 7 instead of whatever Windows
+  Terminal picked on its own.
+
+- **F2 flips PSReadLine predictions to `ListView`** for the current line -
+  see Changed below for why `InlineView` is now the default. `F2` runs
+  `SwitchPredictionView`, so the full dropdown of matches is still one key
+  away without it appearing unprompted.
+
+### Changed
+
+- **PSReadLine `PredictionViewStyle`: `ListView` → `InlineView`.** `ListView`
+  rendered a dropdown of every history/plugin match for whatever was in the
+  buffer, typed or pasted - pasting a multi-line command flooded the
+  terminal with a page of unrelated history entries. `InlineView` shows one
+  greyed suggestion on the current line instead, the same shape as zsh's
+  `zsh-autosuggestions` on the other two platforms.
+
+- **Prompt renders on one line.** `starship.toml` (shared by all three
+  platforms) had a hardcoded leading newline in `format`, on top of
+  `add_newline = false`, forcing a blank line above every prompt regardless
+  of that setting. Removed, so the prompt is one dense line like a typical
+  Mac/Linux shell.
+
 ## [1.38.0]
 
 ### Removed
