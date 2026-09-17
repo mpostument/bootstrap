@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.33.0'
+BOOTSTRAP_VERSION='1.34.0'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -18,6 +18,9 @@ ASSUME_YES=no
 GUI_OVERRIDE=auto
 ONLY_GROUPS=""
 STATUS_ONLY=no
+DOCTOR_ONLY=no
+HISTORY_ONLY=no
+HISTORY_LINES=10
 
 # Run state.
 #
@@ -31,6 +34,11 @@ RUN_STARTED_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 RUN_INTERACTIVE=no
 [[ -t 1 ]] && RUN_INTERACTIVE=yes
 RUN_RECORDING=no
+# What this run moved: "pkg old>new" for an upgrade, "+pkg version" for an
+# install, from a snapshot taken before the packages phase against one taken
+# after the upgrades.
+RUN_CHANGED=''
+SNAP_BEFORE=''
 STATE_SYSTEM="/var/lib/bootstrap-linux/last-run"
 STATE_USER="${XDG_STATE_HOME:-${HOME}/.local/state}/bootstrap-linux/last-run"
 FAILED_IDS=()
@@ -54,9 +62,9 @@ phase() {
 result() {
   local action="$1" id="$2" detail="${3:-}" colour=""
   case "$action" in
-    installed|upgraded)      colour="$C_GREEN" ;;
+    installed|upgraded|ok)   colour="$C_GREEN" ;;
     would-install|would-upgrade) colour="$C_BLUE" ;;
-    failed)                  colour="$C_RED" ;;
+    failed|broken)           colour="$C_RED" ;;
     missing|held|no-gui)     colour="$C_YELLOW" ;;
     *)                       colour="$C_DIM" ;;
   esac
@@ -64,7 +72,7 @@ result() {
     "$colour" "$action" "$C_RESET" "$id" "$C_DIM" "$detail" "$C_RESET"
   # What failed, not only how much of it: --status has to name the steps, and
   # by then the output has scrolled away or gone into the journal.
-  [[ "$action" == "failed" ]] && FAILED_IDS+=("$id")
+  [[ "$action" == "failed" || "$action" == "broken" ]] && FAILED_IDS+=("$id")
   RESULT_ACTIONS+=("$action")
   RESULT_LINES+=("$action")
 }
@@ -139,9 +147,72 @@ write_state() {   # write_state <exit-code>
     echo "counts='$counts'"
     echo "log=$(log_hint)"
     echo "error='$(printf '%s' "${RUN_ABORT_MSG//\'/}" | tr '\n' ' ' | cut -c1-200)'"
+    echo "changed='${RUN_CHANGED//\'/}'"
   } > "$target" 2>/dev/null || true
+  append_history "$rc" "$finished" "$(( finished - RUN_STARTED_EPOCH ))"
   # The timer's record is read by a person who is not root.
   chmod 0644 "$target" 2>/dev/null || true
+  return 0
+}
+
+history_file() { printf '%s/history' "$(dirname "$(state_file)")"; }
+
+# One line per run, oldest first, so a week of unattended runs reads at once.
+# Bounded at 200 lines - eight months of nightly runs - because a file that
+# grows forever is a file somebody eventually has to deal with.
+append_history() {   # append_history <exit> <finished-epoch> <duration>
+  local hist line tallies tmp
+  hist="$(history_file)"
+  tallies="$(action_count installed)/$(action_count upgraded)/$(action_count failed)"
+  line="$(printf '%s\t%s\t%s\t%s\t%s\t%s' \
+    "$2" "$1" "$3" "$RUN_INTERACTIVE" "$tallies" "${RUN_CHANGED:0:300}")"
+  mkdir -p "$(dirname "$hist")" 2>/dev/null || return 0
+  if [[ -f "$hist" ]]; then
+    tmp="${hist}.new"
+    { tail -n 199 "$hist"; printf '%s\n' "$line"; } > "$tmp" 2>/dev/null && mv "$tmp" "$hist"
+  else
+    printf '%s\n' "$line" > "$hist" 2>/dev/null
+  fi
+  chmod 0644 "$hist" 2>/dev/null || true
+  return 0
+}
+
+print_history() {
+  local hist epoch code dur trigger tallies changed when verdict colour shown=0
+  # The same two records --status reads from: the timer's, and yours.
+  hist="/var/lib/bootstrap-linux/history"
+  [[ -r "$hist" ]] || hist="${XDG_STATE_HOME:-${HOME}/.local/state}/bootstrap-linux/history"
+  if [[ -r "/var/lib/bootstrap-linux/history" && -r "${XDG_STATE_HOME:-${HOME}/.local/state}/bootstrap-linux/history" ]]; then
+    hist="${XDG_STATE_HOME:-${HOME}/.local/state}/bootstrap-linux/history"
+    [[ "/var/lib/bootstrap-linux/history" -nt "$hist" ]] && hist="/var/lib/bootstrap-linux/history"
+  fi
+
+  phase 'History'
+  if [[ ! -r "$hist" ]]; then
+    result 'missing' 'history' "nothing recorded yet - $hist"
+    echo
+    return 0
+  fi
+  [[ "$HISTORY_LINES" =~ ^[0-9]+$ ]] || HISTORY_LINES=10
+  printf '  %s%-17s %-8s %-8s %-7s %s%s\n' \
+    "$C_DIM" 'when' 'took' 'result' 'i/u/f' 'what moved' "$C_RESET"
+  while IFS="$(printf '\t')" read -r epoch code dur trigger tallies changed; do
+    [[ -z "$epoch" ]] && continue
+    when="$(date -d "@$epoch" '+%Y-%m-%d %H:%M' 2>/dev/null || echo '?')"
+    [[ "$trigger" == "no" ]] && when="${when}*"
+    if [[ "$code" == "0" ]]; then
+      verdict='ok'; colour="$C_GREEN"
+    else
+      verdict="exit $code"; colour="$C_RED"
+    fi
+    # The colour goes around the padded field, not inside it: escape codes
+    # count towards printf's width and the columns walk off to the right.
+    printf '  %-17s %-8s %s%-8s%s %-7s %s%s%s\n' \
+      "$when" "$(human_seconds "$dur")" "$colour" "$verdict" "$C_RESET" \
+      "$tallies" "$C_DIM" "$changed" "$C_RESET"
+    shown=$((shown + 1))
+  done < <(tail -n "$HISTORY_LINES" "$hist")
+  printf '  %s%s run(s), * = unattended%s\n\n' "$C_DIM" "$shown" "$C_RESET"
   return 0
 }
 
@@ -404,6 +475,11 @@ Usage: bootstrap.sh [options]
                      REPOS packages.
   --status           Print what the last real run did and exit. Exits 1 if
                      that run failed, so a check can use it.
+  --history[=n]      Print the last n runs (default 10) and what each one
+                     moved, and exit.
+  --doctor           Check what a login shell actually sees - tools on PATH,
+                     shell integration, config drift, the timer - and exit.
+                     Changes nothing. Exits 1 if something is wrong.
   --skip-upgrade     Install what is missing, leave installed versions alone.
   --skip-cleanup     Leave cached .deb downloads on disk.
   --skip-schedule    Leave the systemd timer alone.
@@ -428,6 +504,9 @@ while [[ $# -gt 0 ]]; do
     --skip-cleanup)  SKIP_CLEANUP=yes ;;
     --skip-schedule) SKIP_SCHEDULE=yes ;;
     --status)        STATUS_ONLY=yes ;;
+    --doctor)        DOCTOR_ONLY=yes ;;
+    --history)       HISTORY_ONLY=yes ;;
+    --history=*)     HISTORY_ONLY=yes; HISTORY_LINES="${1#*=}" ;;
     --skip-repos)    SKIP_REPOS=yes ;;
     --skip-vscode-extensions) SKIP_VSCODE_EXT=yes ;;
     --skip-update-check) SKIP_UPDATE_CHECK=yes ;;
@@ -450,6 +529,11 @@ done
 if [[ "$STATUS_ONLY" == "yes" ]]; then
   print_status
   exit "$STATUS_RC"
+fi
+
+if [[ "$HISTORY_ONLY" == "yes" ]]; then
+  print_history
+  exit 0
 fi
 
 # Manifest
@@ -552,12 +636,356 @@ if [[ "${LIST_PACKAGES:-no}" == "yes" ]]; then
   exit 0
 fi
 
+# Doctor
+#
+# Every other phase asserts that a package is installed. This one asserts that
+# it is in *effect*, which is not the same thing and is where the bugs have
+# been: ~/go/bin missing from PATH, an apt fd-find shadowing the real fd, the
+# mise shims never reaching a login shell, Tab never getting to fzf-tab. Every
+# one was found months later by somebody noticing, because a phase that
+# installs a package has no idea whether the shell you type into can see it.
+#
+# So the checks run inside a real login shell - zsh -lic - which is the
+# environment they are about. One probe emitting every fact at once, in about a
+# second; a shell per check would take a minute to say the same thing.
+#
+# It reports and never fixes. The fix is bootstrap.sh itself.
+
+DOCTOR_OK=0
+DOCTOR_BROKEN=0
+DOCTOR_PROBE_OUT=''
+declare -A DOCTOR_CMD=() DOCTOR_ORIGIN=()
+
+doctor_ok()     { DOCTOR_OK=$((DOCTOR_OK + 1)); result 'ok' "$1" "${2:-}"; }
+doctor_broken() { DOCTOR_BROKEN=$((DOCTOR_BROKEN + 1)); result 'broken' "$1" "${2:-}"; }
+doctor_note()   { result 'present' "$1" "${2:-}"; }
+
+probe_get() { printf '%s\n' "$DOCTOR_PROBE_OUT" | sed -n "s|^$1=||p" | head -1; }
+
+# package -> command and where that command should live, from the table CI
+# enforces. Two rows name no single binary of their own (cifs-utils mounts
+# through mount, exfatprogs is a pair of mkfs/fsck tools) and two are written
+# for a reader rather than for this: zoxide's cell is the `z` function it
+# defines, and 7zip's names all three platforms' binaries at once.
+doctor_load_tools() {
+  local can lx cmd desc
+  [[ -r "$SCRIPT_DIR/../tools/cli-parity.conf" ]] || return 0
+  # The macos, windows and note columns are read into the throwaway `_` - the
+  # fields still have to be counted, they are just not wanted here.
+  while IFS='|' read -r can lx _ _ _ cmd desc; do
+    can="$(printf '%s' "$can" | tr -d '[:space:]')"
+    [[ -z "$can" || "$can" == \#* ]] && continue
+    lx="$(printf '%s' "$lx" | tr -d '[:space:]')"
+    [[ -z "$lx" || "$lx" == '-' ]] && continue
+    case "$can" in
+      cifs-utils|exfatprogs) continue ;;
+      zoxide) cmd='zoxide' ;;
+      7zip)   cmd='7zz' ;;
+      *)      cmd="$(printf '%s' "$cmd" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]].*$//')" ;;
+    esac
+    [[ -z "$cmd" ]] && continue
+    DOCTOR_CMD["$can"]="$cmd"
+    if [[ "$lx" == '@releases' ]]; then
+      DOCTOR_ORIGIN["$can"]='release'
+    else
+      DOCTOR_ORIGIN["$can"]='apt'
+    fi
+  done < "$SCRIPT_DIR/../tools/cli-parity.conf"
+  return 0
+}
+
+doctor_probe() {
+  local probe cmds can
+  cmds=''
+  for can in "${!DOCTOR_CMD[@]}"; do cmds="$cmds ${DOCTOR_CMD[$can]}"; done
+  # Not in the cli parity table, but just as load-bearing.
+  cmds="$cmds starship atuin carapace mise uv git gh node go java kubectl code"
+
+  mktemp_tracked probe "${TMPDIR:-/tmp}/bootstrap-probe.XXXXXX"
+  {
+    printf 'for c in%s; do print -r -- "resolve:$c=${commands[$c]:-}"; done\n' "$cmds"
+    cat <<'PROBE'
+print -r -- "env:starship=${STARSHIP_SESSION_KEY:+yes}"
+print -r -- "env:JAVA_HOME=${JAVA_HOME:-}"
+print -r -- "env:PATH=${PATH}"
+print -r -- "widget:atuin=$(( $+widgets[atuin-search] ))"
+print -r -- "widget:hss=$(( $+widgets[history-substring-search-up] ))"
+print -r -- "fn:fzf-tab=$(( $+functions[fzf-tab-complete] ))"
+print -r -- "fn:carapace=$(( $+functions[_carapace] ))"
+print -r -- "fn:zoxide=$(( $+functions[__zoxide_z] ))"
+print -r -- "fn:compdef=$(( $+functions[compdef] ))"
+print -r -- "bind:tab=$(bindkey '^I' 2>/dev/null | head -1)"
+print -r -- "bind:up=$(bindkey '^[[A' 2>/dev/null | head -1)"
+print -r -- "alias:cat=${aliases[cat]:-}"
+print -r -- "alias:ls=${aliases[ls]:-}"
+PROBE
+  } > "$probe"
+
+  # A login shell runs the user's own .zshrc, which can do anything including
+  # fail; the probe's lines are what matters, and stderr is not.
+  DOCTOR_PROBE_OUT="$(zsh -lic "source '$probe'" 2>/dev/null || true)"
+  [[ -n "$DOCTOR_PROBE_OUT" ]]
+}
+
+doctor_check_tools() {
+  local can cmd path want shims bindir
+  shims="${XDG_DATA_HOME:-$HOME/.local/share}/mise/shims"
+  bindir="${RELEASE_BIN_DIR:-$HOME/.local/bin}"
+  for can in $(printf '%s\n' "${!DOCTOR_CMD[@]}" | sort); do
+    cmd="${DOCTOR_CMD[$can]}"
+    path="$(probe_get "resolve:$cmd")"
+    if [[ "${DOCTOR_ORIGIN[$can]}" == 'release' ]]; then
+      want="${bindir}/${cmd}"
+    else
+      want="/usr/bin/${cmd}"
+    fi
+    if [[ -z "$path" ]]; then
+      doctor_broken "$cmd" "not on PATH in a login shell (expected $want)"
+    elif [[ "$path" == "$want" || "$path" == "/bin/${cmd}" ]]; then
+      doctor_ok "$cmd" "$path"
+    elif [[ "$path" == "$shims"/* ]]; then
+      # A mise shim runs the same program through one more exec, so it is not
+      # broken - but a shim for a tool mise does not manage is a leftover.
+      doctor_note "$cmd" "a mise shim answers first, ahead of $want"
+    else
+      doctor_broken "$cmd" "resolves to $path, not $want - something shadows it"
+    fi
+  done
+}
+
+doctor_check_shell() {
+  local v
+  if [[ "${ZSH_ENABLED:-no}" != "yes" ]]; then
+    doctor_note 'zsh integration' 'ZSH_ENABLED is not yes - nothing to check'
+    return 0
+  fi
+
+  [[ -f "${HOME}/.zshrc.bootstrap" ]] \
+    && doctor_ok 'managed fragment' "${HOME}/.zshrc.bootstrap" \
+    || doctor_broken 'managed fragment' "${HOME}/.zshrc.bootstrap does not exist"
+
+  if grep -qF '.zshrc.bootstrap' "${HOME}/.zshrc" 2>/dev/null; then
+    doctor_ok 'fragment is sourced' '.zshrc has the source line'
+  else
+    doctor_broken 'fragment is sourced' 'nothing in ~/.zshrc sources it, so none of it is in effect'
+  fi
+
+  [[ "$(probe_get 'env:starship')" == 'yes' ]] \
+    && doctor_ok 'starship' 'initialised - STARSHIP_SESSION_KEY is set' \
+    || doctor_broken 'starship' 'not initialised in a login shell'
+
+  [[ "$(probe_get 'widget:atuin')" == '1' ]] \
+    && doctor_ok 'atuin' 'the atuin-search widget exists' \
+    || doctor_broken 'atuin' 'no atuin-search widget - Ctrl-R is not atuin'
+
+  v="$(probe_get 'bind:up')"
+  case "$v" in
+    *history-substring-search-up*) doctor_ok 'history-substring-search' 'bound to the up arrow' ;;
+    *) doctor_broken 'history-substring-search' "the up arrow runs ${v:-nothing}" ;;
+  esac
+
+  v="$(probe_get 'bind:tab')"
+  case "$v" in
+    *fzf-tab-complete*) doctor_ok 'fzf-tab' 'bound to Tab' ;;
+    *) doctor_broken 'fzf-tab' "Tab runs ${v:-nothing}, not fzf-tab-complete" ;;
+  esac
+
+  [[ "$(probe_get 'fn:carapace')" == '1' ]] \
+    && doctor_ok 'carapace' 'the _carapace completer is defined' \
+    || doctor_broken 'carapace' 'not initialised in a login shell'
+
+  [[ "$(probe_get 'fn:zoxide')" == '1' ]] \
+    && doctor_ok 'zoxide' 'z is defined' \
+    || doctor_broken 'zoxide' 'z is not defined - zoxide never initialised'
+
+  [[ "$(probe_get 'fn:compdef')" == '1' ]] \
+    && doctor_ok 'completion' 'compinit has run' \
+    || doctor_broken 'completion' 'compdef is not defined - completion never initialised'
+
+  for v in cat ls; do
+    if [[ -n "$(probe_get "alias:$v")" ]]; then
+      doctor_ok "alias $v" "$(probe_get "alias:$v")"
+    else
+      doctor_broken "alias $v" 'not aliased - the fragment did not reach this shell'
+    fi
+  done
+}
+
+doctor_check_runtimes() {
+  local tool path mise_root
+  mise_root="${XDG_DATA_HOME:-$HOME/.local/share}/mise"
+  for tool in node go java; do
+    path="$(probe_get "resolve:$tool")"
+    if [[ -z "$path" ]]; then
+      doctor_broken "$tool" 'not on PATH in a login shell'
+    elif [[ "$path" == "$mise_root"/* ]]; then
+      doctor_ok "$tool" "$path"
+    else
+      doctor_broken "$tool" "resolves to $path, not the mise install under $mise_root"
+    fi
+  done
+
+  path="$(probe_get 'env:JAVA_HOME')"
+  if [[ -z "$path" ]]; then
+    doctor_broken 'JAVA_HOME' 'unset - Gradle, Maven and the IDEs that read it will not find the JDK'
+  elif [[ "$path" == "$mise_root"/* ]]; then
+    doctor_ok 'JAVA_HOME' "$path"
+  else
+    doctor_note 'JAVA_HOME' "$path - not the mise JDK, which may be deliberate"
+  fi
+
+  path="$(probe_get 'env:PATH')"
+  local dir
+  for dir in "${RELEASE_BIN_DIR:-$HOME/.local/bin}" "${HOME}/go/bin" "${HOME}/.dotnet/tools"; do
+    case ":$path:" in
+      *":${dir}:"*) doctor_ok "PATH $dir" 'present' ;;
+      *) doctor_broken "PATH $dir" 'missing from a login shell PATH' ;;
+    esac
+  done
+}
+
+doctor_config() {   # doctor_config <label> <repo copy> <deployed path>
+  local label="$1" src="$2" dst="$3"
+  if [[ ! -r "$dst" ]]; then
+    doctor_broken "$label" "not deployed at $dst"
+  elif [[ ! -r "$src" ]]; then
+    doctor_note "$label" "deployed, but the repo copy is missing at $src"
+  elif cmp -s "$src" "$dst"; then
+    doctor_ok "$label" "$dst"
+  else
+    doctor_note "$label" "$dst differs from the repo - the next run would replace it"
+  fi
+}
+
+doctor_check_configs() {
+  local bat_cfg
+  doctor_config 'starship.toml' "${SCRIPT_DIR}/../starship.toml" "${HOME}/.config/starship.toml"
+  doctor_config 'atuin config' "${SCRIPT_DIR}/../atuin/config.toml" "${HOME}/.config/atuin/config.toml"
+
+  if bat_cfg="$(bat --config-dir 2>/dev/null)" && [[ -n "$bat_cfg" ]]; then
+    doctor_config 'bat config' "${SCRIPT_DIR}/../bat/config" "${bat_cfg}/config"
+  else
+    doctor_broken 'bat config' 'bat is not installed, so nothing reads the theme'
+  fi
+
+  if [[ "${GHOSTTY_ENABLED:-no}" == "yes" ]]; then
+    [[ -r "${HOME}/.config/ghostty/config" ]] \
+      && doctor_ok 'ghostty config' "${HOME}/.config/ghostty/config" \
+      || doctor_note 'ghostty config' 'not deployed - a desktop-only phase'
+  fi
+}
+
+doctor_check_schedule() {
+  local unit="${SCHEDULE_UNIT_NAME:-bootstrap-linux}"
+  if [[ "${SCHEDULE_ENABLED:-no}" != "yes" ]]; then
+    doctor_note 'systemd timer' 'SCHEDULE_ENABLED is not yes'
+  elif [[ ! -d /run/systemd/system ]]; then
+    doctor_note 'systemd timer' 'systemd is not running as init - the timer cannot exist here'
+  elif [[ ! -f "/etc/systemd/system/${unit}.timer" ]]; then
+    doctor_broken 'systemd timer' "no ${unit}.timer - the daily run has never been installed"
+  elif systemctl is-active --quiet "${unit}.timer" 2>/dev/null; then
+    doctor_ok 'systemd timer' "${unit}.timer is active"
+  else
+    doctor_broken 'systemd timer' "${unit}.timer exists but is not active"
+  fi
+}
+
+run_doctor() {
+  doctor_load_tools
+
+  phase 'Doctor - what a login shell actually sees'
+  if ! command -v zsh >/dev/null 2>&1; then
+    result 'failed' 'login shell' 'no zsh to probe with'
+    return 1
+  fi
+  if ! doctor_probe; then
+    result 'failed' 'login shell' 'zsh -lic produced nothing - the probe could not run'
+    return 1
+  fi
+  doctor_ok 'login shell' "zsh $(zsh --version 2>/dev/null | awk '{print $2}') - probed in one pass"
+
+  phase 'Doctor - the cli group on PATH'
+  doctor_check_tools
+
+  phase 'Doctor - shell integration'
+  doctor_check_shell
+
+  phase 'Doctor - runtimes and PATH'
+  doctor_check_runtimes
+
+  phase 'Doctor - deployed config'
+  doctor_check_configs
+
+  phase 'Doctor - the daily run'
+  doctor_check_schedule
+
+  phase 'Doctor summary'
+  printf '  %-16s%s%s%s\n' 'ok' "$C_GREEN" "$DOCTOR_OK" "$C_RESET"
+  if [[ "$DOCTOR_BROKEN" -gt 0 ]]; then
+    printf '  %-16s%s%s%s\n' 'broken' "$C_RED" "$DOCTOR_BROKEN" "$C_RESET"
+    printf '\n  %sRun ./bootstrap.sh to fix what it can.%s\n\n' "$C_DIM" "$C_RESET"
+    return 1
+  fi
+  printf '\n  %sEverything the manifest promises is in effect.%s\n\n' "$C_DIM" "$C_RESET"
+  return 0
+}
+
+# What the machine has, name and version, one per line: every dpkg package,
+# because `apt-get upgrade` moves plenty this script never names, plus the
+# flatpaks.
+# Each listing is allowed to fail: flatpak may not be installed at all, and a
+# snapshot taken for the history is never worth ending a run over - which, with
+# `set -e` and a pipeline, is exactly what a non-zero exit here would do.
+pkg_snapshot() {   # pkg_snapshot <file>
+  {
+    dpkg-query -W -f '${Package} ${Version}\n' 2>/dev/null || true
+    if command -v flatpak >/dev/null 2>&1; then
+      flatpak list --columns=application,version 2>/dev/null || true
+    fi
+  } | awk 'NF >= 2 { print $1, $2 }' | sort > "$1" || true
+  return 0
+}
+
+snapshot_before() {
+  [[ "$DRY_RUN" == "no" ]] || return 0
+  command -v dpkg-query >/dev/null 2>&1 || return 0
+  mktemp_tracked SNAP_BEFORE "${TMPDIR:-/tmp}/bootstrap-before.XXXXXX"
+  pkg_snapshot "$SNAP_BEFORE"
+  return 0
+}
+
+# Everything that moved between the two snapshots, which is what the upgrade
+# actually did as opposed to what it said while scrolling past. A dist-upgrade
+# can move a hundred packages, so the list is capped at something readable and
+# says how many it left out.
+snapshot_after() {
+  local snap_after count
+  [[ -n "$SNAP_BEFORE" && -r "$SNAP_BEFORE" ]] || return 0
+  mktemp_tracked snap_after "${TMPDIR:-/tmp}/bootstrap-after.XXXXXX"
+  pkg_snapshot "$snap_after"
+  RUN_CHANGED="$(awk '
+    NR == FNR { before[$1] = $2; next }
+    {
+      if (!($1 in before)) { printf "+%s %s, ", $1, $2 }
+      else if (before[$1] != $2) { printf "%s %s>%s, ", $1, before[$1], $2 }
+    }
+  ' "$SNAP_BEFORE" "$snap_after" 2>/dev/null | sed 's/, $//' || true)"
+  if [[ -n "$RUN_CHANGED" ]]; then
+    count="$(awk -F', ' '{ print NF }' <<< "$RUN_CHANGED")"
+    if [[ "$count" -gt 8 ]]; then
+      RUN_CHANGED="$(cut -d',' -f1-8 <<< "$RUN_CHANGED"), +$(( count - 8 )) more"
+    fi
+    result 'present' 'versions moved' "$RUN_CHANGED"
+  fi
+  return 0
+}
+
 # Preflight
 #
 # Past this line the run counts: the EXIT trap records what happened, whether
 # it gets to the summary or dies in the middle.
 
-RUN_RECORDING=yes
+[[ "$DOCTOR_ONLY" == "yes" ]] || RUN_RECORDING=yes
 
 phase 'Preflight'
 
@@ -614,6 +1042,11 @@ for entry in "${HELD[@]:-}"; do
   [[ -z "$entry" ]] && continue
   result 'held' "${entry%%:*}" "${entry#*:}"
 done
+
+if [[ "$DOCTOR_ONLY" == "yes" ]]; then
+  run_doctor
+  exit $?
+fi
 
 # Packages
 
@@ -771,6 +1204,8 @@ setup_repo() {
   fi
 }
 
+snapshot_before
+
 phase 'Repositories - third-party apt sources'
 
 DPKG_ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
@@ -858,6 +1293,8 @@ done
 
 # Upgrades
 
+snapshot_after_upgrades=yes
+
 apt_pending_count() {
   apt-get --just-print upgrade 2>/dev/null | grep -c '^Inst ' || true
 }
@@ -904,6 +1341,8 @@ else
     fi
   fi
 fi
+
+[[ "${snapshot_after_upgrades:-no}" == "yes" ]] && snapshot_after
 
 # Housekeeping
 #

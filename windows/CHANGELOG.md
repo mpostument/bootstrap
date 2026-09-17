@@ -20,6 +20,47 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.41.0]
+
+### Added
+
+- **`-Doctor`: is any of it actually in effect?** Every phase in this script
+  asserts that a package is *installed*. Nothing asserted that it works, and
+  the difference is where this changelog's bugs live: `%USERPROFILE%\go\bin`
+  missing from the user `PATH`, the mise shims missing from it, `JAVA_HOME`
+  unset for the IDEs that read it, a profile deployed to one of the two
+  Documents directories and never loaded from the other.
+
+  So the questions go to a shell with the profile loaded - one probe, and
+  pointedly not `-NoProfile`, because the profile is the thing under test. What
+  each tool resolves to and how many copies of it are on `PATH`, whether the
+  prompt function came from starship, what `node`, `go` and `java` resolve to,
+  whether the deployed config still matches the repo, whether the scheduled
+  task exists and is enabled.
+
+  Three verdicts. `broken` is wrong, `ok` is right, and `present` is a
+  judgement call left to the reader - two copies of a command on `PATH` is
+  exactly how a stale one wins for months, but which one is wanted is not this
+  script's call to make. A doctor that cries wolf is a doctor nobody runs.
+
+  PSReadLine is the honest exception: it loads only in an interactive console
+  host, so a probe shell cannot observe it. That check is that the module is
+  installed and that the profile configures it, and it says so rather than
+  implying it watched it work. 7-Zip is skipped outright - winget's package
+  puts no `7z` on `PATH`, which `tools/cli-parity.conf` has noted for as long
+  as it has listed it.
+
+- **`-History`: and what did it move?** Phase 1 already takes a `winget export`
+  to decide what to install. A second one after it, compared with the first,
+  is what actually changed - `Microsoft.PowerShell 7.4.6>7.5.0`,
+  `+JesseDuffield.lazygit 0.44` - and that goes into the run record and into
+  one line per run in `history`, next to it. Unattended runs are marked,
+  because those are the ones nobody watched. Capped at 200 lines and at eight
+  changes per line, with a count of what it left out.
+
+  This completes the record all three platforms now write: the same ten keys
+  plus `changed`, the same shape, whichever machine you are reading.
+
 ## [1.40.0]
 
 ### Added

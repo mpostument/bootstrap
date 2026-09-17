@@ -62,6 +62,9 @@ none. Override with `--gui` or `--no-gui`.
 --list-packages    Print every package/tool this script manages and exit.
 --status           Print what the last real run did and exit. Exits 1 if that
                    run failed.
+--history[=n]      Print the last n runs (default 10) and what each moved.
+--doctor           Check what a login shell actually sees, and exit. Changes
+                   nothing; exits 1 if something is wrong.
 --skip-upgrade     Install what is missing, leave installed versions alone.
 --skip-cleanup     Leave cached .deb downloads on disk.
 --skip-schedule    Leave the systemd timer alone.
@@ -166,6 +169,58 @@ has no session bus of its own, so the message is handed to each
 `/run/user/<uid>/bus` in turn; a headless machine has none, and nothing
 happens. Interactive runs never notify — they already printed the failures in
 red.
+
+## Is it actually in effect?
+
+Every phase here asserts that a package is *installed*. `--doctor` asserts that
+it is in **effect**, which is not the same thing and is where the bugs have
+been: `~/go/bin` missing from `PATH`, an apt `fd-find` shadowing the real `fd`,
+the mise shims never reaching a login shell, `starship.toml` never applied, Tab
+never getting to fzf-tab. Every one of those was found months later by somebody
+noticing.
+
+So the checks run inside a real login shell — `zsh -lic` — because that is the
+environment they are about, and no other phase looks there. One probe emits
+every fact at once, in about a second; a shell per check would take a minute to
+say the same thing.
+
+```console
+$ ./bootstrap.sh --doctor
+
+== Doctor - the cli group on PATH ==============================
+  ok            bat                     /home/you/.local/bin/bat
+  present       yq                      a mise shim answers first, ahead of /home/you/.local/bin/yq
+== Doctor - shell integration ==================================
+  ok            fzf-tab                 bound to Tab
+  ok            atuin                   the atuin-search widget exists
+  broken        starship                not initialised in a login shell
+```
+
+`ok` is in effect, `broken` is not, and `present` is a judgement call left to
+you — a mise shim in front of a binary runs the same program through one more
+exec, and a config file that differs from the repo is only going to be replaced
+by the next run. It changes nothing and exits 1 if anything is broken.
+
+## What moved
+
+`--status` answers "did last night's run work". `--history` answers "and what
+did it change":
+
+```console
+$ ./bootstrap.sh --history=3
+
+== History =====================================================
+  when              took     result   i/u/f   what moved
+  2026-09-15 04:20* 1m 34s   ok       1/12/0  node 24.20.0>24.21.0, ripgrep 14.1.0>14.1.1
+  2026-09-16 04:20* 2m 02s   exit 1   0/3/2   starship 1.25.1>1.26.0
+  2026-09-17 09:11  8s       ok       0/0/0
+  3 run(s), * = unattended
+```
+
+The versions come from a snapshot taken before the packages phase and another
+after the upgrades, so they are what actually moved rather than what scrolled
+past. One line per run, oldest first, capped at 200 lines — eight months of
+nightly runs.
 
 ## Housekeeping
 

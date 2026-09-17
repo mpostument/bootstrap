@@ -146,11 +146,12 @@ if section 'run record'; then
   WIN_KEYS="$(sed -n '/^function Write-RunRecord/,/^}/p' "${ROOT}/windows/bootstrap.ps1" |
                 sed -n 's/^ *"\([a-z_]*\)=.*/\1/p' | tr '\n' ' ' | sed 's/ $//')"
 
-  is 'macos writes the expected keys' \
-     'version started finished_epoch duration_seconds exit interactive failed counts log error' \
-     "$MAC_KEYS"
-  is 'linux writes the same keys' "$MAC_KEYS" "$LNX_KEYS"
-  is 'windows writes the same keys' "$MAC_KEYS" "$WIN_KEYS"
+  # One record shape, three implementations. A reader - --status, or a person -
+  # should not have to care which script wrote the file in front of them.
+  CORE_KEYS='version started finished_epoch duration_seconds exit interactive failed counts log error changed'
+  is 'macos writes the expected keys' "$CORE_KEYS" "$MAC_KEYS"
+  is 'linux writes exactly what macos writes' "$MAC_KEYS" "$LNX_KEYS"
+  is 'windows writes exactly what macos writes' "$MAC_KEYS" "$WIN_KEYS"
 
   # --status must survive a record it did not write: a truncated one from a
   # killed run, a stray blank line, a value with an = in it.
@@ -202,6 +203,200 @@ EOF
   out="$(bash "$TMP/status.sh" "$TMP/does-not-exist" 2>&1)"
   contains 'no record at all says so' 'nothing recorded yet' "$out"
   contains 'and does not claim a failure' 'STATUS_RC=0' "$out"
+fi
+
+# --------------------------------------------------------- version deltas ----
+#
+# "what moved last night" is the whole point of the history, so the diff
+# between two package snapshots has to be right about all three cases.
+
+if section 'version deltas'; then
+  printf 'alpha 1.0\nbeta 2.0\ngamma 3.0\n' > "$TMP/before"
+  printf 'alpha 1.1\nbeta 2.0\ngamma 3.0\ndelta 4.0\n' > "$TMP/after"
+
+  {
+    cat <<'HARNESS'
+RUN_CHANGED=''
+SNAP_BEFORE="$1"
+SNAP_AFTER="$2"
+result() { :; }
+# The real function makes its own temp file and fills it from brew; here the
+# "after" snapshot is the fixture, so both stubs just hand it over.
+mktemp_tracked() { eval "$1=\"$SNAP_AFTER\""; }
+pkg_snapshot() { :; }
+HARNESS
+    extract_func "${ROOT}/macos/bootstrap.sh" snapshot_after
+    cat <<'DRIVER'
+snapshot_after
+printf '%s\n' "$RUN_CHANGED"
+DRIVER
+  } > "$TMP/delta.sh"
+
+  is 'an upgrade, an install and an unchanged package' \
+     'alpha 1.0>1.1, +delta 4.0' \
+     "$(bash "$TMP/delta.sh" "$TMP/before" "$TMP/after")"
+
+  is 'nothing moved means nothing to say' '' \
+     "$(bash "$TMP/delta.sh" "$TMP/before" "$TMP/before")"
+
+  # Linux diffs every dpkg package, so a dist-upgrade has to be summarised
+  # rather than printed in full.
+  : > "$TMP/before-many"
+  : > "$TMP/after-many"
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    printf 'pkg%02d 1.0\n' "$i" >> "$TMP/before-many"
+    printf 'pkg%02d 2.0\n' "$i" >> "$TMP/after-many"
+  done
+  {
+    cat <<'HARNESS'
+RUN_CHANGED=''
+SNAP_BEFORE="$1"
+SNAP_AFTER="$2"
+result() { :; }
+mktemp_tracked() { eval "$1=\"$SNAP_AFTER\""; }
+pkg_snapshot() { :; }
+HARNESS
+    extract_func "${ROOT}/linux/bootstrap.sh" snapshot_after
+    cat <<'DRIVER'
+snapshot_after
+printf '%s\n' "$RUN_CHANGED"
+DRIVER
+  } > "$TMP/delta-linux.sh"
+  out="$(bash "$TMP/delta-linux.sh" "$TMP/before-many" "$TMP/after-many")"
+  contains 'twelve changes are capped' '+4 more' "$out"
+  is 'and the cap keeps eight of them' '8' "$(awk -F'>' '{print NF-1}' <<< "$out")"
+fi
+
+# ----------------------------------------------- snapshots that misbehave ----
+#
+# A regression test with a name: a package listing that exits non-zero prints
+# nothing at all rather than a shorter list, and under `set -e` that ended the
+# run - before it installed anything - on the machine this was written on. A
+# snapshot taken for the history must never be able to do that.
+#
+# This is also the gap that let it through: the snapshot only runs in a real
+# run, and every test until now was a dry run, where it is skipped.
+
+if section 'snapshots survive a broken package manager'; then
+  # A brew that answers for formulae and fails for casks, which is how the real
+  # one behaves when it cannot describe something it thinks it installed.
+  cat > "$TMP/brew-half-broken" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in
+  *--formula*) printf 'git 2.55.0\nripgrep 14.1.1\n'; exit 0 ;;
+  *--cask*)    printf "Error: Cask 'gone' is not installed.\n" >&2; exit 1 ;;
+esac
+exit 0
+STUB
+  chmod +x "$TMP/brew-half-broken"
+
+  {
+    # The same shell settings the script runs under - without them the bug
+    # this is about cannot reproduce.
+    echo 'set -euo pipefail'
+    printf 'BREW=%s\n' "$TMP/brew-half-broken"
+    extract_func "${ROOT}/macos/bootstrap.sh" pkg_snapshot
+    cat <<'DRIVER'
+pkg_snapshot "$1"
+printf 'survived rc=%s\n' "$?"
+DRIVER
+  } > "$TMP/snap.sh"
+
+  out="$(bash "$TMP/snap.sh" "$TMP/snap.out" 2>/dev/null)"
+  is 'a failing cask listing does not end the run' 'survived rc=0' "$out"
+  is 'and the formulae are still recorded' 'git 2.55.0 ripgrep 14.1.1' \
+     "$(tr '\n' ' ' < "$TMP/snap.out" | sed 's/ $//')"
+
+  # And the whole thing failing is still not fatal.
+  cat > "$TMP/brew-dead" <<'STUB'
+#!/usr/bin/env bash
+echo 'Error: everything is on fire' >&2
+exit 1
+STUB
+  chmod +x "$TMP/brew-dead"
+  {
+    echo 'set -euo pipefail'
+    printf 'BREW=%s\n' "$TMP/brew-dead"
+    extract_func "${ROOT}/macos/bootstrap.sh" pkg_snapshot
+    cat <<'DRIVER'
+pkg_snapshot "$1"
+printf 'survived rc=%s\n' "$?"
+DRIVER
+  } > "$TMP/snap-dead.sh"
+  is 'a package manager that answers nothing is survivable' 'survived rc=0' \
+     "$(bash "$TMP/snap-dead.sh" "$TMP/snap-dead.out" 2>/dev/null)"
+  is 'and leaves an empty snapshot, not a missing one' '0' \
+     "$(wc -l < "$TMP/snap-dead.out" | tr -d ' ')"
+
+  # The Linux one has the same shape and the same hazard: no flatpak at all.
+  {
+    echo 'set -euo pipefail'
+    cat <<'FAKE_DPKG'
+dpkg-query() { printf 'libc6 2.41-1\nzsh 5.9-1\n'; }
+FAKE_DPKG
+    extract_func "${ROOT}/linux/bootstrap.sh" pkg_snapshot
+    cat <<'DRIVER'
+pkg_snapshot "$1"
+printf 'survived rc=%s\n' "$?"
+DRIVER
+  } > "$TMP/snap-linux.sh"
+  is 'linux: a machine with no flatpak is survivable' 'survived rc=0' \
+     "$(PATH="$TMP/empty:$PATH" bash "$TMP/snap-linux.sh" "$TMP/snap-linux.out" 2>/dev/null)"
+  is 'linux: and dpkg is still recorded' 'libc6 2.41-1 zsh 5.9-1' \
+     "$(tr '\n' ' ' < "$TMP/snap-linux.out" | sed 's/ $//')"
+fi
+
+# -------------------------------------------------------------- doctor -------
+#
+# The doctor is mostly questions asked of a live machine, which a test cannot
+# stage. What it can check is the mapping the questions are built from: the
+# parity table's cmd column is written for a reader, and two rows need
+# translating before they name a binary.
+
+if section 'doctor command mapping'; then
+  {
+    printf 'SCRIPT_DIR=%s\n' "${ROOT}/macos"
+    extract_func "${ROOT}/macos/bootstrap.sh" load_parity_table
+    extract_func "${ROOT}/macos/bootstrap.sh" parity_row
+    extract_func "${ROOT}/macos/bootstrap.sh" doctor_command_for
+    cat <<'DRIVER'
+load_parity_table
+for pkg in "$@"; do printf '%s\n' "$(doctor_command_for "$pkg" || echo 'NONE')"; done
+DRIVER
+  } > "$TMP/cmdmap.sh"
+
+  is 'a package whose binary shares its name' 'bat' "$(bash "$TMP/cmdmap.sh" bat)"
+  is 'ripgrep is rg'                          'rg'  "$(bash "$TMP/cmdmap.sh" ripgrep)"
+  is 'git-delta is delta'                     'delta' "$(bash "$TMP/cmdmap.sh" git-delta)"
+  is "zoxide's binary, not the z it defines"  'zoxide' "$(bash "$TMP/cmdmap.sh" zoxide)"
+  is "7zip's macOS binary is 7zz"             '7zz' "$(bash "$TMP/cmdmap.sh" sevenzip)"
+  is 'a package with no row has no command'   'NONE' "$(bash "$TMP/cmdmap.sh" not-a-package)"
+
+  # The Linux loader keeps its table in an associative array, which is bash 4.
+  # A Mac's own bash is 3.2, so this half runs on Linux and on CI.
+  if [[ "${BASH_VERSINFO[0]:-3}" -lt 4 ]]; then
+    skip 'the linux command mapping' "needs bash 4, this is ${BASH_VERSION%%(*}"
+  else
+  # The Linux loader has to drop the two rows that name no binary of their own.
+  {
+    printf 'SCRIPT_DIR=%s\n' "${ROOT}/linux"
+    printf 'declare -A DOCTOR_CMD=() DOCTOR_ORIGIN=()\n'
+    extract_func "${ROOT}/linux/bootstrap.sh" doctor_load_tools
+    cat <<'DRIVER'
+doctor_load_tools
+for want in "$@"; do printf '%s=%s/%s\n' "$want" "${DOCTOR_CMD[$want]:-none}" "${DOCTOR_ORIGIN[$want]:-none}"; done
+DRIVER
+  } > "$TMP/cmdmap-linux.sh"
+
+  is 'a release binary is expected in ~/.local/bin' 'bat=bat/release' \
+     "$(bash "$TMP/cmdmap-linux.sh" bat)"
+  is 'an apt package is expected in /usr/bin' 'tmux=tmux/apt' \
+     "$(bash "$TMP/cmdmap-linux.sh" tmux)"
+  is 'cifs-utils names no binary of its own' 'cifs-utils=none/none' \
+     "$(bash "$TMP/cmdmap-linux.sh" cifs-utils)"
+  is 'nor does exfatprogs' 'exfatprogs=none/none' \
+     "$(bash "$TMP/cmdmap-linux.sh" exfatprogs)"
+  fi
 fi
 
 # ------------------------------------------------------------ launchd plist --

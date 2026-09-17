@@ -15,6 +15,56 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.0]
+
+### Added
+
+- **`--doctor`: is it actually in effect?** Every phase in this script asserts
+  that a package is *installed*. Nothing asserted that it works, and the
+  difference is where this changelog's bugs live: `~/go/bin` missing from
+  `PATH`, `~/.dotnet/tools` missing from `PATH`, the mise shims missing from
+  `PATH`, a leftover apt `fd-find` shadowing the real `fd`, `format` and
+  `right_format` in `starship.toml` never in effect, Tab never opening fzf.
+  Every one of those was found by somebody noticing, months later, because a
+  phase that installs a package has no idea whether the shell you type into can
+  see it.
+
+  So `--doctor` asks the only environment that can answer: a real login shell.
+  One `zsh -lic` probe emits every fact at once - what each `cli` tool resolves
+  to, which widget Tab and the up arrow are bound to, whether starship, atuin,
+  carapace, zoxide and compinit initialised, what `node`, `go` and `java`
+  resolve to, what is on `PATH`, whether the deployed config still matches the
+  repo, whether the systemd timer is loaded. About a second for all of it; a shell
+  per check would take a minute to say the same thing.
+
+  Three verdicts, not two. `broken` is wrong, `ok` is right, and `present` is a
+  judgement call left to the reader: a mise shim in front of a binary runs the
+  same program through one more exec, and a config file that differs from the
+  repo is only going to be replaced by the next run. Making those `broken`
+  would have meant a doctor that cries wolf, which is a doctor nobody runs.
+
+  It changes nothing and exits 1 if anything is broken, so it works as a check.
+  Running it on the machine it was written on found a stale mise shim for `yq`
+  sitting in front of Homebrew's, and a launchd agent that had never been
+  installed.
+
+- **`--history`: and what did it move?** `--status` answers "did last night's
+  run work". This answers the other half. A snapshot of every dpkg package and every flatpak is taken
+  before the packages phase and another after the upgrades, and the difference -
+  `node 24.20.0>24.21.0`, `+ripgrep 14.1.1` - goes into the run record and into
+  one line per run in `history`, next to it.
+
+  The snapshot is allowed to fail, in pieces. `flatpak` is not on every
+  machine, and a command that is missing entirely exits 127 - which, under
+  `set -e` and a pipeline, would end a run over a snapshot taken for the
+  *history*. Each listing now runs separately and each may fail; what still
+  answers is recorded, and the run carries on either way.
+
+  That is what *actually* moved, rather than what scrolled past in the output:
+  and it is every dpkg package, not only the ones this manifest names, because `apt-get upgrade` moves plenty this script never mentions. A dist-upgrade that moves a hundred packages is summarised rather than printed in full. One line per run, oldest first, capped at 200 lines, which is
+  eight months of nightly runs. `--history=n` for a narrower window; unattended
+  runs are marked, because those are the ones nobody watched.
+
 ## [1.33.0]
 
 ### Added

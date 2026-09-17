@@ -109,6 +109,8 @@ Put the id in a group in `packages.psd1` and re-run.
 .\bootstrap.ps1 -ListPackages            # every package id, by group
 .\bootstrap.ps1 -Groups cli,dev          # only those groups
 .\bootstrap.ps1 -Status                  # what did the last run do
+.\bootstrap.ps1 -History                 # the last runs, and what each moved
+.\bootstrap.ps1 -Doctor                  # is any of it actually in effect
 .\bootstrap.ps1 -SkipUpgrade             # install missing, freeze versions
 .\bootstrap.ps1 -SkipCleanup             # leave winget's download cache alone
 .\bootstrap.ps1 -SkipShell               # packages only
@@ -158,6 +160,64 @@ two. An interactive run is never notified; it printed the failures in red.
 Interactive is decided by whether stdout is redirected, the same test the Linux
 and macOS scripts make with `[ -t 1 ]`. The scheduled task pipes through
 `Tee-Object`, so it always reads as unattended.
+
+## Is it actually in effect?
+
+Every phase here asserts that a package is *installed*. `-Doctor` asserts that
+it is in **effect**, which is not the same thing and is where this changelog's
+bugs live: `%USERPROFILE%\go\bin` missing from `PATH`, the mise shims missing
+from `PATH`, `JAVA_HOME` unset, a profile deployed but never loaded.
+
+The questions are asked of a shell with **your profile loaded** — one probe,
+no `-NoProfile`, because the profile is the thing under test. It reports what
+each tool resolves to and whether more than one copy is on `PATH`, whether the
+prompt function came from starship, what `node`, `go` and `java` resolve to,
+whether the deployed config still matches the repo, and whether the scheduled
+task exists and is enabled.
+
+PSReadLine is the exception: it only loads in an interactive console host, so a
+probe shell cannot see it. That check is that the module is installed and that
+the profile configures it — stated as such rather than pretended.
+
+```powershell
+.\bootstrap.ps1 -Doctor
+
+== Doctor - the cli group on PATH ==============================
+  ok            rg                      C:\Users\you\AppData\Local\Microsoft\WinGet\Links\rg.exe
+  present       fd                      C:\...\fd.exe - and 2 copies on PATH
+== Doctor - shell integration ==================================
+  ok            starship prompt         the prompt function comes from starship
+  broken        profile: PowerShell     not deployed at C:\Users\you\Documents\PowerShell\...
+```
+
+`ok` is in effect, `broken` is not, and `present` is a judgement call left to
+you — two copies of a command on `PATH` is how a stale one wins for months, but
+which one you want is not this script's decision. It changes nothing and exits
+1 if anything is broken.
+
+7-Zip is deliberately not checked: winget's package does not put `7z` on `PATH`
+at all, which `tools/cli-parity.conf` has said in its note for as long as it
+has listed it.
+
+## What moved
+
+`-Status` answers "did last night's run work". `-History` answers "and what did
+it change":
+
+```powershell
+.\bootstrap.ps1 -History -HistoryLines 3
+
+== History =====================================================
+  when              took     result   i/u/f   what moved
+  2026-09-15 04:20* 3m 07s   ok       1/9/0   Microsoft.PowerShell 7.4.6>7.5.0, +JesseDuffield.lazygit 0.44
+  2026-09-16 04:20* 4m 12s   exit 1   0/3/2   Starship.Starship 1.25.1>1.26.0
+  2026-09-17 09:11  41s      ok       0/0/0
+  3 run(s), * = unattended
+```
+
+The versions come from the `winget export` phase 1 already takes, compared with
+a second one after it — what actually moved, rather than what scrolled past.
+One line per run, oldest first, capped at 200 lines.
 
 ## Housekeeping
 

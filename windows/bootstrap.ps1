@@ -10,6 +10,14 @@
     Skip the housekeeping phase and leave winget's download cache alone.
 .PARAMETER Status
     Print what the last real run did and exit. Exits 1 if that run failed.
+.PARAMETER History
+    Print the last runs and what each one moved, then exit.
+.PARAMETER HistoryLines
+    How many runs -History prints. Default 10.
+.PARAMETER Doctor
+    Check what a shell with the profile loaded actually sees - tools on PATH,
+    the prompt, config drift, the task - and exit. Changes nothing. Exits 1 if
+    something is wrong.
 .PARAMETER SkipShell
     Skip the shell phase: Nerd Font, modules, profile, Windows Terminal.
 .PARAMETER SkipMpv
@@ -39,6 +47,9 @@ param(
     [switch]$SkipUpgrade,
     [switch]$SkipCleanup,
     [switch]$Status,
+    [switch]$History,
+    [int]$HistoryLines = 10,
+    [switch]$Doctor,
     [switch]$SkipShell,
     [switch]$SkipMpv,
     [switch]$SkipSchedule,
@@ -55,7 +66,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '1.40.0'
+$script:BootstrapVersion = '1.41.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -101,6 +112,12 @@ $script:NotifyOnFailure = $true
 $script:StatusExit = 0
 $script:StateRoot = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { [IO.Path]::GetTempPath() }
 $script:StateFile = Join-Path $script:StateRoot 'windows-bootstrap\last-run'
+$script:HistoryFile = Join-Path $script:StateRoot 'windows-bootstrap\history'
+# What this run moved: "id old>new" for an upgrade, "+id version" for an
+# install, from the winget export taken before the packages phase against one
+# taken after it.
+$script:RunChanged = ''
+$script:PackagesBefore = $null
 
 function Write-Phase {
     param([string]$Text)
@@ -186,6 +203,7 @@ function Write-RunRecord {
         "counts='$counts'"
         "log=$script:RunLog"
         "error='$message'"
+        "changed='$($script:RunChanged -replace "'", '')'"
     )
 
     try {
@@ -198,6 +216,94 @@ function Write-RunRecord {
         # -Status still shows yesterday.
         Write-Verbose ("could not write $script:StateFile - {0}" -f $_.Exception.Message)
     }
+
+    Add-HistoryEntry -ExitCode $ExitCode -Finished $finished
+}
+
+# One line per run, oldest first, so a week of unattended runs reads at once.
+# Bounded at 200 lines - eight months of nightly runs - because a file that
+# grows forever is a file somebody eventually has to deal with.
+function Add-HistoryEntry {
+    param([int]$ExitCode, [datetime]$Finished)
+    $tally = '{0}/{1}/{2}' -f `
+        @($script:Results | Where-Object { $_.Action -eq 'installed' }).Count,
+        @($script:Results | Where-Object { $_.Action -eq 'upgraded' }).Count,
+        @($script:Results | Where-Object { $_.Action -eq 'failed' }).Count
+    $changed = $script:RunChanged
+    if ($changed.Length -gt 300) { $changed = $changed.Substring(0, 300) }
+    $interactive = if ($script:RunInteractive) { 'yes' } else { 'no' }
+    $line = ("{0}`t{1}`t{2}`t{3}`t{4}`t{5}" -f
+        [DateTimeOffset]::new($Finished).ToUnixTimeSeconds(), $ExitCode,
+        [int]($Finished - $script:RunStarted).TotalSeconds, $interactive, $tally, $changed)
+
+    try {
+        $dir = Split-Path -Parent $script:HistoryFile
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        $kept = @()
+        if (Test-Path -LiteralPath $script:HistoryFile) {
+            $kept = @(Get-Content -LiteralPath $script:HistoryFile -ErrorAction SilentlyContinue |
+                Select-Object -Last 199)
+        }
+        Set-Content -LiteralPath $script:HistoryFile -Value ($kept + $line) -Encoding UTF8 -WhatIf:$false
+    } catch {
+        Write-Verbose ("could not write $script:HistoryFile - {0}" -f $_.Exception.Message)
+    }
+}
+
+function Show-RunHistory {
+    Write-Phase 'History'
+    if (-not (Test-Path -LiteralPath $script:HistoryFile)) {
+        Add-Result -Group 'history' -Id 'history' -Action 'missing' `
+            -Detail "nothing recorded yet - $script:HistoryFile"
+        Write-Host ''
+        return
+    }
+    if ($HistoryLines -lt 1) { $HistoryLines = 10 }
+
+    Write-Host ('  {0,-17} {1,-8} {2,-8} {3,-7} {4}' -f 'when', 'took', 'result', 'i/u/f', 'what moved') `
+        -ForegroundColor DarkGray
+    $rows = @(Get-Content -LiteralPath $script:HistoryFile | Select-Object -Last $HistoryLines)
+    foreach ($row in $rows) {
+        $cell = $row -split "`t"
+        if ($cell.Count -lt 5) { continue }
+        [int64]$epoch = 0
+        [void][int64]::TryParse($cell[0], [ref]$epoch)
+        $when = [DateTimeOffset]::FromUnixTimeSeconds($epoch).ToLocalTime().ToString('yyyy-MM-dd HH:mm')
+        # An unattended run is the one worth spotting in a list of runs.
+        if ($cell[3] -eq 'no') { $when += '*' }
+        [int]$seconds = 0
+        [void][int]::TryParse($cell[2], [ref]$seconds)
+        $verdict = if ($cell[1] -eq '0') { 'ok' } else { "exit $($cell[1])" }
+        $colour = if ($cell[1] -eq '0') { 'Green' } else { 'Red' }
+
+        Write-Host ('  {0,-17} {1,-8} ' -f $when, (Format-Duration $seconds)) -NoNewline
+        Write-Host ('{0,-8}' -f $verdict) -ForegroundColor $colour -NoNewline
+        Write-Host (' {0,-7} ' -f $cell[4]) -NoNewline
+        $moved = if ($cell.Count -gt 5) { $cell[5] } else { '' }
+        Write-Host $moved -ForegroundColor DarkGray
+    }
+    Write-Host ('  {0} run(s), * = unattended' -f $rows.Count) -ForegroundColor DarkGray
+    Write-Host ''
+}
+
+# What moved between two winget exports: the same question `brew list
+# --versions` answers on macOS and dpkg-query on Linux.
+function Get-PackageDelta {
+    param([hashtable]$Before, [hashtable]$After)
+    if (-not $Before -or -not $After) { return '' }
+    $moved = @()
+    foreach ($id in ($After.Keys | Sort-Object)) {
+        if (-not $Before.ContainsKey($id)) {
+            $moved += ('+{0} {1}' -f $id, $After[$id])
+        } elseif ($Before[$id] -ne $After[$id]) {
+            $moved += ('{0} {1}>{2}' -f $id, $Before[$id], $After[$id])
+        }
+    }
+    if ($moved.Count -eq 0) { return '' }
+    if ($moved.Count -gt 8) {
+        return (($moved[0..7] -join ', ') + (', +{0} more' -f ($moved.Count - 8)))
+    }
+    return ($moved -join ', ')
 }
 
 # One notification for a run nobody was watching. There is no single channel
@@ -308,6 +414,274 @@ function Show-RunStatus {
     Write-Host ('  {0,-16}' -f 'record') -NoNewline
     Write-Host $script:StateFile -ForegroundColor DarkGray
     Write-Host ''
+}
+
+# Doctor
+#
+# Every phase here asserts that a package is installed. This asserts that it is
+# in *effect*, which is not the same thing and is where this changelog's bugs
+# live: %USERPROFILE%\go\bin missing from PATH, the mise shims missing from
+# PATH, JAVA_HOME unset, a profile that was deployed but never loaded. All of
+# them were found by somebody noticing, months later.
+#
+# So the questions are asked of a shell with the profile loaded, in one probe:
+# what each tool resolves to, whether anything shadows it, what the prompt
+# function is, what is on PATH. PSReadLine is the exception - it only loads in
+# an interactive console host, so a probe cannot see it and the check is that
+# the module is there and the profile configures it.
+#
+# It reports and never fixes. The fix is bootstrap.ps1 itself.
+
+$script:DoctorOk = 0
+$script:DoctorBroken = 0
+$script:DoctorProbe = @{}
+
+function Add-DoctorOk {
+    param([string]$Id, [string]$Detail)
+    $script:DoctorOk++
+    Add-Result -Group 'doctor' -Id $Id -Action 'ok' -Detail $Detail
+}
+
+function Add-DoctorBroken {
+    param([string]$Id, [string]$Detail)
+    $script:DoctorBroken++
+    Add-Result -Group 'doctor' -Id $Id -Action 'broken' -Detail $Detail
+}
+
+function Add-DoctorNote {
+    param([string]$Id, [string]$Detail)
+    Add-Result -Group 'doctor' -Id $Id -Action 'present' -Detail $Detail
+}
+
+# package -> command, from the table CI enforces. Three rows need saying
+# differently: zoxide's cell is the `z` function it defines rather than its
+# binary, and 7-Zip and the two Linux-only entries put nothing on a Windows
+# PATH at all.
+function Get-DoctorCommands {
+    $table = Join-Path (Split-Path $script:ToolRoot -Parent) 'tools\cli-parity.conf'
+    $commands = @{}
+    if (-not (Test-Path -LiteralPath $table)) { return $commands }
+    foreach ($row in (Get-Content -LiteralPath $table)) {
+        if ($row -match '^\s*#' -or -not $row.Trim()) { continue }
+        $cell = $row -split '\|'
+        if ($cell.Count -lt 6) { continue }
+        $canonical = $cell[0].Trim()
+        $winget = $cell[3].Trim()
+        if (-not $winget -or $winget -eq '-') { continue }
+        if ($canonical -eq '7zip') { continue }
+        $command = if ($canonical -eq 'zoxide') { 'zoxide' } else { ($cell[5].Trim() -split '\s+')[0] }
+        if ($command) { $commands[$command] = $winget }
+    }
+    return $commands
+}
+
+function Invoke-DoctorProbe {
+    param([string[]]$Commands)
+    $script:DoctorProbe = @{}
+    if (-not $script:PwshForTask) { return $false }
+
+    $list = ($Commands | ForEach-Object { "'$_'" }) -join ','
+    $probe = @"
+`$out = @()
+foreach (`$c in @($list)) {
+    `$found = @(Get-Command `$c -ErrorAction SilentlyContinue)
+    `$first = if (`$found.Count) { `$found[0].Source } else { '' }
+    `$out += "resolve:`$c=`$first"
+    `$out += "count:`$c=`$(`$found.Count)"
+}
+`$out += "env:PATH=`$env:PATH"
+`$out += "env:JAVA_HOME=`$env:JAVA_HOME"
+`$prompt = Get-Command prompt -CommandType Function -ErrorAction SilentlyContinue
+`$out += "fn:prompt=`$(if (`$prompt) { `$prompt.Definition } else { '' })"
+`$out -join [Environment]::NewLine
+"@
+
+    try {
+        # No -NoProfile on purpose: the profile is the thing under test.
+        $raw = & $script:PwshForTask -NoLogo -NonInteractive -Command $probe 2>$null
+    } catch {
+        Write-Verbose ('the probe shell failed - {0}' -f $_.Exception.Message)
+        return $false
+    }
+    foreach ($line in ($raw -split "`r?`n")) {
+        $pair = $line -split '=', 2
+        if ($pair.Count -eq 2) { $script:DoctorProbe[$pair[0]] = $pair[1] }
+    }
+    return ($script:DoctorProbe.Count -gt 0)
+}
+
+function Get-ProbeValue {
+    param([string]$Key)
+    if ($script:DoctorProbe.ContainsKey($Key)) { return $script:DoctorProbe[$Key] }
+    return ''
+}
+
+function Test-DoctorTools {
+    param([hashtable]$Commands)
+    foreach ($command in ($Commands.Keys | Sort-Object)) {
+        $path = Get-ProbeValue "resolve:$command"
+        $count = Get-ProbeValue "count:$command"
+        if (-not $path) {
+            Add-DoctorBroken $command ('not on PATH - winget says it installs {0}' -f $Commands[$command])
+        } elseif ($count -and [int]$count -gt 1) {
+            # Two of the same command on PATH is how a stale copy wins for
+            # months without anybody noticing.
+            Add-DoctorNote $command ("$path - and $count copies on PATH")
+        } else {
+            Add-DoctorOk $command $path
+        }
+    }
+}
+
+function Test-DoctorShell {
+    $prompt = Get-ProbeValue 'fn:prompt'
+    if ($prompt -match 'starship') {
+        Add-DoctorOk 'starship prompt' 'the prompt function comes from starship'
+    } elseif ($prompt) {
+        Add-DoctorBroken 'starship prompt' 'a prompt function is defined, but not by starship'
+    } else {
+        Add-DoctorBroken 'starship prompt' 'no prompt function - the profile did not load'
+    }
+
+    foreach ($target in @(
+            (Join-Path $env:USERPROFILE 'Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1'),
+            (Join-Path $env:USERPROFILE 'Documents\PowerShell\Microsoft.PowerShell_profile.ps1'))) {
+        $label = 'profile: ' + (Split-Path (Split-Path $target -Parent) -Leaf)
+        if (-not (Test-Path -LiteralPath $target)) {
+            Add-DoctorBroken $label "not deployed at $target"
+        } elseif ((Get-Content -LiteralPath $target -Raw) -eq (Get-Content -LiteralPath $script:ProfileSource -Raw)) {
+            Add-DoctorOk $label $target
+        } else {
+            Add-DoctorNote $label "$target differs from the repo - the next run would replace it"
+        }
+    }
+
+    # PSReadLine only loads in an interactive console host, so a probe shell
+    # cannot report on it; what can be checked is that it is installed and that
+    # the profile configures it.
+    if (Get-Module -ListAvailable -Name PSReadLine -ErrorAction SilentlyContinue) {
+        Add-DoctorOk 'PSReadLine' 'installed'
+    } else {
+        Add-DoctorBroken 'PSReadLine' 'not installed - no history search, no predictions'
+    }
+    if ((Test-Path -LiteralPath $script:ProfileSource) -and
+        (Select-String -LiteralPath $script:ProfileSource -Pattern 'Set-PSReadLineOption' -Quiet)) {
+        Add-DoctorOk 'PSReadLine options' 'the profile sets them'
+    } else {
+        Add-DoctorBroken 'PSReadLine options' 'the profile does not configure PSReadLine'
+    }
+}
+
+function Test-DoctorRuntimes {
+    $shims = Join-Path $env:USERPROFILE '.local\share\mise\shims'
+    foreach ($tool in @('node', 'go', 'java')) {
+        $path = Get-ProbeValue "resolve:$tool"
+        if (-not $path) {
+            Add-DoctorBroken $tool 'not on PATH'
+        } elseif ($path -like "$shims*") {
+            Add-DoctorOk $tool $path
+        } else {
+            Add-DoctorNote $tool "$path - not the mise shim under $shims"
+        }
+    }
+
+    $javaHome = Get-ProbeValue 'env:JAVA_HOME'
+    if (-not $javaHome) {
+        Add-DoctorBroken 'JAVA_HOME' 'unset - Gradle, Maven and the IDEs that read it will not find the JDK'
+    } else {
+        Add-DoctorOk 'JAVA_HOME' $javaHome
+    }
+
+    $path = Get-ProbeValue 'env:PATH'
+    foreach ($dir in @($shims, (Join-Path $env:USERPROFILE 'go\bin'))) {
+        if (($path -split ';') -contains $dir) {
+            Add-DoctorOk "PATH $dir" 'present'
+        } else {
+            Add-DoctorBroken "PATH $dir" 'missing from a profile-loaded shell'
+        }
+    }
+}
+
+function Test-DoctorConfig {
+    $pairs = @(
+        @{ Label = 'starship.toml'; Source = $script:StarshipTomlSource
+           Target = (Join-Path $env:USERPROFILE '.config\starship.toml') }
+        @{ Label = 'atuin config'; Source = (Join-Path $script:AtuinSource 'config.toml')
+           Target = (Join-Path $env:USERPROFILE '.config\atuin\config.toml') }
+    )
+    foreach ($pair in $pairs) {
+        if (-not (Test-Path -LiteralPath $pair.Target)) {
+            Add-DoctorBroken $pair.Label ('not deployed at {0}' -f $pair.Target)
+        } elseif (-not (Test-Path -LiteralPath $pair.Source)) {
+            Add-DoctorNote $pair.Label ('deployed, but the repo copy is missing at {0}' -f $pair.Source)
+        } elseif ((Get-FileHash -LiteralPath $pair.Source).Hash -eq (Get-FileHash -LiteralPath $pair.Target).Hash) {
+            Add-DoctorOk $pair.Label $pair.Target
+        } else {
+            Add-DoctorNote $pair.Label ('{0} differs from the repo - the next run would replace it' -f $pair.Target)
+        }
+    }
+}
+
+function Test-DoctorSchedule {
+    param($Schedule)
+    if (-not $Schedule.Enabled) {
+        Add-DoctorNote 'scheduled task' 'Enabled is false in the manifest'
+        return
+    }
+    $task = Get-ScheduledTask -TaskName $Schedule.TaskName -ErrorAction SilentlyContinue
+    if (-not $task) {
+        Add-DoctorBroken 'scheduled task' ('{0} does not exist - the daily run has never been registered' -f $Schedule.TaskName)
+    } elseif ($task.State -eq 'Disabled') {
+        Add-DoctorBroken 'scheduled task' ('{0} exists but is disabled' -f $Schedule.TaskName)
+    } else {
+        Add-DoctorOk 'scheduled task' ('{0} is {1}' -f $Schedule.TaskName, $task.State)
+    }
+}
+
+function Invoke-Doctor {
+    param($Manifest)
+    $commands = Get-DoctorCommands
+    $probeList = @($commands.Keys) + @('starship', 'atuin', 'carapace', 'mise', 'uv',
+        'git', 'gh', 'node', 'go', 'java', 'kubectl', 'code', 'winget')
+
+    Write-Phase 'Doctor - what a shell with your profile sees'
+    if (-not (Invoke-DoctorProbe -Commands $probeList)) {
+        Add-Result -Group 'doctor' -Id 'probe shell' -Action 'failed' `
+            -Detail 'could not start a shell to ask, or it answered nothing'
+        return 1
+    }
+    Add-DoctorOk 'probe shell' ('{0} - asked once, with the profile loaded' -f $script:PwshForTask)
+
+    Write-Phase 'Doctor - the cli group on PATH'
+    Test-DoctorTools -Commands $commands
+
+    Write-Phase 'Doctor - shell integration'
+    Test-DoctorShell
+
+    Write-Phase 'Doctor - runtimes and PATH'
+    Test-DoctorRuntimes
+
+    Write-Phase 'Doctor - deployed config'
+    Test-DoctorConfig
+
+    Write-Phase 'Doctor - the daily run'
+    Test-DoctorSchedule -Schedule $Manifest.Schedule
+
+    Write-Phase 'Doctor summary'
+    Write-Host ('  {0,-16}' -f 'ok') -NoNewline
+    Write-Host $script:DoctorOk -ForegroundColor Green
+    if ($script:DoctorBroken -gt 0) {
+        Write-Host ('  {0,-16}' -f 'broken') -NoNewline
+        Write-Host $script:DoctorBroken -ForegroundColor Red
+        Write-Host ''
+        Write-Host '  Run .\bootstrap.ps1 to fix what it can.' -ForegroundColor DarkGray
+        Write-Host ''
+        return 1
+    }
+    Write-Host ''
+    Write-Host '  Everything the manifest promises is in effect.' -ForegroundColor DarkGray
+    Write-Host ''
+    return 0
 }
 
 # Errors are terminating ($ErrorActionPreference = 'Stop'), so anything this
@@ -834,6 +1208,7 @@ function Install-MpvAddon {
 }
 
 if ($Status) { Show-RunStatus; exit $script:StatusExit }
+if ($History) { Show-RunHistory; exit 0 }
 
 # Manifest
 
@@ -939,12 +1314,18 @@ if ($blocked.Count -gt 0) {
 
 Write-Host '  reading installed packages...' -ForegroundColor DarkGray
 $installed = Get-InstalledPackages
+# The same listing serves as the "before" half of what moved.
+$script:PackagesBefore = $installed
 if ($null -ne $installed) {
     Write-Host ('  installed       {0} winget-managed packages' -f $installed.Count) -ForegroundColor DarkGray
 }
 
 Write-Host '  reading available upgrades...' -ForegroundColor DarkGray
 $upgradeListing = Get-UpgradeListing
+
+# The doctor asks the machine questions and changes nothing, so it runs here -
+# after the manifest is read, before anything that touches winget.
+if ($Doctor) { exit (Invoke-Doctor -Manifest $manifest) }
 
 # Past this line the run counts: the Summary and the trap above both record
 # what happened, whether it gets to the end or throws on the way there.
@@ -1140,6 +1521,16 @@ if (-not (Get-Command mise -ErrorAction SilentlyContinue)) {
             $env:JAVA_HOME = $javaHome
             Add-Result -Group 'mise' -Id 'JAVA_HOME' -Action 'installed' -Detail $javaHome
         }
+    }
+}
+
+# What moved. A second winget export, compared with the one phase 1 started
+# from: the versions that actually changed, rather than the ones that scrolled
+# past. Skipped under -WhatIf, where by definition nothing moved.
+if (-not $WhatIfPreference -and $script:PackagesBefore) {
+    $script:RunChanged = Get-PackageDelta -Before $script:PackagesBefore -After (Get-InstalledPackages)
+    if ($script:RunChanged) {
+        Add-Result -Group 'packages' -Id 'versions moved' -Action 'present' -Detail $script:RunChanged
     }
 }
 

@@ -64,7 +64,12 @@ ctx_dotnet    = "${custom.dotnet_sdk}$nodejs$python$golang$rust$docker_context$t
 # in Claude Code, or set it by hand). This is the whole line Claude Code
 # shows, not an addition to the shell prompt above, so it repeats
 # directory/git_branch rather than relying on the main $format.
-claude-code = "$directory$git_branch$git_status$kubernetes$aws$azure$gcloud$terraform$claude_model$claude_context$claude_cost"
+#
+# No cloud or cluster context here on purpose. A gke_ context name plus an
+# Azure subscription plus a GCP project is most of the width and none of it
+# changes while you are talking to Claude; the shell prompt still shows all of
+# it, and the ctx_* profiles above still switch on the command you are typing.
+claude-code = "$directory$git_branch$git_status$claude_model$claude_context$claude_cost"
 
 [character]
 success_symbol = '[❯](green bold)'
