@@ -15,6 +15,73 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.37.0]
+
+### Removed
+
+- **`docker-desktop`.** Docker Desktop's own installer owns it on this machine -
+  every run found `/Applications/Docker.app` already there and reported it as
+  installed by something else, which is a line about software this manifest
+  does not manage. Out of the `apps` group, and out of the README passages that
+  used it as the example of a cask.
+
+- **`flameshot`.** Homebrew disabled the cask: it does not pass the macOS
+  Gatekeeper check, so `brew install --cask flameshot` now fails outright and
+  every run reported it as a failed step. Screenshots are `cmd-shift-5` in the
+  meantime. The winget package on Windows is unaffected and stays.
+
+### Added
+
+- **`--doctor`: is it actually in effect?** Every phase in this script asserts
+  that a package is *installed*. Nothing asserted that it works, and the
+  difference is where this changelog's bugs live: `~/go/bin` missing from
+  `PATH`, `~/.dotnet/tools` missing from `PATH`, the mise shims missing from
+  `PATH`, a leftover apt `fd-find` shadowing the real `fd`, `format` and
+  `right_format` in `starship.toml` never in effect, Tab never opening fzf.
+  Every one of those was found by somebody noticing, months later, because a
+  phase that installs a package has no idea whether the shell you type into can
+  see it.
+
+  So `--doctor` asks the only environment that can answer: a real login shell.
+  One `zsh -lic` probe emits every fact at once - what each `cli` tool resolves
+  to, which widget Tab and the up arrow are bound to, whether starship, atuin,
+  carapace, zoxide and compinit initialised, what `node`, `go` and `java`
+  resolve to, what is on `PATH`, whether the deployed config still matches the
+  repo, whether the launchd agent is loaded. About a second for all of it; a shell
+  per check would take a minute to say the same thing.
+
+  Three verdicts, not two. `broken` is wrong, `ok` is right, and `present` is a
+  judgement call left to the reader: a mise shim in front of a binary runs the
+  same program through one more exec, and a config file that differs from the
+  repo is only going to be replaced by the next run. Making those `broken`
+  would have meant a doctor that cries wolf, which is a doctor nobody runs.
+
+  It changes nothing and exits 1 if anything is broken, so it works as a check.
+  Running it on the machine it was written on found a stale mise shim for `yq`
+  sitting in front of Homebrew's, and a launchd agent that had never been
+  installed.
+
+- **`--history`: and what did it move?** `--status` answers "did last night's
+  run work". This answers the other half. A snapshot of `brew list --versions`, formulae and casks both is taken
+  before the packages phase and another after the upgrades, and the difference -
+  `node 24.20.0>24.21.0`, `+ripgrep 14.1.1` - goes into the run record and into
+  one line per run in `history`, next to it.
+
+  The snapshot is allowed to fail, in pieces. A package listing can exit
+  non-zero for reasons that have nothing to do with this run, and one that
+  fails prints nothing at all rather than a shorter list - so taking the
+  formulae and the casks together meant losing both. Worse, under `set -e` a
+  snapshot taken for the *history* could end the run before it installed
+  anything, which is exactly what it did on the machine this was written on,
+  between the taps phase and the first package. Each listing now runs
+  separately and each may fail; what still answers is recorded, and the run
+  carries on either way.
+
+  That is what *actually* moved, rather than what scrolled past in the output:
+  Homebrew keeps no log of what it upgraded. One line per run, oldest first, capped at 200 lines, which is
+  eight months of nightly runs. `--history=n` for a narrower window; unattended
+  runs are marked, because those are the ones nobody watched.
+
 ## [1.36.0]
 
 ### Added

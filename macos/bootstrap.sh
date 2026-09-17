@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.36.0'
+BOOTSTRAP_VERSION='1.37.0'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -17,6 +17,9 @@ SKIP_UPDATE_CHECK=no
 GUI_OVERRIDE=auto
 ONLY_GROUPS=""
 STATUS_ONLY=no
+DOCTOR_ONLY=no
+HISTORY_ONLY=no
+HISTORY_LINES=10
 
 # Run state. The launchd agent exports BOOTSTRAP_LOG_DIR, so a run started by
 # it knows which log file it is being written to and can say so in --status.
@@ -27,8 +30,14 @@ RUN_INTERACTIVE=no
 RUN_LOG=""
 [[ -n "${BOOTSTRAP_LOG_DIR:-}" ]] && RUN_LOG="${BOOTSTRAP_LOG_DIR}/bootstrap-$(date +%Y-%m-%d).log"
 RUN_RECORDING=no
+# What this run moved: "pkg old>new" for an upgrade, "+pkg version" for an
+# install, filled in by comparing a snapshot taken before the packages phase
+# with one taken after the upgrades.
+RUN_CHANGED=''
+SNAP_BEFORE=''
 STATE_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/bootstrap-macos"
 STATE_FILE="${STATE_DIR}/last-run"
+HISTORY_FILE="${STATE_DIR}/history"
 FAILED_IDS=()
 
 # Output
@@ -49,9 +58,9 @@ phase() {
 result() {
   local action="$1" id="$2" detail="${3:-}" colour=""
   case "$action" in
-    installed|upgraded)      colour="$C_GREEN" ;;
+    installed|upgraded|ok)   colour="$C_GREEN" ;;
     would-install|would-upgrade) colour="$C_BLUE" ;;
-    failed)                  colour="$C_RED" ;;
+    failed|broken)           colour="$C_RED" ;;
     missing|held|no-gui)     colour="$C_YELLOW" ;;
     *)                       colour="$C_DIM" ;;
   esac
@@ -59,7 +68,7 @@ result() {
     "$colour" "$action" "$C_RESET" "$id" "$C_DIM" "$detail" "$C_RESET"
   # What failed, not only how much of it: --status has to name the steps, and
   # by then the output has scrolled away or gone to a log nobody opened.
-  [[ "$action" == "failed" ]] && FAILED_IDS+=("$id")
+  [[ "$action" == "failed" || "$action" == "broken" ]] && FAILED_IDS+=("$id")
   RESULT_ACTIONS+=("$action")
 }
 
@@ -120,7 +129,61 @@ write_state() {   # write_state <exit-code>
     echo "counts='$counts'"
     echo "log=$RUN_LOG"
     echo "error='$(printf '%s' "${RUN_ABORT_MSG//\'/}" | tr '\n' ' ' | cut -c1-200)'"
+    echo "changed='${RUN_CHANGED//\'/}'"
   } > "$STATE_FILE" 2>/dev/null || true
+
+  append_history "$rc" "$finished" "$(( finished - RUN_STARTED_EPOCH ))"
+  return 0
+}
+
+# One line per run, oldest first, so a week of unattended runs can be read at
+# once. Bounded at 200 lines - eight months of nightly runs - because a file
+# that grows forever is a file somebody eventually has to deal with.
+append_history() {   # append_history <exit> <finished-epoch> <duration>
+  local line tallies tmp
+  tallies="$(action_count installed)/$(action_count upgraded)/$(action_count failed)"
+  line="$(printf '%s\t%s\t%s\t%s\t%s\t%s' \
+    "$2" "$1" "$3" "$RUN_INTERACTIVE" "$tallies" "${RUN_CHANGED:0:300}")"
+  mkdir -p "$STATE_DIR" 2>/dev/null || return 0
+  if [[ -f "$HISTORY_FILE" ]]; then
+    tmp="${HISTORY_FILE}.new"
+    { tail -n 199 "$HISTORY_FILE"; printf '%s\n' "$line"; } > "$tmp" 2>/dev/null &&
+      mv "$tmp" "$HISTORY_FILE"
+  else
+    printf '%s\n' "$line" > "$HISTORY_FILE" 2>/dev/null
+  fi
+  return 0
+}
+
+print_history() {
+  local epoch code dur trigger tallies changed when verdict shown=0
+  phase 'History'
+  if [[ ! -r "$HISTORY_FILE" ]]; then
+    result 'missing' 'history' "nothing recorded yet - $HISTORY_FILE"
+    echo
+    return 0
+  fi
+  [[ "$HISTORY_LINES" =~ ^[0-9]+$ ]] || HISTORY_LINES=10
+  printf '  %s%-17s %-8s %-8s %-7s %s%s\n' \
+    "$C_DIM" 'when' 'took' 'result' 'i/u/f' 'what moved' "$C_RESET"
+  while IFS="$(printf '\t')" read -r epoch code dur trigger tallies changed; do
+    [[ -z "$epoch" ]] && continue
+    when="$(date -r "$epoch" '+%Y-%m-%d %H:%M' 2>/dev/null || echo '?')"
+    # An unattended run is the one worth spotting in a list of runs.
+    [[ "$trigger" == "no" ]] && when="${when}*"
+    if [[ "$code" == "0" ]]; then
+      verdict='ok'; colour="$C_GREEN"
+    else
+      verdict="exit $code"; colour="$C_RED"
+    fi
+    # The colour goes around the padded field, not inside it: escape codes
+    # count towards printf's width and the columns walk off to the right.
+    printf '  %-17s %-8s %s%-8s%s %-7s %s%s%s\n' \
+      "$when" "$(human_seconds "$dur")" "$colour" "$verdict" "$C_RESET" \
+      "$tallies" "$C_DIM" "$changed" "$C_RESET"
+    shown=$((shown + 1))
+  done < <(tail -n "$HISTORY_LINES" "$HISTORY_FILE")
+  printf '  %s%s run(s), * = unattended%s\n\n' "$C_DIM" "$shown" "$C_RESET"
   return 0
 }
 
@@ -367,6 +430,11 @@ Usage: bootstrap.sh [options]
                      which group.
   --status           Print what the last real run did and exit. Exits 1 if
                      that run failed, so a check can use it.
+  --history[=n]      Print the last n runs (default 10) and what each one
+                     moved, and exit.
+  --doctor           Check what a login shell actually sees - tools on PATH,
+                     shell integration, config drift, the agent - and exit.
+                     Changes nothing. Exits 1 if something is wrong.
   --skip-upgrade     Install what is missing, leave installed versions alone.
   --skip-cask-upgrade
                      Upgrade formulae but not casks. What the launchd agent
@@ -401,6 +469,9 @@ while [[ $# -gt 0 ]]; do
     --list-groups)  LIST_GROUPS=yes ;;
     --list-packages) LIST_PACKAGES=yes ;;
     --status)       STATUS_ONLY=yes ;;
+    --doctor)       DOCTOR_ONLY=yes ;;
+    --history)      HISTORY_ONLY=yes ;;
+    --history=*)    HISTORY_ONLY=yes; HISTORY_LINES="${1#*=}" ;;
     --version)      echo "$BOOTSTRAP_VERSION"; exit 0 ;;
     -h|--help)      usage; exit 0 ;;
     *)              die "unknown option: $1 (try --help)" ;;
@@ -413,11 +484,37 @@ if [[ "$STATUS_ONLY" == "yes" ]]; then
   exit "$STATUS_RC"
 fi
 
+if [[ "$HISTORY_ONLY" == "yes" ]]; then
+  print_history
+  exit 0
+fi
+
 # Arrays, the bash 3.2 way
 group_array() {   # group_array <dest> <source-array-name>
   eval "$1=()"
   declare -p "$2" >/dev/null 2>&1 || return 0
   eval "if (( \${#$2[@]} )); then $1=(\"\${$2[@]}\"); fi"
+}
+
+# The cli group's package -> command mapping, from the table CI enforces.
+# Loaded by the zsh fragment (for the `tools` function) and by the doctor (to
+# know which binary a package is supposed to put on PATH).
+load_parity_table() {
+  _parity_pkg=() _parity_cmd=() _parity_desc=()
+  [[ -r "$SCRIPT_DIR/../tools/cli-parity.conf" ]] || return 0
+  local _pty_can _pty_lx _pty_mac _pty_win _pty_note _pty_cmd _pty_desc
+  while IFS='|' read -r _pty_can _pty_lx _pty_mac _pty_win _pty_note _pty_cmd _pty_desc; do
+    _pty_can="$(printf '%s' "$_pty_can" | tr -d '[:space:]')"
+    [[ -z "$_pty_can" || "$_pty_can" == \#* ]] && continue
+    _pty_mac="$(printf '%s' "$_pty_mac" | tr -d '[:space:]')"
+    [[ -z "$_pty_mac" || "$_pty_mac" == '-' ]] && continue
+    _pty_cmd="$(printf '%s' "$_pty_cmd" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    _pty_desc="$(printf '%s' "$_pty_desc" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    _parity_pkg+=("$_pty_mac")
+    _parity_cmd+=("$_pty_cmd")
+    _parity_desc+=("$_pty_desc")
+  done < "$SCRIPT_DIR/../tools/cli-parity.conf"
+  return 0
 }
 
 parity_row() {    # parity_row <package>
@@ -485,12 +582,308 @@ if [[ "${LIST_PACKAGES:-no}" == "yes" ]]; then
   exit 0
 fi
 
+# Doctor
+#
+# Every other phase asserts that a package is installed. This one asserts that
+# it is in *effect*, which is not the same thing and is where the bugs have
+# been: ~/go/bin missing from PATH, an apt fd-find shadowing the real fd, the
+# mise shims not reaching a login shell, starship's format never applied, Tab
+# never getting to fzf-tab. Every one of those was found months later by
+# somebody noticing, because a run that installs a package has no idea whether
+# the shell you actually type into can see it.
+#
+# So the checks that matter run inside a real login shell - zsh -lic - which is
+# the environment they are about. One probe emitting every fact at once, in
+# about a second; a shell per check would take a minute and tell you the same
+# thing.
+#
+# It reports and never fixes. The fix is bootstrap.sh itself.
+
+DOCTOR_OK=0
+DOCTOR_BROKEN=0
+DOCTOR_PROBE_OUT=''
+
+doctor_ok()     { DOCTOR_OK=$((DOCTOR_OK + 1)); result 'ok' "$1" "${2:-}"; }
+doctor_broken() { DOCTOR_BROKEN=$((DOCTOR_BROKEN + 1)); result 'broken' "$1" "${2:-}"; }
+doctor_note()   { result 'present' "$1" "${2:-}"; }
+
+probe_get() {   # probe_get <key>
+  printf '%s\n' "$DOCTOR_PROBE_OUT" | sed -n "s|^$1=||p" | head -1
+}
+
+# The command a package is supposed to put on PATH. The parity table's cmd
+# column is written for a reader, so two rows need saying differently here:
+# zoxide's entry is the `z` function it defines rather than its binary, and
+# 7zip's names all three platforms' binaries in one cell.
+doctor_command_for() {   # doctor_command_for <package>
+  case "$1" in
+    zoxide)   printf 'zoxide' ;;
+    sevenzip) printf '7zz' ;;
+    *)
+      parity_row "$1" || return 1
+      printf '%s' "${_row_cmd%% *}"
+      ;;
+  esac
+}
+
+doctor_probe() {
+  local probe cmds pkg cmd
+  cmds=''
+  for pkg in "${_doctor_pkgs[@]:-}"; do
+    [[ -z "$pkg" ]] && continue
+    cmd="$(doctor_command_for "$pkg")" || continue
+    cmds="$cmds $cmd"
+  done
+  # Not in the cli parity table, but just as load-bearing.
+  cmds="$cmds brew starship atuin carapace mise git gh node go java kubectl code"
+
+  mktemp_tracked probe "${TMPDIR:-/tmp}/bootstrap-probe.XXXXXX"
+  {
+    printf 'for c in%s; do print -r -- "resolve:$c=${commands[$c]:-}"; done\n' "$cmds"
+    cat <<'PROBE'
+print -r -- "env:starship=${STARSHIP_SESSION_KEY:+yes}"
+print -r -- "env:JAVA_HOME=${JAVA_HOME:-}"
+print -r -- "env:PATH=${PATH}"
+print -r -- "widget:atuin=$(( $+widgets[atuin-search] ))"
+print -r -- "widget:hss=$(( $+widgets[history-substring-search-up] ))"
+print -r -- "fn:fzf-tab=$(( $+functions[fzf-tab-complete] ))"
+print -r -- "fn:carapace=$(( $+functions[_carapace] ))"
+print -r -- "fn:zoxide=$(( $+functions[__zoxide_z] ))"
+print -r -- "fn:compdef=$(( $+functions[compdef] ))"
+print -r -- "bind:tab=$(bindkey '^I' 2>/dev/null | head -1)"
+print -r -- "bind:up=$(bindkey '^[[A' 2>/dev/null | head -1)"
+print -r -- "alias:cat=${aliases[cat]:-}"
+print -r -- "alias:ls=${aliases[ls]:-}"
+print -r -- "alias:make=${aliases[make]:-}"
+PROBE
+  } > "$probe"
+
+  # A login shell runs the user's own .zshrc, which can do anything including
+  # fail; the probe's own lines are what matters, and stderr is not.
+  DOCTOR_PROBE_OUT="$(zsh -lic "source '$probe'" 2>/dev/null || true)"
+  [[ -n "$DOCTOR_PROBE_OUT" ]]
+}
+
+doctor_check_tools() {
+  local pkg cmd path want shims
+  shims="${XDG_DATA_HOME:-$HOME/.local/share}/mise/shims"
+  for pkg in "${_doctor_pkgs[@]:-}"; do
+    [[ -z "$pkg" ]] && continue
+    cmd="$(doctor_command_for "$pkg")" || continue
+    path="$(probe_get "resolve:$cmd")"
+    want="${BREW_PREFIX}/bin/${cmd}"
+    if [[ -z "$path" ]]; then
+      if brew_formula_installed "$pkg"; then
+        doctor_broken "$cmd" "installed as $pkg, but a login shell cannot find it"
+      else
+        doctor_broken "$cmd" "not installed, and not on PATH"
+      fi
+    elif [[ "$path" == "$shims"/* ]]; then
+      # A mise shim in front of the brew binary runs the same program through
+      # one more exec, so it is not broken - but a shim for a tool mise does
+      # not manage is a leftover, and worth seeing.
+      doctor_note "$cmd" "a mise shim answers first, ahead of $want"
+    elif [[ "$path" != "$want" ]]; then
+      doctor_broken "$cmd" "resolves to $path, not the $pkg at $want"
+    else
+      doctor_ok "$cmd" "$path"
+    fi
+  done
+}
+
+doctor_check_shell() {
+  local v
+  if [[ "${ZSH_ENABLED:-no}" != "yes" ]]; then
+    doctor_note 'zsh integration' 'ZSH_ENABLED is not yes - nothing to check'
+    return 0
+  fi
+
+  [[ -f "${HOME}/.zshrc.bootstrap" ]] \
+    && doctor_ok 'managed fragment' "${HOME}/.zshrc.bootstrap" \
+    || doctor_broken 'managed fragment' "${HOME}/.zshrc.bootstrap does not exist"
+
+  if grep -qF '.zshrc.bootstrap' "${HOME}/.zshrc" 2>/dev/null; then
+    doctor_ok 'fragment is sourced' '.zshrc has the source line'
+  else
+    doctor_broken 'fragment is sourced' 'nothing in ~/.zshrc sources it, so none of it is in effect'
+  fi
+
+  [[ "$(probe_get 'env:starship')" == 'yes' ]] \
+    && doctor_ok 'starship' 'initialised - STARSHIP_SESSION_KEY is set' \
+    || doctor_broken 'starship' 'not initialised in a login shell'
+
+  v="$(probe_get 'widget:atuin')"
+  [[ "$v" == '1' ]] \
+    && doctor_ok 'atuin' 'the atuin-search widget exists' \
+    || doctor_broken 'atuin' 'no atuin-search widget - Ctrl-R is not atuin'
+
+  v="$(probe_get 'bind:up')"
+  case "$v" in
+    *history-substring-search-up*) doctor_ok 'history-substring-search' 'bound to the up arrow' ;;
+    *) doctor_broken 'history-substring-search' "the up arrow runs ${v:-nothing}" ;;
+  esac
+
+  v="$(probe_get 'bind:tab')"
+  case "$v" in
+    *fzf-tab-complete*) doctor_ok 'fzf-tab' 'bound to Tab' ;;
+    *) doctor_broken 'fzf-tab' "Tab runs ${v:-nothing}, not fzf-tab-complete" ;;
+  esac
+
+  [[ "$(probe_get 'fn:carapace')" == '1' ]] \
+    && doctor_ok 'carapace' 'the _carapace completer is defined' \
+    || doctor_broken 'carapace' 'not initialised in a login shell'
+
+  [[ "$(probe_get 'fn:zoxide')" == '1' ]] \
+    && doctor_ok 'zoxide' 'z is defined' \
+    || doctor_broken 'zoxide' 'z is not defined - zoxide never initialised'
+
+  [[ "$(probe_get 'fn:compdef')" == '1' ]] \
+    && doctor_ok 'completion' 'compinit has run' \
+    || doctor_broken 'completion' 'compdef is not defined - completion never initialised'
+
+  for v in cat ls make; do
+    if [[ -n "$(probe_get "alias:$v")" ]]; then
+      doctor_ok "alias $v" "$(probe_get "alias:$v")"
+    else
+      doctor_broken "alias $v" 'not aliased - the fragment did not reach this shell'
+    fi
+  done
+}
+
+doctor_check_runtimes() {
+  local tool path mise_root
+  mise_root="${XDG_DATA_HOME:-$HOME/.local/share}/mise"
+  for tool in node go java; do
+    path="$(probe_get "resolve:$tool")"
+    if [[ -z "$path" ]]; then
+      doctor_broken "$tool" 'not on PATH in a login shell'
+    elif [[ "$path" == "$mise_root"/* ]]; then
+      doctor_ok "$tool" "$path"
+    else
+      doctor_broken "$tool" "resolves to $path, not the mise install under $mise_root"
+    fi
+  done
+
+  path="$(probe_get 'env:JAVA_HOME')"
+  if [[ -z "$path" ]]; then
+    doctor_broken 'JAVA_HOME' 'unset - Gradle, Maven and the IDEs that read it will not find the JDK'
+  elif [[ "$path" == "$mise_root"/* ]]; then
+    doctor_ok 'JAVA_HOME' "$path"
+  else
+    doctor_note 'JAVA_HOME' "$path - not the mise JDK, which may be deliberate"
+  fi
+
+  path="$(probe_get 'env:PATH')"
+  case ":$path:" in
+    *":${HOME}/.local/bin:"*) doctor_ok 'PATH ~/.local/bin' 'present' ;;
+    *) doctor_broken 'PATH ~/.local/bin' 'missing - uv tools and release binaries live there' ;;
+  esac
+  case ":$path:" in
+    *":${HOME}/go/bin:"*) doctor_ok 'PATH ~/go/bin' 'present' ;;
+    *) doctor_broken 'PATH ~/go/bin' 'missing - gopls, dlv and staticcheck land there' ;;
+  esac
+  case ":$path:" in
+    *":${BREW_PREFIX}/bin:"*) doctor_ok 'PATH brew prefix' "${BREW_PREFIX}/bin" ;;
+    *) doctor_broken 'PATH brew prefix' "${BREW_PREFIX}/bin is not on a login shell's PATH" ;;
+  esac
+}
+
+# Config this script deploys by copying: if the copy has drifted, a later run
+# will replace it, so the honest verdict is "differs", not "broken".
+doctor_config() {   # doctor_config <label> <repo copy> <deployed path>
+  local label="$1" src="$2" dst="$3"
+  if [[ ! -r "$dst" ]]; then
+    doctor_broken "$label" "not deployed at $dst"
+  elif [[ ! -r "$src" ]]; then
+    doctor_note "$label" "deployed, but the repo copy is missing at $src"
+  elif cmp -s "$src" "$dst"; then
+    doctor_ok "$label" "$dst"
+  else
+    doctor_note "$label" "$dst differs from the repo - the next run would replace it"
+  fi
+}
+
+doctor_check_configs() {
+  local bat_cfg
+  doctor_config 'starship.toml' "${SCRIPT_DIR}/../starship.toml" "${HOME}/.config/starship.toml"
+  doctor_config 'atuin config' "${SCRIPT_DIR}/../atuin/config.toml" "${HOME}/.config/atuin/config.toml"
+
+  if bat_cfg="$(bat --config-dir 2>/dev/null)" && [[ -n "$bat_cfg" ]]; then
+    doctor_config 'bat config' "${SCRIPT_DIR}/../bat/config" "${bat_cfg}/config"
+    doctor_config 'bat theme' "${SCRIPT_DIR}/../bat/themes/Catppuccin Mocha.tmTheme" \
+                  "${bat_cfg}/themes/Catppuccin Mocha.tmTheme"
+  else
+    doctor_broken 'bat config' 'bat is not installed, so nothing reads the theme'
+  fi
+
+  if [[ "${GHOSTTY_ENABLED:-no}" == "yes" ]]; then
+    [[ -r "${HOME}/.config/ghostty/config" ]] \
+      && doctor_ok 'ghostty config' "${HOME}/.config/ghostty/config" \
+      || doctor_broken 'ghostty config' 'not deployed'
+  fi
+}
+
+doctor_check_schedule() {
+  local label
+  label="${SCHEDULE_LABEL:-com.github.bootstrap.macos}"
+  if [[ "${SCHEDULE_ENABLED:-no}" != "yes" ]]; then
+    doctor_note 'launchd agent' 'SCHEDULE_ENABLED is not yes'
+  elif [[ ! -f "${HOME}/Library/LaunchAgents/${label}.plist" ]]; then
+    doctor_broken 'launchd agent' 'no plist - the daily run has never been installed'
+  elif launchctl list "$label" >/dev/null 2>&1; then
+    doctor_ok 'launchd agent' "$label is loaded"
+  else
+    doctor_broken 'launchd agent' "$label has a plist but is not loaded"
+  fi
+}
+
+run_doctor() {
+  group_array _doctor_pkgs "GROUP_cli_FORMULA"
+  load_parity_table
+
+  phase 'Doctor - what a login shell actually sees'
+  if ! command -v zsh >/dev/null 2>&1; then
+    result 'failed' 'login shell' 'no zsh to probe with'
+    return 1
+  fi
+  if ! doctor_probe; then
+    result 'failed' 'login shell' 'zsh -lic produced nothing - the probe could not run'
+    return 1
+  fi
+  doctor_ok 'login shell' "zsh $(zsh --version 2>/dev/null | awk '{print $2}') - probed in one pass"
+
+  phase 'Doctor - the cli group on PATH'
+  doctor_check_tools
+
+  phase 'Doctor - shell integration'
+  doctor_check_shell
+
+  phase 'Doctor - runtimes and PATH'
+  doctor_check_runtimes
+
+  phase 'Doctor - deployed config'
+  doctor_check_configs
+
+  phase 'Doctor - the daily run'
+  doctor_check_schedule
+
+  phase 'Doctor summary'
+  printf '  %-16s%s%s%s\n' 'ok' "$C_GREEN" "$DOCTOR_OK" "$C_RESET"
+  if [[ "$DOCTOR_BROKEN" -gt 0 ]]; then
+    printf '  %-16s%s%s%s\n' 'broken' "$C_RED" "$DOCTOR_BROKEN" "$C_RESET"
+    printf '\n  %sRun ./bootstrap.sh to fix what it can.%s\n\n' "$C_DIM" "$C_RESET"
+    return 1
+  fi
+  printf '\n  %sEverything the manifest promises is in effect.%s\n\n' "$C_DIM" "$C_RESET"
+  return 0
+}
+
 # Preflight
 #
 # Past this line the run counts: the EXIT trap records what happened, whether
 # it gets to the summary or dies in the middle.
 
-RUN_RECORDING=yes
+[[ "$DOCTOR_ONLY" == "yes" ]] || RUN_RECORDING=yes
 
 phase 'Preflight'
 
@@ -578,6 +971,14 @@ fi
 export HOMEBREW_NO_AUTO_UPDATE=1
 export HOMEBREW_NO_ENV_HINTS=1
 
+# The doctor asks the machine questions and changes nothing, so it runs here -
+# after the prefix and brew are known, before the index refresh it does not
+# need and the phases it is not going to run.
+if [[ "$DOCTOR_ONLY" == "yes" ]]; then
+  run_doctor
+  exit $?
+fi
+
 if [[ "$DRY_RUN" == "no" && -x "$BREW" ]]; then
   printf '  %-16s' 'brew index'
   if "$BREW" update --quiet >/dev/null 2>&1; then
@@ -627,6 +1028,49 @@ if [[ -n "$ONLY_GROUPS" ]]; then
     printf '%s\n' "${PKG_GROUPS[@]}" | grep -qx "$g" || die "unknown group: $g (try --list-groups)"
   done
 fi
+
+# What the machine has, name and version, one per line. Both lists, because the
+# same name can be a formula and a cask and `brew list` alone would merge them.
+#
+# Each listing runs separately and each is allowed to fail. A listing that
+# fails prints nothing at all rather than a shorter list, so taking the two
+# together meant losing both - and under `set -e` a snapshot taken for the
+# history could end the run before it installed anything, which is what it did
+# on the machine this was written on.
+pkg_snapshot() {   # pkg_snapshot <file>
+  {
+    "$BREW" list --formula --versions 2>/dev/null || true
+    "$BREW" list --cask --versions 2>/dev/null || true
+  } | awk 'NF >= 2 { print $1, $NF }' | sort > "$1" || true
+  return 0
+}
+
+snapshot_before() {
+  [[ "$DRY_RUN" == "no" && -x "$BREW" ]] || return 0
+  mktemp_tracked SNAP_BEFORE "${TMPDIR:-/tmp}/bootstrap-before.XXXXXX"
+  pkg_snapshot "$SNAP_BEFORE"
+  return 0
+}
+
+# Everything that moved between the two snapshots, which is what an upgrade
+# actually did as opposed to what it said while scrolling past.
+snapshot_after() {
+  local snap_after
+  [[ -n "$SNAP_BEFORE" && -r "$SNAP_BEFORE" ]] || return 0
+  mktemp_tracked snap_after "${TMPDIR:-/tmp}/bootstrap-after.XXXXXX"
+  pkg_snapshot "$snap_after"
+  RUN_CHANGED="$(awk '
+    NR == FNR { before[$1] = $2; next }
+    {
+      if (!($1 in before)) { printf "+%s %s, ", $1, $2 }
+      else if (before[$1] != $2) { printf "%s %s>%s, ", $1, before[$1], $2 }
+    }
+  ' "$SNAP_BEFORE" "$snap_after" 2>/dev/null | sed 's/, $//' || true)"
+  [[ -n "$RUN_CHANGED" ]] && result 'present' 'versions moved' "$RUN_CHANGED"
+  return 0
+}
+
+snapshot_before
 
 install_formula() {
   local pkg="$1"
@@ -770,6 +1214,8 @@ else
     result 'present' 'self-updating casks' "$(tr '\n' ' ' <<< "$self_updating")- left to their own updaters"
   fi
 fi
+
+snapshot_after
 
 # Housekeeping
 #
@@ -1221,20 +1667,7 @@ FZF_OPTS
       # macOS is the one platform where trippy traces without root.
       echo 'command -v trip >/dev/null && alias trip="trip -u"'
       echo
-      _parity_pkg=() _parity_cmd=() _parity_desc=()
-      if [[ -r "$SCRIPT_DIR/../tools/cli-parity.conf" ]]; then
-        while IFS='|' read -r _pty_can _pty_lx _pty_mac _pty_win _pty_note _pty_cmd _pty_desc; do
-          _pty_can="$(printf '%s' "$_pty_can" | tr -d '[:space:]')"
-          [[ -z "$_pty_can" || "$_pty_can" == \#* ]] && continue
-          _pty_mac="$(printf '%s' "$_pty_mac" | tr -d '[:space:]')"
-          [[ -z "$_pty_mac" || "$_pty_mac" == '-' ]] && continue
-          _pty_cmd="$(printf '%s' "$_pty_cmd" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-          _pty_desc="$(printf '%s' "$_pty_desc" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-          _parity_pkg+=("$_pty_mac")
-          _parity_cmd+=("$_pty_cmd")
-          _parity_desc+=("$_pty_desc")
-        done < "$SCRIPT_DIR/../tools/cli-parity.conf"
-      fi
+      load_parity_table
       echo 'tools() {'
       echo '  echo'
       group_array _form "GROUP_cli_FORMULA"
