@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.34.0'
+BOOTSTRAP_VERSION='1.34.1'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -1408,8 +1408,11 @@ else
   # one thing here that grows without anybody installing anything. Reported
   # with the command, not vacuumed: the journal is the whole system's, not ours.
   if command -v journalctl >/dev/null 2>&1; then
+    # journalctl exits non-zero on WSL and anywhere else the journal is not
+    # persistent (empty or no /var/log/journal) - stderr goes to /dev/null,
+    # so under pipefail that killed the whole run here without a word.
     journal_size="$(journalctl --disk-usage 2>/dev/null \
-                      | sed -n 's/.*take up \([0-9.]*[KMGT]*\).*/\1/p')"
+                      | sed -n 's/.*take up \([0-9.]*[KMGT]*\).*/\1/p' || true)"
     if [[ -n "$journal_size" ]]; then
       result 'present' 'journal' "$journal_size - journalctl --vacuum-time=30d to trim"
     fi

@@ -15,6 +15,19 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.1]
+
+### Fixed
+
+- **Housekeeping stopped mid-phase, without a word, on WSL and anywhere else
+  the journal is not persistent.** The disk-usage check piped
+  `journalctl --disk-usage` straight into `sed`, and `journalctl` exits
+  non-zero when there is no `/var/log/journal` to report on - which
+  `pipefail` turned into the whole pipeline failing, and `set -e` then
+  ended the run right there. `2>/dev/null` on the same line hid the only
+  clue. Guarded with `|| true`, the same fix already applied to the stale
+  `.deb` count just above it: no journal to report on is not a failure.
+
 ## [1.34.0]
 
 ### Added
