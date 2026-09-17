@@ -99,7 +99,7 @@ jobs:
               }
           }
           $m = Import-PowerShellDataFile windows/packages.psd1
-          $required = @('Groups', 'Pins', 'Managed', 'Shell', 'Mpv', 'Schedule', 'Git')
+          $required = @('Groups', 'Pins', 'Managed', 'Shell', 'Mpv', 'Schedule', 'Housekeeping', 'Git')
           $absent = @($required | Where-Object { -not $m.Contains($_) })
           if ($absent.Count) {
               $failed = $true

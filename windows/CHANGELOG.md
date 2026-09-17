@@ -20,6 +20,57 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.40.0]
+
+### Added
+
+- **`-Status`: what did the last run do?** The task has been running at 04:20
+  and teeing into `%LOCALAPPDATA%\windows-bootstrap\logs` for releases, and
+  the only way to know whether it worked was to open the file. Every real run
+  now leaves a record next to those logs, in the same key=value shape the Linux
+  and macOS scripts write: when, how long, the exit code, whether it was
+  interactive, the counts, the id of every step that failed, and the message it
+  died with. `-Status` prints it and exits 1 if that run failed, so it works as
+  a check and not only as something to read.
+
+  Written from the Summary *and* from a script-level `trap`. Everything here
+  runs under `$ErrorActionPreference = 'Stop'`, so an unhandled throw in phase 1
+  used to end the run with nothing recorded - and that is exactly the run worth
+  knowing about. The trap records, notifies, then `break`s so the error still
+  surfaces as before. `-WhatIf` never writes the record: a dry run is a
+  question, not an answer.
+
+  Interactive is `-not [Console]::IsOutputRedirected`, the same test the other
+  two scripts make with `[ -t 1 ]`. The scheduled task pipes through
+  `Tee-Object`, so it always reads as unattended - which is the point, since
+  that is the run nobody is watching.
+
+- **One notification when an unattended run fails**, via
+  `Schedule.NotifyOnFailure`. No single channel exists on every Windows, so
+  three are tried in order and all are optional: a BurntToast toast if that
+  module happens to be installed, `[System.Diagnostics.EventLog]` into the
+  Application log otherwise - which needs nothing installed and works with
+  nobody logged on - and `msg.exe` last, which Home editions lack. An
+  interactive run is never notified; it printed the failures in red already.
+
+- **A housekeeping phase**, `Housekeeping` in the manifest. winget upgrades in
+  place, so unlike Homebrew there is no superseded version to remove - but the
+  installer it downloads in order to *perform* the upgrade stays in
+  `%TEMP%\WinGet` forever, and on a machine the task upgrades nightly that is
+  every installer of every package. `PruneDays` is the age past which one goes,
+  and `-SkipCleanup` skips the phase for a run.
+
+  Nothing is uninstalled. winget's own state under `Microsoft.DesktopAppInstaller`
+  is reported with its size and left alone: that is state, not a download it can
+  fetch again. A file an installer still holds open is skipped rather than
+  retried to death - pruning by age means the next run takes it.
+
+### Changed
+
+- **Phase numbers in the comments shifted by one** where housekeeping landed
+  between packages and externally-managed software. Comments only; no phase
+  changed what it does.
+
 ## [1.39.0]
 
 ### Added

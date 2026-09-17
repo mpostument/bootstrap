@@ -220,6 +220,19 @@
 
         LogDir       = 'windows-bootstrap\logs'
         KeepLogDays  = 30
+
+        # A failed unattended run says so once - a toast if BurntToast is
+        # installed, the Application event log otherwise. Interactive runs
+        # never notify; they printed the failures in red already.
+        NotifyOnFailure = $true
+    }
+
+    # winget upgrades in place, so nothing is superseded and left behind - but
+    # the installer it downloaded to do the upgrade stays in the temp cache
+    # forever. PruneDays is the age past which one goes. Nothing is uninstalled.
+    Housekeeping = @{
+        Enabled   = $true
+        PruneDays = 30
     }
 
     Git = @{

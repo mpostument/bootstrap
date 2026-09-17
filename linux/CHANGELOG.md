@@ -15,6 +15,55 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.33.0]
+
+### Added
+
+- **`--status`: what did the last run do?** The timer has been starting this
+  script at 04:20 for releases, and the only way to find out whether it worked
+  was `journalctl -u bootstrap-linux` and a scroll - which is to say nobody
+  found out until something had been broken for a week. macOS got this in its
+  1.36.0; this is the same thing on the timer that had the problem first.
+
+  Every real run leaves a key=value record: when, how long, the exit code,
+  whether it was interactive, the counts, the id of every step that failed, and
+  the message it died with. `--status` reads it back and exits 1 if that run
+  failed, so it works as a check rather than only as something to read.
+
+  Two paths, because two users run this script. The timer is root - apt needs
+  that - so a single `$HOME`-relative path would file every unattended run
+  under `/root` and hide it from the person asking. Root writes
+  `/var/lib/bootstrap-linux/last-run` (0644, because the reader is not root),
+  everyone else writes `${XDG_STATE_HOME:-~/.local/state}/bootstrap-linux/`,
+  and `--status` reads whichever is newer and names it.
+
+  Written from the `EXIT` trap: a run that dies in preflight is exactly the run
+  worth knowing about, and recording only at the summary would have left
+  yesterday's success sitting there looking current. `die` keeps its message
+  for the record. Dry runs never write it.
+
+- **One notification when an unattended run fails.**
+  `SCHEDULE_NOTIFY_ON_FAILURE=yes` sends `notify-send` to every logged-in
+  desktop session. The timer runs as root and root has no session bus, so the
+  message is handed to each `/run/user/<uid>/bus` in turn rather than sent from
+  the daemon's own environment, where it would go nowhere. Best effort by
+  design: a headless machine has no bus and nobody to tell.
+
+- **A housekeeping phase.** apt keeps every `.deb` it has ever downloaded in
+  `/var/cache/apt/archives` and removes none of them; on a machine the timer
+  upgrades nightly that is the entire install history sitting on disk.
+  `APT_CLEANUP_PRUNE_DAYS` sets the age past which a cached download goes -
+  the apt counterpart of `brew cleanup --prune=N` on macOS, and safe for the
+  same reason: a cached download can be fetched again.
+
+  Nothing is uninstalled. `apt-get autoremove` and `flatpak uninstall --unused`
+  run with `--dry-run` and their findings are printed, the same line this
+  script takes with `HELD`: both are usually right about orphaned packages, old
+  kernels and unused runtimes, and "usually" is not good enough to do
+  unattended at 04:20. The journal's size is reported with the
+  `journalctl --vacuum-time` command rather than vacuumed, because the journal
+  belongs to the whole system and not to this script.
+
 ## [1.32.0]
 
 ### Fixed

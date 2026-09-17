@@ -6,6 +6,10 @@
     Limit to named groups, e.g. -Groups shell,cli. Default is every group.
 .PARAMETER SkipUpgrade
     Install what is missing, leave installed versions alone.
+.PARAMETER SkipCleanup
+    Skip the housekeeping phase and leave winget's download cache alone.
+.PARAMETER Status
+    Print what the last real run did and exit. Exits 1 if that run failed.
 .PARAMETER SkipShell
     Skip the shell phase: Nerd Font, modules, profile, Windows Terminal.
 .PARAMETER SkipMpv
@@ -33,6 +37,8 @@
 param(
     [string[]]$Groups,
     [switch]$SkipUpgrade,
+    [switch]$SkipCleanup,
+    [switch]$Status,
     [switch]$SkipShell,
     [switch]$SkipMpv,
     [switch]$SkipSchedule,
@@ -49,7 +55,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '1.39.0'
+$script:BootstrapVersion = '1.40.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -78,6 +84,23 @@ if (-not $ManifestPath) { $ManifestPath = Join-Path $script:ToolRoot 'packages.p
 # Output helpers
 
 $script:Results = New-Object System.Collections.ArrayList
+
+# Run state.
+#
+# An unattended run is a run nobody watches: the task starts at 04:20, tees
+# into a log file and exits. Every real run leaves one key=value record behind
+# - the same shape the Linux and macOS scripts write - and -Status reads it
+# back. Interactive is decided by whether stdout is redirected, which is the
+# same test the other two make with [ -t 1 ]: the scheduled task pipes through
+# Tee-Object, so it always reads as unattended.
+$script:RunStarted = Get-Date
+$script:RunInteractive = -not [Console]::IsOutputRedirected
+$script:RunRecording = $false
+$script:RunLog = ''
+$script:NotifyOnFailure = $true
+$script:StatusExit = 0
+$script:StateRoot = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { [IO.Path]::GetTempPath() }
+$script:StateFile = Join-Path $script:StateRoot 'windows-bootstrap\last-run'
 
 function Write-Phase {
     param([string]$Text)
@@ -111,6 +134,189 @@ function Add-Result {
     [void]$script:Results.Add([pscustomobject]@{
             Group = $Group; Id = $Id; Action = $Action; Detail = $Detail
         })
+}
+
+# Run state
+#
+# Written from two places: the Summary, for a run that finishes, and the trap
+# below, for one that throws on the way there - a run that dies in phase 1 is
+# exactly the run worth knowing about, and recording only at the end would
+# leave yesterday's success sitting there looking current. -WhatIf never
+# records: a dry run is a question, and it should not overwrite the answer to
+# the last real one.
+
+# [Math]::Floor, not [int]: casting a double to [int] in PowerShell *rounds*
+# (to even, at that), so [int](94 / 60) is 2 and a 94-second run reported
+# itself as "2m 34s".
+function Format-Duration {
+    param([int]$Seconds)
+    if ($Seconds -lt 60) { return "${Seconds}s" }
+    if ($Seconds -lt 3600) {
+        return '{0}m {1}s' -f [int][Math]::Floor($Seconds / 60), ($Seconds % 60)
+    }
+    if ($Seconds -lt 86400) {
+        return '{0}h {1}m' -f [int][Math]::Floor($Seconds / 3600), [int][Math]::Floor(($Seconds % 3600) / 60)
+    }
+    return '{0}d {1}h' -f [int][Math]::Floor($Seconds / 86400), [int][Math]::Floor(($Seconds % 86400) / 3600)
+}
+
+function Write-RunRecord {
+    param([int]$ExitCode, [string]$ErrorMessage = '')
+    if (-not $script:RunRecording) { return }
+    if ($WhatIfPreference) { return }
+
+    $finished = Get-Date
+    $counts = @($script:Results | Group-Object Action |
+        ForEach-Object { '{0}={1}' -f $_.Name, $_.Count }) -join ' '
+    # Comma-separated: an id can contain spaces ("log pruning").
+    $failedIds = @($script:Results | Where-Object { $_.Action -eq 'failed' } |
+        ForEach-Object { $_.Id }) -join ', '
+
+    $message = $ErrorMessage -replace '[\r\n]+', ' ' -replace "'", ''
+    if ($message.Length -gt 200) { $message = $message.Substring(0, 200) }
+
+    $lines = @(
+        "version=$script:BootstrapVersion"
+        "started=$($script:RunStarted.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))"
+        "finished_epoch=$([DateTimeOffset]::new($finished).ToUnixTimeSeconds())"
+        "duration_seconds=$([int]($finished - $script:RunStarted).TotalSeconds)"
+        "exit=$ExitCode"
+        "interactive=$(if ($script:RunInteractive) { 'yes' } else { 'no' })"
+        "failed='$($failedIds -replace "'", '')'"
+        "counts='$counts'"
+        "log=$script:RunLog"
+        "error='$message'"
+    )
+
+    try {
+        $dir = Split-Path -Parent $script:StateFile
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        Set-Content -LiteralPath $script:StateFile -Value $lines -Encoding UTF8 -WhatIf:$false
+    } catch {
+        # A run that cannot write its own record is not a run that failed -
+        # but -Verbose should say so rather than leaving you wondering why
+        # -Status still shows yesterday.
+        Write-Verbose ("could not write $script:StateFile - {0}" -f $_.Exception.Message)
+    }
+}
+
+# One notification for a run nobody was watching. There is no single channel
+# that exists everywhere: the event log needs no module and works with nobody
+# logged on, BurntToast is the nice one but only if it happens to be installed,
+# and msg.exe is missing on Home editions. Each is tried, each is optional, and
+# an interactive run is never notified - it printed the failures in red already.
+function Send-FailureNotification {
+    param([int]$ExitCode, [string]$Message = '')
+    if ($ExitCode -eq 0) { return }
+    if (-not $script:RunRecording) { return }
+    if ($WhatIfPreference) { return }
+    if ($script:RunInteractive) { return }
+    if (-not $script:NotifyOnFailure) { return }
+
+    $failedCount = @($script:Results | Where-Object { $_.Action -eq 'failed' }).Count
+    $headline = if ($failedCount -gt 0) { "$failedCount step(s) failed" } else { "aborted, exit $ExitCode" }
+    $body = if ($Message) { $Message } elseif ($script:RunLog) { $script:RunLog } else { 'bootstrap.ps1 -Status' }
+
+    try {
+        if (Get-Module -ListAvailable -Name BurntToast -ErrorAction SilentlyContinue) {
+            Import-Module BurntToast -ErrorAction Stop
+            New-BurntToastNotification -Text 'windows-bootstrap', $headline, $body | Out-Null
+            return
+        }
+    } catch {
+        Write-Verbose ('BurntToast did not work - {0}' -f $_.Exception.Message)
+    }
+
+    try {
+        [System.Diagnostics.EventLog]::WriteEntry(
+            'windows-bootstrap', "$headline`n$body",
+            [System.Diagnostics.EventLogEntryType]::Error)
+        return
+    } catch {
+        # PowerShell 7 does not always carry System.Diagnostics.EventLog, and
+        # registering a new source needs an elevated run. Neither is fatal.
+        Write-Verbose ('the event log did not work - {0}' -f $_.Exception.Message)
+    }
+
+    try {
+        $msg = Get-Command msg.exe -ErrorAction SilentlyContinue
+        if ($msg) { & $msg.Source '*' "windows-bootstrap: $headline - $body" 2>$null }
+    } catch {
+        # Home editions have no msg.exe. There is nothing left to try, and a
+        # missing notification is not itself a failure.
+        Write-Verbose ('msg.exe did not work - {0}' -f $_.Exception.Message)
+    }
+}
+
+function Show-RunStatus {
+    $script:StatusExit = 0
+    Write-Phase 'Last run'
+    if (-not (Test-Path -LiteralPath $script:StateFile)) {
+        Add-Result -Group 'status' -Id 'last run' -Action 'missing' `
+            -Detail "nothing recorded yet - $script:StateFile"
+        Write-Host ''
+        return
+    }
+
+    $record = @{}
+    foreach ($entry in (Get-Content -LiteralPath $script:StateFile)) {
+        $pair = $entry -split '=', 2
+        if ($pair.Count -eq 2) { $record[$pair[0]] = $pair[1].Trim("'") }
+    }
+    $field = {
+        param($name)
+        if ($record.ContainsKey($name)) { $record[$name] } else { '' }
+    }
+
+    [int64]$finishedEpoch = 0
+    [void][int64]::TryParse((& $field 'finished_epoch'), [ref]$finishedEpoch)
+    $stamp = if ($finishedEpoch -gt 0) {
+        [DateTimeOffset]::FromUnixTimeSeconds($finishedEpoch).ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss')
+    } else { 'unknown' }
+    $ago = Format-Duration ([int]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - $finishedEpoch))
+    $duration = 0
+    [void][int]::TryParse((& $field 'duration_seconds'), [ref]$duration)
+    $trigger = if ((& $field 'interactive') -eq 'no') {
+        'unattended - the scheduled task, or output redirected'
+    } else { 'a terminal' }
+
+    Write-Host ('  {0,-16}{1}  ' -f 'when', $stamp) -NoNewline
+    Write-Host "($ago ago)" -ForegroundColor DarkGray
+    Write-Host ('  {0,-16}{1}' -f 'trigger', $trigger)
+    Write-Host ('  {0,-16}v{1}' -f 'version', (& $field 'version'))
+    Write-Host ('  {0,-16}{1}' -f 'duration', (Format-Duration $duration))
+
+    $exitCode = (& $field 'exit')
+    if ($exitCode -eq '0') {
+        Write-Host ('  {0,-16}' -f 'result') -NoNewline
+        Write-Host 'clean - every step did what it said' -ForegroundColor Green
+    } else {
+        $script:StatusExit = 1
+        Write-Host ('  {0,-16}' -f 'result') -NoNewline
+        Write-Host "exit $exitCode" -ForegroundColor Red
+        if (& $field 'failed') {
+            Write-Host ('  {0,-16}' -f 'failed') -NoNewline
+            Write-Host (& $field 'failed') -ForegroundColor Yellow
+        }
+        if (& $field 'error') {
+            Write-Host ('  {0,-16}' -f 'aborted') -NoNewline
+            Write-Host (& $field 'error') -ForegroundColor Yellow
+        }
+    }
+    if (& $field 'counts') { Write-Host ('  {0,-16}{1}' -f 'counts', (& $field 'counts')) }
+    if (& $field 'log') { Write-Host ('  {0,-16}{1}' -f 'log', (& $field 'log')) }
+    Write-Host ('  {0,-16}' -f 'record') -NoNewline
+    Write-Host $script:StateFile -ForegroundColor DarkGray
+    Write-Host ''
+}
+
+# Errors are terminating ($ErrorActionPreference = 'Stop'), so anything this
+# script does not handle itself lands here. Record it, say so if nobody is
+# watching, then `break` to let the error surface and stop the run as before.
+trap {
+    Write-RunRecord -ExitCode 1 -ErrorMessage $_.Exception.Message
+    Send-FailureNotification -ExitCode 1 -Message $_.Exception.Message
+    break
 }
 
 # Environment
@@ -627,16 +833,30 @@ function Install-MpvAddon {
     }
 }
 
+if ($Status) { Show-RunStatus; exit $script:StatusExit }
+
 # Manifest
 
 if (-not (Test-Path $ManifestPath)) { throw "Manifest not found: $ManifestPath" }
 $manifest = Import-PowerShellDataFile -Path $ManifestPath
 
-$required = @('Groups', 'Pins', 'Managed', 'Shell', 'Mpv', 'Schedule', 'Git', 'VsCodeExtensions')
+$required = @('Groups', 'Pins', 'Managed', 'Shell', 'Mpv', 'Schedule', 'Housekeeping', 'Git',
+    'VsCodeExtensions')
 $missing = @($required | Where-Object { -not $manifest.Contains($_) })
 if ($missing.Count -gt 0) {
     throw ("Manifest is missing required section(s): {0}. Found: {1}. See {2}." -f
         ($missing -join ', '), (@($manifest.Keys) -join ', '), $ManifestPath)
+}
+
+# The run record can now say where an unattended run's output went - the task
+# tees into one file per day under the schedule's log directory - and whether a
+# failure is allowed to interrupt anybody.
+if ($manifest.Schedule.Contains('NotifyOnFailure')) {
+    $script:NotifyOnFailure = [bool]$manifest.Schedule.NotifyOnFailure
+}
+if (-not $script:RunInteractive -and $manifest.Schedule.Contains('LogDir')) {
+    $script:RunLog = Join-Path (Join-Path $env:LOCALAPPDATA $manifest.Schedule.LogDir) `
+        ('bootstrap-{0:yyyy-MM-dd}.log' -f (Get-Date))
 }
 
 if ($ListGroups) {
@@ -725,6 +945,11 @@ if ($null -ne $installed) {
 
 Write-Host '  reading available upgrades...' -ForegroundColor DarkGray
 $upgradeListing = Get-UpgradeListing
+
+# Past this line the run counts: the Summary and the trap above both record
+# what happened, whether it gets to the end or throws on the way there.
+
+$script:RunRecording = $true
 
 # Phase 1 - packages
 
@@ -918,7 +1143,80 @@ if (-not (Get-Command mise -ErrorAction SilentlyContinue)) {
     }
 }
 
-# Phase 2 - externally managed software
+# Phase 2 - housekeeping
+#
+# winget upgrades in place, so unlike Homebrew there is no superseded version
+# to remove - what accumulates is the installer it downloaded to run, and those
+# are never cleaned up. On a machine the scheduled task upgrades nightly that
+# is every installer of every package, in a temp directory nobody opens.
+#
+# Only the download cache. Nothing here uninstalls anything.
+
+$housekeeping = $manifest.Housekeeping
+
+if ($SkipCleanup) {
+    Write-Phase 'Housekeeping - skipped (-SkipCleanup)'
+} elseif (-not $housekeeping.Enabled) {
+    Write-Phase 'Housekeeping - disabled in the manifest'
+    Add-Result -Group 'housekeeping' -Id 'winget cache' -Action 'skipped' -Detail 'Enabled is false'
+} else {
+    Write-Phase 'Housekeeping - installers winget downloaded and left behind'
+
+    $pruneCutoff = (Get-Date).AddDays(-$housekeeping.PruneDays)
+    $cacheDirs = @(@(
+            (Join-Path $env:TEMP 'WinGet')
+            (Join-Path $script:StateRoot 'Temp\WinGet')
+        ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Sort-Object -Unique)
+
+    $staleFiles = @(
+        foreach ($cacheDir in $cacheDirs) {
+            Get-ChildItem -LiteralPath $cacheDir -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -lt $pruneCutoff }
+        }
+    )
+    $staleMb = '{0:N1} MB' -f (($staleFiles | Measure-Object -Property Length -Sum).Sum / 1MB)
+
+    if ($cacheDirs.Count -eq 0) {
+        Add-Result -Group 'housekeeping' -Id 'winget cache' -Action 'current' -Detail 'no download cache on this machine'
+    } elseif ($staleFiles.Count -eq 0) {
+        Add-Result -Group 'housekeeping' -Id 'winget cache' -Action 'current' `
+            -Detail ('nothing older than {0} days' -f $housekeeping.PruneDays)
+    } elseif (-not $PSCmdlet.ShouldProcess(('{0} file(s)' -f $staleFiles.Count), 'prune winget download cache')) {
+        Add-Result -Group 'housekeeping' -Id 'winget cache' -Action 'would-upgrade' `
+            -Detail ('{0} file(s), {1} to reclaim' -f $staleFiles.Count, $staleMb)
+    } else {
+        $removed = 0
+        foreach ($staleFile in $staleFiles) {
+            try {
+                Remove-Item -LiteralPath $staleFile.FullName -Force -ErrorAction Stop -WhatIf:$false
+                $removed++
+            } catch {
+                # A file the running installer still holds open comes back to
+                # the next run, which is the whole point of pruning by age.
+                Write-Verbose ('{0} is in use' -f $staleFile.FullName)
+            }
+        }
+        if ($removed -eq $staleFiles.Count) {
+            Add-Result -Group 'housekeeping' -Id 'winget cache' -Action 'upgraded' `
+                -Detail ('{0} file(s) removed, {1} reclaimed' -f $removed, $staleMb)
+        } else {
+            Add-Result -Group 'housekeeping' -Id 'winget cache' -Action 'upgraded' `
+                -Detail ('{0} of {1} file(s) removed, the rest were in use' -f $removed, $staleFiles.Count)
+        }
+    }
+
+    # Reported, never touched: this one is winget's own state, not a download
+    # it can fetch again.
+    $appInstaller = Join-Path $script:StateRoot 'Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalState'
+    if (Test-Path -LiteralPath $appInstaller) {
+        $appInstallerMb = '{0:N1} MB' -f ((Get-ChildItem -LiteralPath $appInstaller -Recurse -File -ErrorAction SilentlyContinue |
+                    Measure-Object -Property Length -Sum).Sum / 1MB)
+        Add-Result -Group 'housekeeping' -Id 'winget state' -Action 'present' `
+            -Detail ('{0} in {1}' -f $appInstallerMb, $appInstaller)
+    }
+}
+
+# Phase 3 - externally managed software
 
 Write-Phase 'Externally managed - reported only'
 
@@ -947,7 +1245,7 @@ foreach ($m in $manifest.Managed) {
     }
 }
 
-# Phase 3 - shell
+# Phase 4 - shell
 
 if ($SkipShell) {
     Write-Phase 'Shell - skipped (-SkipShell)'
@@ -1155,7 +1453,7 @@ foreach (`$name in `$want) {
     }
 }
 
-# Phase 4 - mpv
+# Phase 5 - mpv
 
 $mpvExe = if ($SkipMpv) { $null } else { Resolve-MpvExe }
 
@@ -1186,7 +1484,7 @@ if ($SkipMpv) {
     }
 }
 
-# Phase 5 - schedule
+# Phase 6 - schedule
 
 $schedule = $manifest.Schedule
 
@@ -1268,7 +1566,7 @@ if ($SkipSchedule) {
     }
 }
 
-# Phase 6 - VS Code extensions
+# Phase 7 - VS Code extensions
 
 if ($SkipVsCode) {
     Write-Phase 'VS Code extensions - skipped (-SkipVsCode)'
@@ -1496,4 +1794,8 @@ if ($changed.Count -gt 0) {
 }
 
 Write-Host ''
-if ($failed.Count -gt 0) { exit 1 }
+
+$exitCode = if ($failed.Count -gt 0) { 1 } else { 0 }
+Write-RunRecord -ExitCode $exitCode
+Send-FailureNotification -ExitCode $exitCode
+if ($exitCode -ne 0) { exit $exitCode }

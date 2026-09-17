@@ -29,27 +29,29 @@ none. Override with `--gui` or `--no-gui`.
    Google Cloud CLI, GitHub CLI.
 3. **Package groups** — archive and Flathub, GUI groups gated on the check above.
 4. **Upgrades** — one apt transaction plus `flatpak update`, only when outdated.
-5. **Tools** — `TOOLS` git clones under `$HOME`; empty since mise replaced
+5. **Housekeeping** — cached `.deb` downloads past their age, and a report of
+   what `apt autoremove` and `flatpak uninstall --unused` would take.
+6. **Tools** — `TOOLS` git clones under `$HOME`; empty since mise replaced
    pyenv, nvm and tofuenv.
-6. **.NET SDK** — Microsoft's install script into `$HOME/.dotnet`.
-7. **Release binaries** — upstream builds into `~/.local/bin`: the modern CLI
+7. **.NET SDK** — Microsoft's install script into `$HOME/.dotnet`.
+8. **Release binaries** — upstream builds into `~/.local/bin`: the modern CLI
    bundle (bat, eza, fd, ripgrep, fzf, jq, yt-dlp and the rest), starship,
    atuin, uv, carapace, and the Kubernetes and Terraform tools. The archive
    trails upstream by years for most of them, and Ubuntu 24.04 lacks several.
-8. **Python tools** — each group's `GROUP_*_UV` entries, through `uv tool`.
-9. **Ghostty** — the community `.deb` that ghostty.org points Debian and Ubuntu
-   to, on desktop machines.
-10. **Nerd Font** — Meslo, on desktop machines.
-11. **Claude Code** — Anthropic's script into `~/.local/bin`.
-12. **VS Code extensions** — `VSCODE_EXTENSIONS`, installed with
+9. **Python tools** — each group's `GROUP_*_UV` entries, through `uv tool`.
+10. **Ghostty** — the community `.deb` that ghostty.org points Debian and Ubuntu
+    to, on desktop machines.
+11. **Nerd Font** — Meslo, on desktop machines.
+12. **Claude Code** — Anthropic's script into `~/.local/bin`.
+13. **VS Code extensions** — `VSCODE_EXTENSIONS`, installed with
     `code --install-extension`; never removes one that isn't listed.
-13. **zsh** — Starship, completion and the `ZSH_PLUGIN_REPOS` checkouts,
+14. **zsh** — Starship, completion and the `ZSH_PLUGIN_REPOS` checkouts,
     plus a managed `~/.zshrc.bootstrap` sourced from your own `.zshrc`.
-14. **Prompt config** — `starship.toml` from the repo root to
+15. **Prompt config** — `starship.toml` from the repo root to
     `~/.config/starship.toml`, the same file all three platforms deploy.
-15. **bat config** — `bat/config` and the Catppuccin Mocha theme from the repo
+16. **bat config** — `bat/config` and the Catppuccin Mocha theme from the repo
     root, the palette starship, ghostty, atuin and delta all render in.
-16. **Schedule** — a systemd system timer that re-runs this script daily.
+17. **Schedule** — a systemd system timer that re-runs this script daily.
 
 ## Options
 
@@ -58,7 +60,10 @@ none. Override with `--gui` or `--no-gui`.
 --groups a,b       Limit to named groups. Default is every group.
 --list-groups      Print the groups in the manifest and exit.
 --list-packages    Print every package/tool this script manages and exit.
+--status           Print what the last real run did and exit. Exits 1 if that
+                   run failed.
 --skip-upgrade     Install what is missing, leave installed versions alone.
+--skip-cleanup     Leave cached .deb downloads on disk.
 --skip-schedule    Leave the systemd timer alone.
 --skip-vscode-extensions
                    Install none of the VS Code extensions in the manifest.
@@ -125,6 +130,57 @@ re-runs this script daily at `SCHEDULE_TIME`.
 - Logs to the journal: `journalctl -u bootstrap-linux`.
 
 Remove it with `sudo systemctl disable --now bootstrap-linux.timer`.
+
+### Did last night's run work?
+
+Every real run leaves a record — when, how long, the exit code, the counts, the
+id of every step that failed, and the message it died with if it did. Written
+from the `EXIT` trap, so a run that aborts in preflight records that instead of
+leaving yesterday's success in place. Dry runs never write it.
+
+There are two paths, because two different users run this script: the timer is
+root, so its record is `/var/lib/bootstrap-linux/last-run`, and yours is
+`${XDG_STATE_HOME:-~/.local/state}/bootstrap-linux/last-run`. `--status` reads
+whichever is newer and says which one it used.
+
+```console
+$ ./bootstrap.sh --status
+
+== Last run ====================================================
+  when            2026-09-17 04:21:37  (7h 30m ago)
+  trigger         unattended - the systemd timer, or output redirected
+  version         v1.33.0
+  duration        1m 34s
+  result          exit 1
+  failed          repo: Visual Studio Code, apt packages
+  counts          installed=1 upgraded=12 current=109
+  log             journalctl -u bootstrap-linux
+  record          /var/lib/bootstrap-linux/last-run
+```
+
+It exits 1 when that run failed, so `bootstrap.sh --status` works as a check.
+
+With `SCHEDULE_NOTIFY_ON_FAILURE=yes` a failed unattended run also sends one
+`notify-send` to every logged-in desktop session. The timer runs as root, which
+has no session bus of its own, so the message is handed to each
+`/run/user/<uid>/bus` in turn; a headless machine has none, and nothing
+happens. Interactive runs never notify — they already printed the failures in
+red.
+
+## Housekeeping
+
+apt keeps every `.deb` it downloads in `/var/cache/apt/archives` and removes
+none of them. On a machine the timer upgrades nightly that is every package it
+has ever installed. `APT_CLEANUP_PRUNE_DAYS` sets the age past which a cached
+download goes; `APT_CLEANUP_ENABLED=no` turns the phase off and `--skip-cleanup`
+skips it for one run.
+
+Nothing is uninstalled. `apt-get autoremove` and `flatpak uninstall --unused`
+are run with `--dry-run` and their findings printed, because both are usually
+right about orphaned packages, old kernels and unused runtimes, and "usually"
+is not good enough to do unattended at 04:20. The journal's size is reported
+the same way, with the `journalctl --vacuum-time` command to trim it: the
+journal belongs to the whole system, not to this script.
 
 ## Releases
 

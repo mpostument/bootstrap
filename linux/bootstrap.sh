@@ -2,13 +2,14 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.32.0'
+BOOTSTRAP_VERSION='1.33.0'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
 
 DRY_RUN=no
 SKIP_UPGRADE=no
+SKIP_CLEANUP=no
 SKIP_SCHEDULE=no
 SKIP_REPOS=no
 SKIP_VSCODE_EXT=no
@@ -16,6 +17,23 @@ SKIP_UPDATE_CHECK=no
 ASSUME_YES=no
 GUI_OVERRIDE=auto
 ONLY_GROUPS=""
+STATUS_ONLY=no
+
+# Run state.
+#
+# Two paths, because two different users run this script. The systemd timer
+# runs it as root - apt needs that - and an interactive run is you, so a single
+# $HOME-relative path would record the timer's runs into /root and hide them
+# from the person asking. Each writes where it can, and --status reads whichever
+# of the two is newer.
+RUN_STARTED_EPOCH="$(date +%s)"
+RUN_STARTED_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+RUN_INTERACTIVE=no
+[[ -t 1 ]] && RUN_INTERACTIVE=yes
+RUN_RECORDING=no
+STATE_SYSTEM="/var/lib/bootstrap-linux/last-run"
+STATE_USER="${XDG_STATE_HOME:-${HOME}/.local/state}/bootstrap-linux/last-run"
+FAILED_IDS=()
 
 # Output
 
@@ -44,11 +62,202 @@ result() {
   esac
   printf '  %s%-14s%s%-42s %s%s%s\n' \
     "$colour" "$action" "$C_RESET" "$id" "$C_DIM" "$detail" "$C_RESET"
+  # What failed, not only how much of it: --status has to name the steps, and
+  # by then the output has scrolled away or gone into the journal.
+  [[ "$action" == "failed" ]] && FAILED_IDS+=("$id")
   RESULT_ACTIONS+=("$action")
   RESULT_LINES+=("$action")
 }
 
-die() { printf '%serror:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
+# RUN_ABORT_MSG is what the EXIT trap writes into the run record: a run that
+# died has no failed result to name, and "exit 1" on its own explains nothing.
+RUN_ABORT_MSG=""
+die() {
+  RUN_ABORT_MSG="$*"
+  printf '%serror:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2
+  exit 1
+}
+
+# Run state
+#
+# An unattended run is a run nobody watches: the timer starts it at 04:20, it
+# writes to the journal and exits, and the one question worth answering
+# afterwards - did last night's run work? - took `journalctl -u bootstrap-linux`
+# and a scroll. Every real run now leaves one key=value record behind, written
+# from the EXIT trap so a run that dies in preflight records that rather than
+# leaving yesterday's success in place, and `--status` reads it back.
+#
+# Dry runs never write it: a dry run is a question, and it should not overwrite
+# the record of the last real answer.
+
+# Where an unattended run's output went. On Linux that is the journal: the
+# timer's service inherits no log file, systemd takes stdout. Empty for an
+# interactive run, which went to the terminal the reader is sitting at.
+log_hint() {
+  [[ "$RUN_INTERACTIVE" == "no" ]] || return 0
+  printf 'journalctl -u %s' "${SCHEDULE_UNIT_NAME:-bootstrap-linux}"
+}
+
+state_file() {
+  if [[ "$(id -u)" -eq 0 ]]; then printf '%s' "$STATE_SYSTEM"; else printf '%s' "$STATE_USER"; fi
+}
+
+action_count() {   # action_count <action>
+  local want="$1" a count=0
+  for a in "${RESULT_ACTIONS[@]:-}"; do
+    [[ "$a" == "$want" ]] && count=$((count + 1))
+  done
+  printf '%s' "$count"
+}
+
+write_state() {   # write_state <exit-code>
+  local rc="$1" target finished counts='' failed='' action count f
+  [[ "$RUN_RECORDING" == "yes" ]] || return 0
+  [[ "$DRY_RUN" == "no" ]] || return 0
+
+  target="$(state_file)"
+  finished="$(date +%s)"
+  for action in installed upgraded failed missing skipped current present held no-gui; do
+    count="$(action_count "$action")"
+    [[ "$count" -gt 0 ]] && counts="${counts}${counts:+ }${action}=${count}"
+  done
+  # Comma-separated: an id can contain spaces ("repo: Visual Studio Code").
+  for f in "${FAILED_IDS[@]:-}"; do
+    [[ -z "$f" ]] && continue
+    failed="${failed}${failed:+, }${f}"
+  done
+
+  mkdir -p "$(dirname "$target")" 2>/dev/null || return 0
+  {
+    echo "version=$BOOTSTRAP_VERSION"
+    echo "started=$RUN_STARTED_ISO"
+    echo "finished_epoch=$finished"
+    echo "duration_seconds=$(( finished - RUN_STARTED_EPOCH ))"
+    echo "exit=$rc"
+    echo "interactive=$RUN_INTERACTIVE"
+    echo "failed='${failed//\'/}'"
+    echo "counts='$counts'"
+    echo "log=$(log_hint)"
+    echo "error='$(printf '%s' "${RUN_ABORT_MSG//\'/}" | tr '\n' ' ' | cut -c1-200)'"
+  } > "$target" 2>/dev/null || true
+  # The timer's record is read by a person who is not root.
+  chmod 0644 "$target" 2>/dev/null || true
+  return 0
+}
+
+# One desktop notification for a run nobody was watching. The timer runs as
+# root, which has no session bus of its own, so the message is handed to each
+# logged-in user's bus instead - /run/user/<uid>/bus is the session, and a seat
+# with nobody logged in simply has none. Best effort throughout: a headless
+# server has no notify-send, no bus and no one to tell, and that is not a
+# failure worth reporting.
+notify_failure() {   # notify_failure <exit-code>
+  local rc="$1" body subtitle n_failed bus uid
+  [[ "$rc" -ne 0 ]] || return 0
+  [[ "$RUN_RECORDING" == "yes" ]] || return 0
+  [[ "$DRY_RUN" == "no" ]] || return 0
+  [[ "$RUN_INTERACTIVE" == "no" ]] || return 0
+  [[ "${SCHEDULE_NOTIFY_ON_FAILURE:-no}" == "yes" ]] || return 0
+  command -v notify-send >/dev/null 2>&1 || return 0
+
+  n_failed="$(action_count failed)"
+  if [[ "$n_failed" -gt 0 ]]; then
+    subtitle="$n_failed step(s) failed"
+    body="${RUN_ABORT_MSG:-$(log_hint)}"
+  else
+    subtitle="aborted, exit $rc"
+    body="${RUN_ABORT_MSG:-$(log_hint)}"
+  fi
+
+  if [[ "$(id -u)" -ne 0 ]]; then
+    notify-send -u critical "bootstrap-linux: $subtitle" "$body" >/dev/null 2>&1 || true
+    return 0
+  fi
+  for bus in /run/user/*/bus; do
+    [[ -S "$bus" ]] || continue
+    uid="${bus#/run/user/}"; uid="${uid%/bus}"
+    sudo -n -u "#${uid}" \
+      env "DBUS_SESSION_BUS_ADDRESS=unix:path=${bus}" \
+      notify-send -u critical "bootstrap-linux: $subtitle" "$body" >/dev/null 2>&1 || true
+  done
+  return 0
+}
+
+STATUS_RC=0
+print_status() {
+  local key value stamp ago dur trigger target
+  local s_version='' s_finished='' s_duration='' s_exit='' s_interactive='' \
+        s_failed='' s_counts='' s_log='' s_error=''
+
+  # The newer of the two records: the timer writes one as root, you write the
+  # other, and the question is always "what happened last", not "who ran it".
+  target=''
+  if [[ -r "$STATE_SYSTEM" && -r "$STATE_USER" ]]; then
+    target="$STATE_USER"
+    [[ "$STATE_SYSTEM" -nt "$STATE_USER" ]] && target="$STATE_SYSTEM"
+  elif [[ -r "$STATE_SYSTEM" ]]; then
+    target="$STATE_SYSTEM"
+  elif [[ -r "$STATE_USER" ]]; then
+    target="$STATE_USER"
+  fi
+
+  phase 'Last run'
+  if [[ -z "$target" ]]; then
+    result 'missing' 'last run' "nothing recorded yet - $STATE_SYSTEM or $STATE_USER"
+    echo
+    return 0
+  fi
+
+  while IFS='=' read -r key value; do
+    value="${value#\'}"; value="${value%\'}"
+    case "$key" in
+      version)          s_version="$value" ;;
+      finished_epoch)   s_finished="$value" ;;
+      duration_seconds) s_duration="$value" ;;
+      exit)             s_exit="$value" ;;
+      interactive)      s_interactive="$value" ;;
+      failed)           s_failed="$value" ;;
+      counts)           s_counts="$value" ;;
+      log)              s_log="$value" ;;
+      error)            s_error="$value" ;;
+    esac
+  done < "$target"
+
+  stamp="$(date -d "@${s_finished:-0}" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo unknown)"
+  ago="$(human_seconds $(( $(date +%s) - ${s_finished:-0} )) ) ago"
+  dur="$(human_seconds "${s_duration:-0}")"
+  trigger='a terminal'
+  [[ "$s_interactive" == "no" ]] && trigger='unattended - the systemd timer, or output redirected'
+
+  printf '  %-16s%s  %s(%s)%s\n' 'when' "$stamp" "$C_DIM" "$ago" "$C_RESET"
+  printf '  %-16s%s\n' 'trigger' "$trigger"
+  printf '  %-16s%s\n' 'version' "v${s_version:-?}"
+  printf '  %-16s%s\n' 'duration' "$dur"
+  if [[ "${s_exit:-1}" == "0" ]]; then
+    printf '  %-16s%s%s%s\n' 'result' "$C_GREEN" 'clean - every step did what it said' "$C_RESET"
+  else
+    STATUS_RC=1
+    printf '  %-16s%s%s%s\n' 'result' "$C_RED" "exit ${s_exit:-?}" "$C_RESET"
+    [[ -n "$s_failed" ]] && printf '  %-16s%s%s%s\n' 'failed' "$C_YELLOW" "$s_failed" "$C_RESET"
+    [[ -n "$s_error" ]] && printf '  %-16s%s%s%s\n' 'aborted' "$C_YELLOW" "$s_error" "$C_RESET"
+  fi
+  [[ -n "$s_counts" ]] && printf '  %-16s%s\n' 'counts' "$s_counts"
+  [[ -n "$s_log" ]] && printf '  %-16s%s\n' 'log' "$s_log"
+  printf '  %-16s%s%s%s\n' 'record' "$C_DIM" "$target" "$C_RESET"
+  echo
+  return 0
+}
+
+human_seconds() {   # human_seconds <seconds>
+  local s="${1:-0}"
+  [[ "$s" =~ ^[0-9]+$ ]] || { printf 'unknown'; return 0; }
+  if   [[ "$s" -lt 60 ]];    then printf '%ss' "$s"
+  elif [[ "$s" -lt 3600 ]];  then printf '%sm %ss' "$(( s / 60 ))" "$(( s % 60 ))"
+  elif [[ "$s" -lt 86400 ]]; then printf '%sh %sm' "$(( s / 3600 ))" "$(( s % 3600 / 60 ))"
+  else printf '%sd %sh' "$(( s / 86400 ))" "$(( s % 86400 / 3600 ))"
+  fi
+  return 0
+}
 
 # Temp files and directories
 #
@@ -83,7 +292,15 @@ cleanup_tmp() {
 # EXIT covers a normal end and a die; INT and TERM re-exit with the signal's
 # conventional status, which fires the EXIT trap in turn - cleanup_tmp is
 # idempotent, so running twice costs nothing.
-trap cleanup_tmp EXIT
+on_exit() {
+  local rc=$?
+  cleanup_tmp
+  write_state "$rc" || true
+  notify_failure "$rc" || true
+  return 0
+}
+
+trap on_exit EXIT
 trap 'cleanup_tmp; exit 130' INT
 trap 'cleanup_tmp; exit 143' TERM
 
@@ -185,7 +402,10 @@ Usage: bootstrap.sh [options]
   --list-packages    Print every package/tool name this script manages and
                      exit - groups and their uv tools, TOOLS, RELEASES and
                      REPOS packages.
+  --status           Print what the last real run did and exit. Exits 1 if
+                     that run failed, so a check can use it.
   --skip-upgrade     Install what is missing, leave installed versions alone.
+  --skip-cleanup     Leave cached .deb downloads on disk.
   --skip-schedule    Leave the systemd timer alone.
   --skip-repos       Add no third-party apt sources and install none of
                      their packages. For a host where something else
@@ -205,7 +425,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)       DRY_RUN=yes ;;
     --skip-upgrade)  SKIP_UPGRADE=yes ;;
+    --skip-cleanup)  SKIP_CLEANUP=yes ;;
     --skip-schedule) SKIP_SCHEDULE=yes ;;
+    --status)        STATUS_ONLY=yes ;;
     --skip-repos)    SKIP_REPOS=yes ;;
     --skip-vscode-extensions) SKIP_VSCODE_EXT=yes ;;
     --skip-update-check) SKIP_UPDATE_CHECK=yes ;;
@@ -224,6 +446,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -t 0 ]] || ASSUME_YES=yes
+
+if [[ "$STATUS_ONLY" == "yes" ]]; then
+  print_status
+  exit "$STATUS_RC"
+fi
 
 # Manifest
 
@@ -326,6 +553,11 @@ if [[ "${LIST_PACKAGES:-no}" == "yes" ]]; then
 fi
 
 # Preflight
+#
+# Past this line the run counts: the EXIT trap records what happened, whether
+# it gets to the summary or dies in the middle.
+
+RUN_RECORDING=yes
 
 phase 'Preflight'
 
@@ -669,6 +901,78 @@ else
       fi
     else
       result 'failed' 'flatpak apps' 'flatpak update failed'
+    fi
+  fi
+fi
+
+# Housekeeping
+#
+# apt keeps every .deb it downloads in /var/cache/apt/archives and never
+# removes one: on a machine that upgrades itself nightly from the timer that is
+# the whole of every package it has ever installed, sitting in a directory
+# nobody looks at. Pruning by age is the apt-get counterpart of
+# `brew cleanup --prune=N` on macOS - a cached .deb is a download, and a
+# download can always be fetched again.
+#
+# Everything that would *uninstall* something is reported and never run, the
+# same line this script takes with HELD: `apt-get autoremove` is usually right
+# about orphaned packages and old kernels, and "usually" is not good enough to
+# do unattended at 04:20.
+
+if [[ "$SKIP_CLEANUP" == "yes" ]]; then
+  phase 'Housekeeping - skipped (--skip-cleanup)'
+elif [[ "${APT_CLEANUP_ENABLED:-no}" != "yes" ]]; then
+  phase 'Housekeeping - disabled in the manifest'
+else
+  phase 'Housekeeping - cached downloads, and what is no longer needed'
+
+  PRUNE_DAYS="${APT_CLEANUP_PRUNE_DAYS:-30}"
+  APT_CACHE=/var/cache/apt/archives
+
+  if [[ -d "$APT_CACHE" ]]; then
+    # GNU find: -printf is not POSIX, and this file only ever runs on Debian.
+    stale_bytes="$(find "$APT_CACHE" -maxdepth 1 -type f -name '*.deb' \
+                     -mtime "+${PRUNE_DAYS}" -printf '%s\n' 2>/dev/null \
+                     | awk '{t += $1} END {printf "%d", t}')"
+    stale_debs="$(find "$APT_CACHE" -maxdepth 1 -type f -name '*.deb' \
+                    -mtime "+${PRUNE_DAYS}" 2>/dev/null | grep -c . || true)"
+    stale_mb="$(awk -v b="${stale_bytes:-0}" 'BEGIN { printf "%.1f MB", b / 1048576 }')"
+
+    if [[ "${stale_debs:-0}" -eq 0 ]]; then
+      result 'current' 'apt cache' "nothing cached over ${PRUNE_DAYS} days"
+    elif [[ "$DRY_RUN" == "yes" ]]; then
+      result 'would-upgrade' 'apt cache' "$stale_debs .deb(s), $stale_mb to reclaim"
+    elif run_priv find "$APT_CACHE" -maxdepth 1 -type f -name '*.deb' \
+           -mtime "+${PRUNE_DAYS}" -delete 2>/dev/null; then
+      result 'upgraded' 'apt cache' "$stale_debs .deb(s) removed, $stale_mb reclaimed"
+    else
+      result 'failed' 'apt cache' "could not prune $APT_CACHE"
+    fi
+  fi
+
+  # Reported, never run. --dry-run needs no privileges and changes nothing.
+  orphans="$(apt-get autoremove --dry-run 2>/dev/null \
+               | sed -n 's/^Remv \([^ ]*\).*/\1/p' | tr '\n' ' ')"
+  if [[ -n "${orphans// /}" ]]; then
+    result 'present' 'unused packages' "${orphans}- apt autoremove, if you agree"
+  fi
+
+  if command -v flatpak >/dev/null 2>&1; then
+    unused="$(flatpak uninstall --unused --dry-run 2>/dev/null \
+                | sed -n 's/^[[:space:]]*[0-9]*\.[[:space:]]*\([^[:space:]]*\).*/\1/p' | tr '\n' ' ')"
+    if [[ -n "${unused// /}" ]]; then
+      result 'present' 'unused runtimes' "${unused}- flatpak uninstall --unused, if you agree"
+    fi
+  fi
+
+  # The journal is where every unattended run's output ends up, and it is the
+  # one thing here that grows without anybody installing anything. Reported
+  # with the command, not vacuumed: the journal is the whole system's, not ours.
+  if command -v journalctl >/dev/null 2>&1; then
+    journal_size="$(journalctl --disk-usage 2>/dev/null \
+                      | sed -n 's/.*take up \([0-9.]*[KMGT]*\).*/\1/p')"
+    if [[ -n "$journal_size" ]]; then
+      result 'present' 'journal' "$journal_size - journalctl --vacuum-time=30d to trim"
     fi
   fi
 fi

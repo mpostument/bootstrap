@@ -31,14 +31,16 @@ once running, but cannot clear it from the file you are starting.
 1. **Packages** — installs or upgrades everything in `packages.psd1` via winget.
 2. **Python tools** — each group's `UvTools` entries, through `uv tool`: one
    environment per tool, for the CLIs winget has no package for.
-3. **Externally managed software** — detects and reports, changes nothing.
-4. **Shell** — Nerd Font from GitHub, `starship.toml` and the bat config and
+3. **Housekeeping** — prunes the installers winget downloaded and left in the
+   temp cache. Skip with `-SkipCleanup`.
+4. **Externally managed software** — detects and reports, changes nothing.
+5. **Shell** — Nerd Font from GitHub, `starship.toml` and the bat config and
    Catppuccin Mocha theme from the repo root,
    PowerShell modules for 5.1 and 7, the profile, execution policy, and a
    Windows Terminal settings merge that patches keys instead of overwriting.
-5. **mpv** — config, UI and scripts. Skip with `-SkipMpv`.
-6. **Schedule** — a daily unattended run. Skip with `-SkipSchedule`.
-7. **VS Code extensions** — installs what's missing from `packages.psd1`,
+6. **mpv** — config, UI and scripts. Skip with `-SkipMpv`.
+7. **Schedule** — a daily unattended run. Skip with `-SkipSchedule`.
+8. **VS Code extensions** — installs what's missing from `packages.psd1`,
    never removes one that isn't listed. Skip with `-SkipVsCode`.
 
 ## mpv
@@ -106,7 +108,9 @@ Put the id in a group in `packages.psd1` and re-run.
 .\bootstrap.ps1 -ListGroups              # what groups exist
 .\bootstrap.ps1 -ListPackages            # every package id, by group
 .\bootstrap.ps1 -Groups cli,dev          # only those groups
+.\bootstrap.ps1 -Status                  # what did the last run do
 .\bootstrap.ps1 -SkipUpgrade             # install missing, freeze versions
+.\bootstrap.ps1 -SkipCleanup             # leave winget's download cache alone
 .\bootstrap.ps1 -SkipShell               # packages only
 .\bootstrap.ps1 -SkipMpv                 # leave %APPDATA%\mpv alone
 .\bootstrap.ps1 -Silent                  # suppress installer UI
@@ -116,6 +120,58 @@ Put the id in a group in `packages.psd1` and re-run.
 
 `-WhatIf` and `-Confirm` work throughout. `tools` is a function the shell phase
 writes next to your profile: the `cli` group as of the last run.
+
+## Did last night's run work?
+
+The task runs at 04:20 and tees into `%LOCALAPPDATA%\windows-bootstrap\logs`,
+which is to say nobody reads it. Every real run now leaves a record in
+`%LOCALAPPDATA%\windows-bootstrap\last-run` — when, how long, the exit code,
+the counts, the id of every step that failed, and the message it died with if
+it threw. `-Status` reads it back and exits 1 if that run failed, so it works
+as a check:
+
+```powershell
+.\bootstrap.ps1 -Status
+
+== Last run ====================================================
+  when            2026-09-17 04:21:12  (7h 30m ago)
+  trigger         unattended - the scheduled task, or output redirected
+  version         v1.40.0
+  duration        3m 07s
+  result          exit 1
+  failed          Microsoft.DotNet.SDK.10, log pruning
+  counts          installed=1 upgraded=9 current=54 present=6
+  log             C:\Users\you\AppData\Local\windows-bootstrap\logs\bootstrap-2026-09-17.log
+  record          C:\Users\you\AppData\Local\windows-bootstrap\last-run
+```
+
+The record is written from the Summary *and* from a script-level `trap`, so a
+run that throws in phase 1 records that rather than leaving yesterday's success
+looking current. `-WhatIf` never writes it.
+
+`Schedule.NotifyOnFailure` sends one notification when an unattended run fails.
+There is no channel that exists on every Windows, so three are tried in order:
+a BurntToast toast if that module happens to be installed, the Application
+event log otherwise, and `msg.exe` last — Home editions have none of the first
+two. An interactive run is never notified; it printed the failures in red.
+
+Interactive is decided by whether stdout is redirected, the same test the Linux
+and macOS scripts make with `[ -t 1 ]`. The scheduled task pipes through
+`Tee-Object`, so it always reads as unattended.
+
+## Housekeeping
+
+winget upgrades in place, so unlike Homebrew there is no superseded version to
+remove. What accumulates is the installer it downloaded in order to run the
+upgrade: those stay in `%TEMP%\WinGet` indefinitely, and on a machine the task
+upgrades nightly that is every installer of every package. `Housekeeping.PruneDays`
+sets the age past which one goes; `Housekeeping.Enabled = $false` turns the
+phase off and `-SkipCleanup` skips it for a run.
+
+Nothing is uninstalled, and winget's own state under
+`Microsoft.DesktopAppInstaller` is reported with its size and left alone — that
+is state, not a download it can fetch again. A file the installer still holds
+open is skipped and picked up by the next run.
 
 ## What it deliberately does not do
 

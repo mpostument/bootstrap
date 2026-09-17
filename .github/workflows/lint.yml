@@ -19,6 +19,7 @@ env:
   TYPOS_VERSION: '1.50.1'
   TAPLO_VERSION: '0.10.0'
   SHFMT_VERSION: '3.14.1'
+  PSSCRIPTANALYZER_VERSION: '1.24.0'
 
 jobs:
   lint:
@@ -85,3 +86,35 @@ jobs:
       - name: shfmt (report only)
         continue-on-error: true
         run: shfmt -i 2 -ci -d linux/bootstrap.sh macos/bootstrap.sh tools/parity.sh
+
+      # The tools/ scripts are checked here because release.yml only shellchecks
+      # the two platform scripts, and only on a tag. --external-sources lets
+      # shellcheck follow a `. packages.conf` instead of reporting SC1091 on it.
+      - name: shellcheck tools/
+        run: shellcheck --external-sources --source-path=. tools/*.sh
+
+      # The linter that reads windows/*.ps1, which until now got a parse check
+      # at tag time and nothing else - the largest script in the repository and
+      # the least examined. windows/PSScriptAnalyzerSettings.psd1 excludes the
+      # rules this codebase already violates on purpose, so this is green today
+      # and can only go red on something new.
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -RequiredVersion $env:PSSCRIPTANALYZER_VERSION `
+              -Force -Scope CurrentUser -ErrorAction Stop
+          $findings = @(Invoke-ScriptAnalyzer -Path windows -Recurse `
+                  -Settings windows/PSScriptAnalyzerSettings.psd1)
+          foreach ($finding in $findings) {
+              Write-Host ("::error file={0},line={1}::{2}: {3}" -f `
+                      $finding.ScriptPath, $finding.Line, $finding.RuleName, $finding.Message)
+          }
+          if ($findings.Count) { exit 1 }
+          Write-Host 'OK   windows/*.ps1 - nothing outside the documented exclusions'
+
+      # The assertions in tools/test.sh: the duration formatters agreeing across
+      # three languages, the run record's keys matching, --status surviving a
+      # record a killed run left half-written, the launchd plist parsing, the
+      # apt cache pruning by age and only by age. No network, nothing installed.
+      - name: Tests
+        run: bash tools/test.sh

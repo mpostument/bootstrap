@@ -57,8 +57,21 @@ start, and the `cli` group matches `tools/cli-parity.conf`.
 archive, the Homebrew API, `winget-pkgs`, and a `HEAD` against every `RELEASES`
 asset. Runs on push and weekly.
 
+`lint.yml` runs on every push: actionlint, typos, taplo, shfmt (report only),
+shellcheck over `tools/`, PSScriptAnalyzer over `windows/`, and the tests.
+
+`tools/test.sh` asserts what the three scripts promise each other — that the
+duration formatters agree across bash and PowerShell, that all three write the
+same run record, that `--status` survives a record a killed run left
+half-written, that the launchd plist parses, and that the apt cache prunes by
+age and only by age. The functions under test are extracted from the scripts
+themselves, so a test cannot pass against a stale copy. Anything it needs and
+cannot find — `plutil`, GNU `find`, `pwsh` — is skipped out loud.
+
 ```bash
-bash tools/parity.sh     # the parity check alone, no network needed
+bash tools/test.sh          # everything; no network, nothing installed
+bash tools/test.sh record   # one section
+bash tools/parity.sh        # the parity check alone
 ```
 
 ## Versioning
