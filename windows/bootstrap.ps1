@@ -66,7 +66,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '1.41.0'
+$script:BootstrapVersion = '1.41.1'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -131,7 +131,8 @@ function Add-Result {
         [string]$Group,
         [string]$Id,
         [ValidateSet('installed', 'upgraded', 'current', 'held', 'present',
-                     'missing', 'failed', 'would-install', 'would-upgrade', 'skipped')]
+                     'missing', 'failed', 'would-install', 'would-upgrade', 'skipped',
+                     'ok', 'broken')]
         [string]$Action,
         [string]$Detail = ''
     )
@@ -143,7 +144,9 @@ function Add-Result {
         'held'          { 'DarkYellow' }
         'missing'       { 'Yellow' }
         'failed'        { 'Red' }
-        default         { 'DarkGray' }
+        'ok'            { 'Green' }
+        'broken'        { 'Red' }
+        default        { 'DarkGray' }
     }
     Write-Host ('  {0,-14}' -f $Action) -ForegroundColor $colour -NoNewline
     Write-Host ('{0,-44}' -f $Id) -NoNewline
@@ -175,6 +178,15 @@ function Format-Duration {
         return '{0}h {1}m' -f [int][Math]::Floor($Seconds / 3600), [int][Math]::Floor(($Seconds % 3600) / 60)
     }
     return '{0}d {1}h' -f [int][Math]::Floor($Seconds / 86400), [int][Math]::Floor(($Seconds % 86400) / 3600)
+}
+
+# On PowerShell 7, Measure-Object emits nothing at all for empty input, so
+# (... | Measure-Object -Sum).Sum is $null.Sum and strict mode throws.
+function Format-Size {
+    param([System.IO.FileInfo[]]$Files)
+    $bytes = 0L
+    foreach ($file in $Files) { $bytes += $file.Length }
+    return '{0:N1} MB' -f ($bytes / 1MB)
 }
 
 function Write-RunRecord {
@@ -492,7 +504,7 @@ foreach (`$c in @($list)) {
 `$out += "env:PATH=`$env:PATH"
 `$out += "env:JAVA_HOME=`$env:JAVA_HOME"
 `$prompt = Get-Command prompt -CommandType Function -ErrorAction SilentlyContinue
-`$out += "fn:prompt=`$(if (`$prompt) { `$prompt.Definition } else { '' })"
+`$out += "fn:prompt=`$(if (`$prompt) { `$prompt.Definition -replace '\s+', ' ' } else { '' })"
 `$out -join [Environment]::NewLine
 "@
 
@@ -572,16 +584,21 @@ function Test-DoctorShell {
     }
 }
 
+# mise keeps its data under %LOCALAPPDATA% on Windows, not ~/.local/share. An
+# activated shell resolves a runtime to its installs\ directory, which
+# `mise activate` puts ahead of the shims; anything else resolves through the
+# shims. Either one is mise's.
 function Test-DoctorRuntimes {
-    $shims = Join-Path $env:USERPROFILE '.local\share\mise\shims'
+    $miseRoot = Join-Path $env:LOCALAPPDATA 'mise'
+    $shims = Join-Path $miseRoot 'shims'
     foreach ($tool in @('node', 'go', 'java')) {
         $path = Get-ProbeValue "resolve:$tool"
         if (-not $path) {
             Add-DoctorBroken $tool 'not on PATH'
-        } elseif ($path -like "$shims*") {
+        } elseif ($path -like "$shims\*" -or $path -like "$miseRoot\installs\*") {
             Add-DoctorOk $tool $path
         } else {
-            Add-DoctorNote $tool "$path - not the mise shim under $shims"
+            Add-DoctorNote $tool "$path - not managed by mise"
         }
     }
 
@@ -1565,7 +1582,7 @@ if ($SkipCleanup) {
                 Where-Object { $_.LastWriteTime -lt $pruneCutoff }
         }
     )
-    $staleMb = '{0:N1} MB' -f (($staleFiles | Measure-Object -Property Length -Sum).Sum / 1MB)
+    $staleMb = Format-Size $staleFiles
 
     if ($cacheDirs.Count -eq 0) {
         Add-Result -Group 'housekeeping' -Id 'winget cache' -Action 'current' -Detail 'no download cache on this machine'
@@ -1600,8 +1617,7 @@ if ($SkipCleanup) {
     # it can fetch again.
     $appInstaller = Join-Path $script:StateRoot 'Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalState'
     if (Test-Path -LiteralPath $appInstaller) {
-        $appInstallerMb = '{0:N1} MB' -f ((Get-ChildItem -LiteralPath $appInstaller -Recurse -File -ErrorAction SilentlyContinue |
-                    Measure-Object -Property Length -Sum).Sum / 1MB)
+        $appInstallerMb = Format-Size @(Get-ChildItem -LiteralPath $appInstaller -Recurse -File -ErrorAction SilentlyContinue)
         Add-Result -Group 'housekeeping' -Id 'winget state' -Action 'present' `
             -Detail ('{0} in {1}' -f $appInstallerMb, $appInstaller)
     }

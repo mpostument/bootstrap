@@ -20,6 +20,35 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.41.1]
+
+### Fixed
+
+- **`-Doctor` stopped at its first check.** `ok` and `broken`, the two
+  verdicts the doctor exists to give, were never added to the `ValidateSet`
+  on `Add-Result`, so the probe shell's own `ok` threw before a single tool
+  was looked at. Both are in the set now, green and red.
+
+- **`starship prompt` reported "no prompt function" with the profile
+  loaded.** A function's `Definition` starts with a newline, and the probe
+  answers one `key=value` per line - so `fn:prompt=` always arrived empty.
+  The definition is flattened onto one line before it is sent.
+
+- **The mise checks looked in the Linux data directory.** Windows mise keeps
+  its shims under `%LOCALAPPDATA%\mise\shims`, which is what the mise phase
+  puts on the user `PATH`; the doctor looked in `~\.local\share\mise\shims`
+  and reported it missing on every machine. And `node`, `go` and `java`
+  resolving to `mise\installs\...` is `mise activate` working as intended -
+  it puts those ahead of the shims - so that is `ok` now, not a note. Only a
+  runtime from outside mise is flagged.
+
+- **Housekeeping threw on an empty download cache.** On PowerShell 7,
+  `Measure-Object` emits nothing at all for empty input, so
+  `(... | Measure-Object -Sum).Sum` is `$null.Sum`, which strict mode rejects.
+  That ran before the "nothing to prune" check, so a clean cache - the usual
+  case - was enough. Sizes are summed by `Format-Size` instead, which is
+  `0.0 MB` for no files.
+
 ## [1.41.0]
 
 ### Added
