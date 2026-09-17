@@ -2,17 +2,34 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.34.0'
+BOOTSTRAP_VERSION='1.36.0'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
 
 DRY_RUN=no
 SKIP_UPGRADE=no
+SKIP_CASK_UPGRADE=no
+SKIP_CLEANUP=no
+SKIP_SCHEDULE=no
 SKIP_VSCODE_EXT=no
 SKIP_UPDATE_CHECK=no
 GUI_OVERRIDE=auto
 ONLY_GROUPS=""
+STATUS_ONLY=no
+
+# Run state. The launchd agent exports BOOTSTRAP_LOG_DIR, so a run started by
+# it knows which log file it is being written to and can say so in --status.
+RUN_STARTED_EPOCH="$(date +%s)"
+RUN_STARTED_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+RUN_INTERACTIVE=no
+[[ -t 1 ]] && RUN_INTERACTIVE=yes
+RUN_LOG=""
+[[ -n "${BOOTSTRAP_LOG_DIR:-}" ]] && RUN_LOG="${BOOTSTRAP_LOG_DIR}/bootstrap-$(date +%Y-%m-%d).log"
+RUN_RECORDING=no
+STATE_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/bootstrap-macos"
+STATE_FILE="${STATE_DIR}/last-run"
+FAILED_IDS=()
 
 # Output
 
@@ -40,10 +57,165 @@ result() {
   esac
   printf '  %s%-14s%s%-42s %s%s%s\n' \
     "$colour" "$action" "$C_RESET" "$id" "$C_DIM" "$detail" "$C_RESET"
+  # What failed, not only how much of it: --status has to name the steps, and
+  # by then the output has scrolled away or gone to a log nobody opened.
+  [[ "$action" == "failed" ]] && FAILED_IDS+=("$id")
   RESULT_ACTIONS+=("$action")
 }
 
-die() { printf '%serror:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
+# RUN_ABORT_MSG is what the EXIT trap writes into the run record: a run that
+# died has no failed result to name, and "exit 1" on its own explains nothing.
+RUN_ABORT_MSG=""
+die() {
+  RUN_ABORT_MSG="$*"
+  printf '%serror:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2
+  exit 1
+}
+
+# Run state
+#
+# An unattended run is a run nobody watches: it writes to a log file under
+# ~/Library/Logs and exits, and the one question worth answering afterwards -
+# did last night's run work? - took reading the file to answer. Every real run
+# now leaves one key=value record behind, written from the EXIT trap so a run
+# that dies in preflight records that rather than leaving yesterday's success
+# in place, and `--status` reads it back.
+#
+# Dry runs never write it: a dry run is a question, and it should not overwrite
+# the record of the last real answer.
+
+action_count() {   # action_count <action>
+  local want="$1" a count=0
+  for a in "${RESULT_ACTIONS[@]:-}"; do
+    [[ "$a" == "$want" ]] && count=$((count + 1))
+  done
+  printf '%s' "$count"
+}
+
+write_state() {   # write_state <exit-code>
+  local rc="$1" finished counts='' failed='' action count f
+  [[ "$RUN_RECORDING" == "yes" ]] || return 0
+  [[ "$DRY_RUN" == "no" ]] || return 0
+
+  finished="$(date +%s)"
+  for action in installed upgraded failed missing skipped current present held no-gui; do
+    count="$(action_count "$action")"
+    [[ "$count" -gt 0 ]] && counts="${counts}${counts:+ }${action}=${count}"
+  done
+  # Comma-separated: an id can contain spaces ("tap: tflint - ...").
+  for f in "${FAILED_IDS[@]:-}"; do
+    [[ -z "$f" ]] && continue
+    failed="${failed}${failed:+, }${f}"
+  done
+
+  mkdir -p "$STATE_DIR" 2>/dev/null || return 0
+  {
+    echo "version=$BOOTSTRAP_VERSION"
+    echo "started=$RUN_STARTED_ISO"
+    echo "finished_epoch=$finished"
+    echo "duration_seconds=$(( finished - RUN_STARTED_EPOCH ))"
+    echo "exit=$rc"
+    echo "interactive=$RUN_INTERACTIVE"
+    echo "failed='${failed//\'/}'"
+    echo "counts='$counts'"
+    echo "log=$RUN_LOG"
+    echo "error='$(printf '%s' "${RUN_ABORT_MSG//\'/}" | tr '\n' ' ' | cut -c1-200)'"
+  } > "$STATE_FILE" 2>/dev/null || true
+  return 0
+}
+
+# Notification Center, and only for a run nobody was watching: an interactive
+# run already printed the failures in red, and a banner on top of that is
+# noise. osascript is silent and harmless where there is no GUI session to
+# post into, an ssh login for instance, so the failure is ignored.
+notify_failure() {   # notify_failure <exit-code>
+  local rc="$1" body
+  [[ "$rc" -ne 0 ]] || return 0
+  [[ "$RUN_RECORDING" == "yes" ]] || return 0
+  [[ "$DRY_RUN" == "no" ]] || return 0
+  [[ "$RUN_INTERACTIVE" == "no" ]] || return 0
+  [[ "${SCHEDULE_NOTIFY_ON_FAILURE:-no}" == "yes" ]] || return 0
+  command -v osascript >/dev/null 2>&1 || return 0
+
+  local n_failed subtitle
+  n_failed="$(action_count failed)"
+  if [[ "$n_failed" -gt 0 ]]; then
+    subtitle="$n_failed step(s) failed"
+    body="${RUN_LOG:-run bootstrap.sh --status}"
+  else
+    # No failed result to count: the run died rather than finishing badly.
+    subtitle="aborted, exit $rc"
+    body="${RUN_ABORT_MSG:-${RUN_LOG:-run bootstrap.sh --status}}"
+  fi
+  body="${body//\\/}"; body="${body//\"/}"
+  subtitle="${subtitle//\\/}"; subtitle="${subtitle//\"/}"
+  osascript -e "display notification \"${body}\" with title \"bootstrap-macos\" subtitle \"${subtitle}\"" \
+    >/dev/null 2>&1 || true
+  return 0
+}
+
+STATUS_RC=0
+print_status() {
+  local key value stamp ago dur trigger
+  local s_version='' s_finished='' s_duration='' s_exit='' s_interactive='' \
+        s_failed='' s_counts='' s_log='' s_error=''
+
+  phase 'Last run'
+  if [[ ! -r "$STATE_FILE" ]]; then
+    result 'missing' 'last run' "nothing recorded yet - $STATE_FILE"
+    echo
+    return 0
+  fi
+
+  while IFS='=' read -r key value; do
+    value="${value#\'}"; value="${value%\'}"
+    case "$key" in
+      version)          s_version="$value" ;;
+      finished_epoch)   s_finished="$value" ;;
+      duration_seconds) s_duration="$value" ;;
+      exit)             s_exit="$value" ;;
+      interactive)      s_interactive="$value" ;;
+      failed)           s_failed="$value" ;;
+      counts)           s_counts="$value" ;;
+      log)              s_log="$value" ;;
+      error)            s_error="$value" ;;
+    esac
+  done < "$STATE_FILE"
+
+  stamp="$(date -r "${s_finished:-0}" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo unknown)"
+  ago="$(human_seconds $(( $(date +%s) - ${s_finished:-0} )) ) ago"
+  dur="$(human_seconds "${s_duration:-0}")"
+  trigger='a terminal'
+  [[ "$s_interactive" == "no" ]] && trigger='unattended - the launchd agent, or output redirected'
+
+  printf '  %-16s%s  %s(%s)%s\n' 'when' "$stamp" "$C_DIM" "$ago" "$C_RESET"
+  printf '  %-16s%s\n' 'trigger' "$trigger"
+  printf '  %-16s%s\n' 'version' "v${s_version:-?}"
+  printf '  %-16s%s\n' 'duration' "$dur"
+  if [[ "${s_exit:-1}" == "0" ]]; then
+    printf '  %-16s%s%s%s\n' 'result' "$C_GREEN" 'clean - every step did what it said' "$C_RESET"
+  else
+    STATUS_RC=1
+    printf '  %-16s%s%s%s\n' 'result' "$C_RED" "exit ${s_exit:-?}" "$C_RESET"
+    [[ -n "$s_failed" ]] && printf '  %-16s%s%s%s\n' 'failed' "$C_YELLOW" "$s_failed" "$C_RESET"
+    [[ -n "$s_error" ]] && printf '  %-16s%s%s%s\n' 'aborted' "$C_YELLOW" "$s_error" "$C_RESET"
+  fi
+  [[ -n "$s_counts" ]] && printf '  %-16s%s\n' 'counts' "$s_counts"
+  [[ -n "$s_log" ]] && printf '  %-16s%s\n' 'log' "$s_log"
+  echo
+  return 0
+}
+
+human_seconds() {   # human_seconds <seconds>
+  local s="${1:-0}"
+  [[ "$s" =~ ^[0-9]+$ ]] || { printf 'unknown'; return 0; }
+  if   [[ "$s" -lt 60 ]];    then printf '%ss' "$s"
+  elif [[ "$s" -lt 3600 ]];  then printf '%sm %ss' "$(( s / 60 ))" "$(( s % 60 ))"
+  elif [[ "$s" -lt 86400 ]]; then printf '%sh %sm' "$(( s / 3600 ))" "$(( s % 3600 / 60 ))"
+  else printf '%sd %sh' "$(( s / 86400 ))" "$(( s % 86400 / 3600 ))"
+  fi
+  return 0
+}
 
 # Temp files and directories
 #
@@ -78,7 +250,15 @@ cleanup_tmp() {
 # EXIT covers a normal end and a die; INT and TERM re-exit with the signal's
 # conventional status, which fires the EXIT trap in turn - cleanup_tmp is
 # idempotent, so running twice costs nothing.
-trap cleanup_tmp EXIT
+on_exit() {
+  local rc=$?
+  cleanup_tmp
+  write_state "$rc" || true
+  notify_failure "$rc" || true
+  return 0
+}
+
+trap on_exit EXIT
 trap 'cleanup_tmp; exit 130' INT
 trap 'cleanup_tmp; exit 143' TERM
 
@@ -139,6 +319,20 @@ detect_arch() {
 
 # Package state
 
+# brew's own words about what just went wrong. Every brew call here sends its
+# output to BREW_LOG rather than /dev/null: 'failed - brew install failed' is
+# no use in a log file nobody was watching, which is every run the launchd
+# agent makes. The Error: line if there is one, the last line otherwise.
+brew_error() {   # brew_error <logfile>
+  local line
+  line="$(grep -m1 '^Error:' "$1" 2>/dev/null || true)"
+  [[ -n "$line" ]] || line="$(grep -v '^[[:space:]]*$' "$1" 2>/dev/null | tail -1 || true)"
+  line="${line#Error: }"
+  line="$(tr -d '\r' <<< "$line")"
+  [[ "${#line}" -gt 90 ]] && line="${line:0:87}..."
+  printf '%s' "${line:-no output}"
+}
+
 brew_formula_installed() {
   "$BREW" list --formula --versions "$1" >/dev/null 2>&1
 }
@@ -171,7 +365,15 @@ Usage: bootstrap.sh [options]
   --list-packages    Print every package name in every group and exit - for
                      when you know something is in here somewhere but not
                      which group.
+  --status           Print what the last real run did and exit. Exits 1 if
+                     that run failed, so a check can use it.
   --skip-upgrade     Install what is missing, leave installed versions alone.
+  --skip-cask-upgrade
+                     Upgrade formulae but not casks. What the launchd agent
+                     passes: a cask that wants an admin password cannot ask
+                     for one from an unattended run.
+  --skip-cleanup     Leave stale downloads and superseded versions on disk.
+  --skip-schedule    Leave the launchd agent alone.
   --skip-vscode-extensions
                      Install none of the VS Code extensions in the manifest.
   --skip-update-check
@@ -187,6 +389,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)      DRY_RUN=yes ;;
     --skip-upgrade) SKIP_UPGRADE=yes ;;
+    --skip-cask-upgrade) SKIP_CASK_UPGRADE=yes ;;
+    --skip-cleanup) SKIP_CLEANUP=yes ;;
+    --skip-schedule) SKIP_SCHEDULE=yes ;;
     --skip-vscode-extensions) SKIP_VSCODE_EXT=yes ;;
     --skip-update-check) SKIP_UPDATE_CHECK=yes ;;
     --gui)          GUI_OVERRIDE=yes ;;
@@ -195,12 +400,18 @@ while [[ $# -gt 0 ]]; do
     --groups=*)     ONLY_GROUPS="${1#*=}" ;;
     --list-groups)  LIST_GROUPS=yes ;;
     --list-packages) LIST_PACKAGES=yes ;;
+    --status)       STATUS_ONLY=yes ;;
     --version)      echo "$BOOTSTRAP_VERSION"; exit 0 ;;
     -h|--help)      usage; exit 0 ;;
     *)              die "unknown option: $1 (try --help)" ;;
   esac
   shift
 done
+
+if [[ "$STATUS_ONLY" == "yes" ]]; then
+  print_status
+  exit "$STATUS_RC"
+fi
 
 # Arrays, the bash 3.2 way
 group_array() {   # group_array <dest> <source-array-name>
@@ -229,7 +440,7 @@ source "$MANIFEST"
 
 for required in PKG_GROUPS MANUAL HELD TOOLS TAPS \
                 ZSH_ENABLED VSCODE_EXTENSIONS \
-                GHOSTTY_ENABLED HISTORY_SIZE HISTORY_FILE_SIZE; do
+                GHOSTTY_ENABLED SCHEDULE_ENABLED HISTORY_SIZE HISTORY_FILE_SIZE; do
   declare -p "$required" >/dev/null 2>&1 || die "manifest is missing \$$required: $MANIFEST"
 done
 
@@ -275,6 +486,11 @@ if [[ "${LIST_PACKAGES:-no}" == "yes" ]]; then
 fi
 
 # Preflight
+#
+# Past this line the run counts: the EXIT trap records what happened, whether
+# it gets to the summary or dies in the middle.
+
+RUN_RECORDING=yes
 
 phase 'Preflight'
 
@@ -322,6 +538,10 @@ else
 fi
 
 BREW="${BREW_PREFIX}/bin/brew"
+
+# Reused by every brew call below rather than one temp file per package: the
+# calls are sequential, so the previous command's output is never wanted again.
+mktemp_tracked BREW_LOG "${TMPDIR:-/tmp}/bootstrap-brew.XXXXXX"
 
 if [[ ! -x "$BREW" ]]; then
   if command -v brew >/dev/null 2>&1; then
@@ -390,10 +610,10 @@ else
       result 'current' "tap: $tap_desc" "$tap_name"
     elif [[ "$DRY_RUN" == "yes" ]]; then
       result 'would-install' "tap: $tap_desc" "$tap_name"
-    elif "$BREW" tap "$tap_name" >/dev/null 2>&1; then
+    elif "$BREW" tap "$tap_name" >"$BREW_LOG" 2>&1; then
       result 'installed' "tap: $tap_desc" "$tap_name"
     else
-      result 'failed' "tap: $tap_desc" "brew tap $tap_name failed"
+      result 'failed' "tap: $tap_desc" "brew tap $tap_name: $(brew_error "$BREW_LOG")"
     fi
   done
 fi
@@ -428,10 +648,10 @@ install_formula() {
     result 'would-install' "$pkg" 'formula'
     return
   fi
-  if "$BREW" install --formula "$pkg" >/dev/null 2>&1; then
+  if "$BREW" install --formula "$pkg" >"$BREW_LOG" 2>&1; then
     result 'installed' "$pkg" "$(brew_formula_version "$pkg")"
   else
-    result 'failed' "$pkg" 'brew install failed'
+    result 'failed' "$pkg" "brew install: $(brew_error "$BREW_LOG")"
   fi
 }
 
@@ -466,10 +686,10 @@ install_cask() {
     result 'would-install' "$token" 'cask'
     return
   fi
-  if "$BREW" install --cask "$token" >/dev/null 2>&1; then
+  if "$BREW" install --cask "$token" >"$BREW_LOG" 2>&1; then
     result 'installed' "$token" "$(brew_cask_version "$token")"
   else
-    result 'failed' "$token" 'brew install --cask failed'
+    result 'failed' "$token" "brew install --cask: $(brew_error "$BREW_LOG")"
   fi
 }
 
@@ -523,22 +743,24 @@ else
     result 'current' 'brew formulae' 'nothing outdated'
   elif [[ "$DRY_RUN" == "yes" ]]; then
     result 'would-upgrade' 'brew formulae' "$n_formulae outdated: $(tr '\n' ' ' <<< "$outdated_formulae")"
-  elif "$BREW" upgrade --formula >/dev/null 2>&1; then
+  elif "$BREW" upgrade --formula >"$BREW_LOG" 2>&1; then
     result 'upgraded' 'brew formulae' "$n_formulae package(s)"
   else
-    result 'failed' 'brew formulae' 'brew upgrade failed'
+    result 'failed' 'brew formulae' "brew upgrade: $(brew_error "$BREW_LOG")"
   fi
 
   outdated_casks="$(brew_outdated --cask)"
   n_casks="$(count_lines "$outdated_casks")"
   if [[ "$n_casks" -eq 0 ]]; then
     result 'current' 'brew casks' 'nothing outdated'
+  elif [[ "$SKIP_CASK_UPGRADE" == "yes" ]]; then
+    result 'skipped' 'brew casks' "$n_casks outdated - --skip-cask-upgrade"
   elif [[ "$DRY_RUN" == "yes" ]]; then
     result 'would-upgrade' 'brew casks' "$n_casks outdated: $(tr '\n' ' ' <<< "$outdated_casks")"
-  elif "$BREW" upgrade --cask >/dev/null 2>&1; then
+  elif "$BREW" upgrade --cask >"$BREW_LOG" 2>&1; then
     result 'upgraded' 'brew casks' "$n_casks app(s)"
   else
-    result 'failed' 'brew casks' 'brew upgrade --cask failed'
+    result 'failed' 'brew casks' "brew upgrade --cask: $(brew_error "$BREW_LOG")"
   fi
 
   self_updating="$(comm -13 \
@@ -546,6 +768,48 @@ else
     <(brew_outdated --cask --greedy | grep . | sort || true) || true)"
   if [[ -n "$self_updating" ]]; then
     result 'present' 'self-updating casks' "$(tr '\n' ' ' <<< "$self_updating")- left to their own updaters"
+  fi
+fi
+
+# Housekeeping
+#
+# Every upgrade leaves the version it replaced in the Cellar and the bottle it
+# downloaded in the cache, and neither is ever read again. On a machine that
+# upgrades itself nightly from the launchd agent below, that is gigabytes a
+# month nobody looks at. `brew cleanup --prune=N` removes exactly those two
+# things: versions no longer linked, and cache entries older than N days.
+#
+# `brew autoremove` is reported and never run. It uninstalls formulae it
+# believes nothing depends on any more, and a formula installed on purpose as
+# a tool is indistinguishable from one pulled in as a dependency and since
+# orphaned - so the list is printed and the decision stays yours.
+
+if [[ "$SKIP_CLEANUP" == "yes" ]]; then
+  phase 'Housekeeping - skipped (--skip-cleanup)'
+elif [[ "${BREW_CLEANUP_ENABLED:-no}" != "yes" ]]; then
+  phase 'Housekeeping - disabled in the manifest'
+else
+  phase 'Housekeeping - superseded versions and stale downloads'
+
+  PRUNE_DAYS="${BREW_CLEANUP_PRUNE_DAYS:-30}"
+  cleanup_preview="$("$BREW" cleanup --prune="$PRUNE_DAYS" --dry-run 2>/dev/null || true)"
+  # `grep -c` exits 1 on no match, which set -e would take as a failure.
+  n_stale="$(grep -c '^Would remove' <<< "$cleanup_preview" || true)"
+  freed="$(sed -n 's/.*free approximately \([0-9.]*[KMGTP]*B\).*/\1/p' <<< "$cleanup_preview" | tail -1)"
+
+  if [[ "$n_stale" -eq 0 ]]; then
+    result 'current' 'brew cleanup' "nothing superseded, nothing cached over ${PRUNE_DAYS} days"
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    result 'would-upgrade' 'brew cleanup' "$n_stale file(s), ${freed:-unknown} to reclaim"
+  elif "$BREW" cleanup --prune="$PRUNE_DAYS" >"$BREW_LOG" 2>&1; then
+    result 'upgraded' 'brew cleanup' "$n_stale file(s) removed, ${freed:-unknown} reclaimed"
+  else
+    result 'failed' 'brew cleanup' "brew cleanup: $(brew_error "$BREW_LOG")"
+  fi
+
+  orphans="$("$BREW" autoremove --dry-run 2>/dev/null | grep -v '^==>' | grep . || true)"
+  if [[ -n "$orphans" ]]; then
+    result 'present' 'unused dependencies' "$(tr '\n' ' ' <<< "$orphans")- brew autoremove, if you agree"
   fi
 fi
 
@@ -1298,6 +1562,146 @@ else
     else
       mv "$NEW_GHOSTTY" "$GHOSTTY_CONF"
       result 'installed' 'ghostty config' "$GHOSTTY_CONF"
+    fi
+  fi
+fi
+
+# Schedule
+#
+# A launchd user agent, the macOS counterpart of the systemd timer on Linux and
+# the scheduled task on Windows. A user agent and not a daemon on purpose: this
+# script refuses to run as root and Homebrew refuses along with it, so the job
+# has to belong to the same uid that owns the prefix.
+#
+# launchd runs a calendar job that came due while the Mac was asleep or shut
+# down as soon as it is awake again, so the time is "about then, or the next
+# time you open the lid" rather than exactly.
+#
+# The agent passes --skip-cask-upgrade: a cask that needs an admin password has
+# nowhere to ask for one in an unattended run and would fail every night.
+# Formulae - the bulk of what moves - still upgrade daily, casks come with the
+# next interactive run, and casks that update themselves were never ours.
+#
+# It also passes --skip-update-check, which only ever prints a line, and needs
+# a terminal to be read from. The script is invoked through /bin/bash rather
+# than run directly, so a checkout whose exec bit did not survive still works.
+
+if [[ "$SKIP_SCHEDULE" == "yes" ]]; then
+  phase 'Schedule - skipped (--skip-schedule)'
+elif [[ "${SCHEDULE_ENABLED:-no}" != "yes" ]]; then
+  phase 'Schedule - disabled in the manifest'
+else
+  phase 'Schedule - daily unattended run'
+
+  SCHEDULE_LABEL="${SCHEDULE_LABEL:-com.github.bootstrap.macos}"
+  SCHEDULE_TIME="${SCHEDULE_TIME:-04:20}"
+  SCHEDULE_LOG_DIR="${SCHEDULE_LOG_DIR:-${HOME}/Library/Logs/bootstrap-macos}"
+  SCHEDULE_KEEP_LOG_DAYS="${SCHEDULE_KEEP_LOG_DAYS:-30}"
+  PLIST="${HOME}/Library/LaunchAgents/${SCHEDULE_LABEL}.plist"
+  LAUNCHD_DOMAIN="gui/$(id -u)"
+
+  # Yesterday's logs, before anything else: the pruning is worth doing even on
+  # a run where the agent itself turns out to be current.
+  if [[ -d "$SCHEDULE_LOG_DIR" ]]; then
+    stale_logs="$(find "$SCHEDULE_LOG_DIR" -type f -name 'bootstrap-*.log' \
+                    -mtime "+${SCHEDULE_KEEP_LOG_DAYS}" 2>/dev/null | wc -l | tr -d ' ')"
+    if [[ "${stale_logs:-0}" -gt 0 ]]; then
+      if [[ "$DRY_RUN" == "yes" ]]; then
+        result 'would-upgrade' 'log pruning' "$stale_logs older than ${SCHEDULE_KEEP_LOG_DAYS} days"
+      else
+        find "$SCHEDULE_LOG_DIR" -type f -name 'bootstrap-*.log' \
+          -mtime "+${SCHEDULE_KEEP_LOG_DAYS}" -delete 2>/dev/null || true
+        result 'upgraded' 'log pruning' "removed $stale_logs older than ${SCHEDULE_KEEP_LOG_DAYS} days"
+      fi
+    fi
+  fi
+
+  if [[ ! "$SCHEDULE_TIME" =~ ^[0-9]{1,2}:[0-9]{2}$ ]]; then
+    result 'failed' "$SCHEDULE_LABEL" "SCHEDULE_TIME is '$SCHEDULE_TIME', want HH:MM"
+  else
+    # 10# so 04:20 is four twenty and not an invalid octal literal, and so the
+    # plist gets <integer>4</integer> rather than <integer>04</integer>.
+    sched_hour=$((10#${SCHEDULE_TIME%%:*}))
+    sched_min=$((10#${SCHEDULE_TIME##*:}))
+
+    # Only the values interpolated below can carry an & or a < - the command
+    # itself is fixed, and reaches the job through environment variables rather
+    # than being pasted together with paths.
+    xml_escape() {
+      printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+    }
+
+    mktemp_tracked NEW_PLIST "${TMPDIR:-/tmp}/bootstrap-launchagent.XXXXXX"
+    cat > "$NEW_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$(xml_escape "$SCHEDULE_LABEL")</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <string>mkdir -p "\$BOOTSTRAP_LOG_DIR" &amp;&amp; exec /bin/bash "\$BOOTSTRAP_SCRIPT" --skip-update-check --skip-cask-upgrade &gt;&gt; "\$BOOTSTRAP_LOG_DIR/bootstrap-\$(date +%Y-%m-%d).log" 2&gt;&amp;1</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>BOOTSTRAP_SCRIPT</key>
+    <string>$(xml_escape "${SCRIPT_DIR}/bootstrap.sh")</string>
+    <key>BOOTSTRAP_LOG_DIR</key>
+    <string>$(xml_escape "$SCHEDULE_LOG_DIR")</string>
+    <key>PATH</key>
+    <string>$(xml_escape "${BREW_PREFIX}/bin:${BREW_PREFIX}/sbin:${HOME}/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin")</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>$(xml_escape "$SCRIPT_DIR")</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>${sched_hour}</integer>
+    <key>Minute</key>
+    <integer>${sched_min}</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LowPriorityIO</key>
+  <true/>
+</dict>
+</plist>
+PLIST
+
+    agent_loaded=no
+    launchctl list "$SCHEDULE_LABEL" >/dev/null 2>&1 && agent_loaded=yes
+    plist_same=no
+    [[ -f "$PLIST" ]] && cmp -s "$NEW_PLIST" "$PLIST" && plist_same=yes
+
+    if [[ "$plist_same" == "yes" && "$agent_loaded" == "yes" ]]; then
+      result 'current' "$SCHEDULE_LABEL" "daily at $SCHEDULE_TIME, logs in $SCHEDULE_LOG_DIR"
+    elif [[ "$DRY_RUN" == "yes" ]]; then
+      sched_action='would-install'
+      [[ -f "$PLIST" ]] && sched_action='would-upgrade'
+      result "$sched_action" "$SCHEDULE_LABEL" "daily at $SCHEDULE_TIME"
+    else
+      sched_action='installed'
+      [[ -f "$PLIST" ]] && sched_action='upgraded'
+      mkdir -p "${HOME}/Library/LaunchAgents" "$SCHEDULE_LOG_DIR"
+      mv "$NEW_PLIST" "$PLIST"
+      chmod 0644 "$PLIST"
+      # bootout first: launchctl will not replace a job that is already loaded,
+      # and a bootout of something absent is an error worth ignoring.
+      launchctl bootout "${LAUNCHD_DOMAIN}/${SCHEDULE_LABEL}" >/dev/null 2>&1 || true
+      if launchctl bootstrap "$LAUNCHD_DOMAIN" "$PLIST" >/dev/null 2>&1; then
+        result "$sched_action" "$SCHEDULE_LABEL" "daily at $SCHEDULE_TIME, logs in $SCHEDULE_LOG_DIR"
+      elif launchctl load -w "$PLIST" >/dev/null 2>&1; then
+        # The pre-10.11 spelling, and the one that still works over ssh where
+        # there is no gui domain to bootstrap into.
+        result "$sched_action" "$SCHEDULE_LABEL" "daily at $SCHEDULE_TIME, loaded with launchctl load"
+      else
+        result 'failed' "$SCHEDULE_LABEL" "written to $PLIST, but launchctl would not load it"
+      fi
     fi
   fi
 fi

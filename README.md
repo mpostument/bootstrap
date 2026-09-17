@@ -44,6 +44,8 @@ Homebrew, and not under `sudo`.
 - Declarative: what gets installed lives in a manifest, not in code.
 - Software owned by another installer is detected and reported, never touched.
 - Never destructive: installs and upgrades only, and backs up config it replaces.
+  The one thing pruned is what an upgrade superseded - old versions and
+  download caches - and only where the manifest asks for it.
 
 ## Checks
 

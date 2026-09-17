@@ -15,6 +15,100 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.36.0]
+
+### Added
+
+- **`--status`: what did the last run do?** 1.35.0 added a launchd agent that
+  runs at 04:20 and writes to a log file, which is to say it added a run nobody
+  watches. Answering "did last night's work?" meant opening
+  `~/Library/Logs/bootstrap-macos/bootstrap-<date>.log` and reading to the
+  bottom, which is exactly the thing nobody does until something has been
+  broken for a week.
+
+  Every real run now leaves a record in
+  `${XDG_STATE_HOME:-~/.local/state}/bootstrap-macos/last-run` - when, how
+  long, the exit code, whether it was interactive, the counts, and the id of
+  every step that failed. `--status` reads it back in the same format the run
+  prints, and exits 1 if that run failed, so it works as a check rather than
+  only as something to read.
+
+  Written from the `EXIT` trap rather than at the end of the summary: a run
+  that dies in preflight is exactly the run worth knowing about, and recording
+  only at the end would have left yesterday's success sitting there looking
+  current. `die` now keeps its message for the record, so an aborted run says
+  `aborted  unknown group: nosuchgroup` rather than a bare `exit 1`.
+
+  A dry run never writes the record. A dry run is a question, and it should not
+  overwrite the answer to the last real one.
+
+- **One notification when an unattended run fails.**
+  `SCHEDULE_NOTIFY_ON_FAILURE=yes` in the manifest posts a Notification Center
+  banner naming the count and the log file, or the abort message if the run
+  died. Only unattended runs - an interactive run has already printed its
+  failures in red, and a banner on top of that is noise - and only where
+  `osascript` has a GUI session to post into, so an ssh login stays quiet.
+
+## [1.35.0]
+
+### Added
+
+- **A daily unattended run, as a launchd user agent.** The last of the three
+  platforms to get one: Linux has had a systemd timer and Windows a scheduled
+  task for releases, and macOS had nothing, so a Mac only updated on the days
+  somebody remembered to run this by hand. `SCHEDULE_*` in the manifest now
+  writes `~/Library/LaunchAgents/com.github.bootstrap.macos.plist` and loads
+  it, and `--skip-schedule` leaves it alone for one run.
+
+  A user agent and not a daemon, because this script refuses to run as root
+  and Homebrew refuses along with it - the job has to be the uid that owns the
+  prefix. launchd starts a calendar job that came due while the Mac was asleep
+  as soon as it is awake again, so `SCHEDULE_TIME` means "about then".
+
+  The agent passes `--skip-cask-upgrade`. A cask whose upgrade shells out to
+  `sudo` - `dotnet-sdk` and anything else with a `pkg` artifact - has no tty to
+  ask for a password from and would fail every single night; formulae, which
+  is most of what moves, still upgrade daily, casks that update themselves were
+  never ours to begin with, and the rest come with the next interactive run.
+  A launchd job also inherits almost no environment, so the plist sets `PATH`
+  to the Homebrew prefix, `~/.local/bin` and the system directories, otherwise
+  the mise, bat, carapace and git phases would all report their tool missing.
+
+  One `bootstrap-YYYY-MM-DD.log` per run in `SCHEDULE_LOG_DIR`, pruned after
+  `SCHEDULE_KEEP_LOG_DAYS` - the same arrangement as the Windows task, and the
+  reason the plist runs the script through `bash -c` with a redirect rather
+  than `StandardOutPath`, which cannot put the date in a file name.
+
+- **`--skip-cask-upgrade`**, above, is a flag of its own and not only what the
+  agent passes: useful on any run where the formulae matter and the 2 GB of
+  desktop apps do not.
+
+- **Housekeeping: `brew cleanup`.** Every upgrade leaves the version it
+  replaced in the Cellar and the bottle it downloaded in the cache, and nothing
+  reads either again. This machine had 141 such files and 7.3 GB when the phase
+  was first written - and that is *before* a nightly agent starts upgrading
+  without anyone watching, which is what made this worth doing now.
+  `BREW_CLEANUP_ENABLED` and `BREW_CLEANUP_PRUNE_DAYS` in the manifest,
+  `--skip-cleanup` for one run.
+
+  `brew autoremove` is printed and never run, which is the same line this
+  script takes with `HELD`: it uninstalls formulae it believes nothing depends
+  on any more, and a formula installed on purpose as a tool is indistinguishable
+  from one orphaned by a dependency change. The list is reported; the decision
+  is yours.
+
+### Changed
+
+- **A failed brew call now says what brew said.** Every `brew install`,
+  `upgrade`, `tap` and `cleanup` here sent its output to `/dev/null` and
+  reported `failed  <package>  brew install failed` - true, and of no use to
+  anyone. The output goes to a scratch file instead (one, reused: the calls are
+  sequential), and a failure reports brew's own `Error:` line, or the last line
+  if there is none. "Cannot install under Rosetta 2 in ARM default prefix" is a
+  diagnosis; "brew install failed" is a shrug. This matters more from this
+  release on, because the launchd agent's failures are read hours later out of
+  a log file, if at all.
+
 ## [1.34.0]
 
 ### Fixed
