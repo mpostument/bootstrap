@@ -15,6 +15,41 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.2]
+
+### Fixed
+
+- **Housekeeping still stopped mid-phase, past the journal fix in 1.34.1.**
+  The actual point of failure was the very next line: `flatpak uninstall
+  --unused --dry-run`. `uninstall` has never had a `--dry-run` - that flag
+  exists only on `flatpak prune`, for an unrelated purpose (pruning the
+  OSTree object store, not listing installed-but-unused runtime refs) - so
+  the command errored with `Unknown option --dry-run` every time, and the
+  same `pipefail`/`set -e`/`2>/dev/null` combination silenced it. There is
+  no safe read-only substitute: `--noninteractive` implies `--assumeyes` on
+  `--unused`, so scripting around the missing flag risked doing the removal
+  this phase promises never to do. The check is gone; `flatpak uninstall
+  --unused` by hand is still there to run and review before answering yes.
+
+- **`--doctor` misjudged three things that were actually fine.** `7zip`'s
+  expected command was hardcoded to `7zz` - that name is macOS's; apt's own
+  `7zip` package puts `7z` on PATH here. `~/.dotnet/tools` was checked
+  against PATH unconditionally, when the shell fragment itself only adds it
+  once `dotnet tool install -g` has created the directory - its absence is
+  the fragment working as intended, not broken. And carapace's completer
+  was checked for a function named `_carapace`; carapace 1.7 defines
+  `_carapace_completer` instead, so a working completer was reported as
+  never initialised.
+
+- **`@releases` tools disappeared under WSL and other NAT'd or shared
+  addresses.** Each one calls GitHub's API once, unauthenticated, to read
+  its latest tag - 60 requests/hour per source IP, easy to spend across the
+  20-plus tools this platform installs that way, and every one queued
+  behind the first failure came back `failed` and was never installed, not
+  just delayed. `GITHUB_TOKEN`/`GH_TOKEN` (read the same as `gh` itself
+  reads them) or a `gh auth login` raise that to 5000/hour; either is now
+  picked up automatically, computed once per run rather than per tool.
+
 ## [1.34.1]
 
 ### Fixed

@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.37.0'
+BOOTSTRAP_VERSION='1.37.1'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -326,8 +326,31 @@ trap 'cleanup_tmp; exit 130' INT
 trap 'cleanup_tmp; exit 143' TERM
 
 
+# GitHub's unauthenticated API allows 60 requests/hour per source IP - shared
+# with anything else on the same address hitting api.github.com that hour.
+# An authenticated request gets 5000/hour. GITHUB_TOKEN/GH_TOKEN (what `gh`
+# itself reads) needs nothing new set if either is already exported;
+# `gh auth token` is tried next, if the CLI is installed and logged in - a
+# local, no-network read of its stored credential. Empty when neither is
+# available, same as today.
+#
+# Computed once, here, rather than lazily inside github_latest_tag: that
+# function is always called as `x="$(github_latest_tag ...)"`, which runs it
+# in a subshell, and a subshell's writes to a global never reach back out -
+# lazy memoization there would silently redo this, `gh auth token` included,
+# on every single tool.
+GITHUB_AUTH_HEADER=''
+_github_token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+if [[ -z "$_github_token" ]] && command -v gh >/dev/null 2>&1; then
+  _github_token="$(gh auth token 2>/dev/null || true)"
+fi
+[[ -n "$_github_token" ]] && GITHUB_AUTH_HEADER="Authorization: Bearer $_github_token"
+unset _github_token
+
 github_latest_tag() {   # github_latest_tag <owner/repo>
-  curl -fsSL "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
+  local -a auth=()
+  [[ -n "$GITHUB_AUTH_HEADER" ]] && auth=(-H "$GITHUB_AUTH_HEADER")
+  curl -fsSL "${auth[@]}" "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
     | grep -m1 '"tag_name"' \
     | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || true
 }
@@ -647,7 +670,7 @@ print -r -- "env:PATH=${PATH}"
 print -r -- "widget:atuin=$(( $+widgets[atuin-search] ))"
 print -r -- "widget:hss=$(( $+widgets[history-substring-search-up] ))"
 print -r -- "fn:fzf-tab=$(( $+functions[fzf-tab-complete] ))"
-print -r -- "fn:carapace=$(( $+functions[_carapace] ))"
+print -r -- "fn:carapace=$(( $+functions[_carapace_completer] ))"
 print -r -- "fn:zoxide=$(( $+functions[__zoxide_z] ))"
 print -r -- "fn:compdef=$(( $+functions[compdef] ))"
 print -r -- "bind:tab=$(bindkey '^I' 2>/dev/null | head -1)"
@@ -729,8 +752,10 @@ doctor_check_shell() {
     *) doctor_broken 'fzf-tab' "Tab runs ${v:-nothing}, not fzf-tab-complete" ;;
   esac
 
+  # carapace 1.7+ defines _carapace_completer, not _carapace - the fragment
+  # registers it with `compdef _carapace_completer <every command it covers>`.
   [[ "$(probe_get 'fn:carapace')" == '1' ]] \
-    && doctor_ok 'carapace' 'the _carapace completer is defined' \
+    && doctor_ok 'carapace' 'the _carapace_completer completer is defined' \
     || doctor_broken 'carapace' 'not initialised in a login shell'
 
   [[ "$(probe_get 'fn:zoxide')" == '1' ]] \

@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.34.1'
+BOOTSTRAP_VERSION='1.34.2'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -376,9 +376,36 @@ trap 'cleanup_tmp; exit 130' INT
 trap 'cleanup_tmp; exit 143' TERM
 
 
+# GitHub's unauthenticated API allows 60 requests/hour per source IP - easy to
+# spend on one run with two dozen-plus @releases tools, especially behind a
+# shared or NAT'd address (WSL included), and each spent request then fails
+# every tool queued behind it for the rest of the hour: the ones that already
+# got their tag stay installed, the rest silently never appear. An
+# authenticated request gets 5000/hour. GITHUB_TOKEN/GH_TOKEN (what `gh`
+# itself reads) needs nothing new set if either is already exported;
+# `gh auth token` is tried next, if the CLI is installed and logged in - a
+# local, no-network read of its stored credential. Empty when neither is
+# available, same as today.
+#
+# Computed once, here, rather than lazily inside github_latest_tag: that
+# function is always called as `x="$(github_latest_tag ...)"`, which runs it
+# in a subshell, and a subshell's writes to a global never reach back out -
+# lazy memoization there would silently redo this, `gh auth token` included,
+# on every single tool.
+GITHUB_AUTH_HEADER=''
+_github_token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+if [[ -z "$_github_token" ]] && command -v gh >/dev/null 2>&1; then
+  _github_token="$(gh auth token 2>/dev/null || true)"
+fi
+[[ -n "$_github_token" ]] && GITHUB_AUTH_HEADER="Authorization: Bearer $_github_token"
+unset _github_token
+
 github_latest_tag() {   # github_latest_tag <owner/repo> [tag prefix]
+  local -a auth=()
+  [[ -n "$GITHUB_AUTH_HEADER" ]] && auth=(-H "$GITHUB_AUTH_HEADER")
+
   if [[ -z "${2:-}" ]]; then
-    curl -fsSL "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
+    curl -fsSL "${auth[@]}" "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
       | grep -m1 '"tag_name"' \
       | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || true
     return
@@ -386,7 +413,7 @@ github_latest_tag() {   # github_latest_tag <owner/repo> [tag prefix]
   # A repository that releases several products has one "latest" for all of
   # them - bitwarden/clients: web, desktop, browser, cli. Take the newest tag
   # that is the prefix and a bare version, which also skips -rc tags.
-  curl -fsSL "https://api.github.com/repos/$1/releases?per_page=50" 2>/dev/null \
+  curl -fsSL "${auth[@]}" "https://api.github.com/repos/$1/releases?per_page=50" 2>/dev/null \
     | grep '"tag_name"' \
     | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' \
     | grep -m1 -E "^${2}[0-9]+(\.[0-9]+)*\$" || true
@@ -680,7 +707,10 @@ doctor_load_tools() {
     case "$can" in
       cifs-utils|exfatprogs) continue ;;
       zoxide) cmd='zoxide' ;;
-      7zip)   cmd='7zz' ;;
+      # The parity table's cmd cell names all three platforms at once
+      # ("7z (macOS: 7zz; Windows: ...)"); apt's own 7zip package puts 7z on
+      # PATH, not 7zz - that name is macOS's.
+      7zip)   cmd='7z' ;;
       *)      cmd="$(printf '%s' "$cmd" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]].*$//')" ;;
     esac
     [[ -z "$cmd" ]] && continue
@@ -711,7 +741,7 @@ print -r -- "env:PATH=${PATH}"
 print -r -- "widget:atuin=$(( $+widgets[atuin-search] ))"
 print -r -- "widget:hss=$(( $+widgets[history-substring-search-up] ))"
 print -r -- "fn:fzf-tab=$(( $+functions[fzf-tab-complete] ))"
-print -r -- "fn:carapace=$(( $+functions[_carapace] ))"
+print -r -- "fn:carapace=$(( $+functions[_carapace_completer] ))"
 print -r -- "fn:zoxide=$(( $+functions[__zoxide_z] ))"
 print -r -- "fn:compdef=$(( $+functions[compdef] ))"
 print -r -- "bind:tab=$(bindkey '^I' 2>/dev/null | head -1)"
@@ -790,8 +820,10 @@ doctor_check_shell() {
     *) doctor_broken 'fzf-tab' "Tab runs ${v:-nothing}, not fzf-tab-complete" ;;
   esac
 
+  # carapace 1.7+ defines _carapace_completer, not _carapace - the fragment
+  # registers it with `compdef _carapace_completer <every command it covers>`.
   [[ "$(probe_get 'fn:carapace')" == '1' ]] \
-    && doctor_ok 'carapace' 'the _carapace completer is defined' \
+    && doctor_ok 'carapace' 'the _carapace_completer completer is defined' \
     || doctor_broken 'carapace' 'not initialised in a login shell'
 
   [[ "$(probe_get 'fn:zoxide')" == '1' ]] \
@@ -836,12 +868,23 @@ doctor_check_runtimes() {
 
   path="$(probe_get 'env:PATH')"
   local dir
-  for dir in "${RELEASE_BIN_DIR:-$HOME/.local/bin}" "${HOME}/go/bin" "${HOME}/.dotnet/tools"; do
+  for dir in "${RELEASE_BIN_DIR:-$HOME/.local/bin}" "${HOME}/go/bin"; do
     case ":$path:" in
       *":${dir}:"*) doctor_ok "PATH $dir" 'present' ;;
       *) doctor_broken "PATH $dir" 'missing from a login shell PATH' ;;
     esac
   done
+
+  # The fragment itself only adds this once `dotnet tool install -g` has
+  # created it - nothing else does - so its absence from both disk and PATH
+  # is the fragment working as intended, not broken.
+  dir="${HOME}/.dotnet/tools"
+  if [[ -d "$dir" ]]; then
+    case ":$path:" in
+      *":${dir}:"*) doctor_ok "PATH $dir" 'present' ;;
+      *) doctor_broken "PATH $dir" 'missing from a login shell PATH' ;;
+    esac
+  fi
 }
 
 doctor_config() {   # doctor_config <label> <repo copy> <deployed path>
@@ -1396,13 +1439,13 @@ else
     result 'present' 'unused packages' "${orphans}- apt autoremove, if you agree"
   fi
 
-  if command -v flatpak >/dev/null 2>&1; then
-    unused="$(flatpak uninstall --unused --dry-run 2>/dev/null \
-                | sed -n 's/^[[:space:]]*[0-9]*\.[[:space:]]*\([^[:space:]]*\).*/\1/p' | tr '\n' ' ')"
-    if [[ -n "${unused// /}" ]]; then
-      result 'present' 'unused runtimes' "${unused}- flatpak uninstall --unused, if you agree"
-    fi
-  fi
+  # No flatpak equivalent of the apt block above: `uninstall` has never had a
+  # --dry-run - that flag exists only on `flatpak prune`, which prunes the
+  # OSTree object store, not installed-but-unused runtime refs. The nearest
+  # real preview would be reading `--unused`'s own confirmation prompt, but
+  # that prompt defaults to yes on --noninteractive and on EOF, so scripting
+  # around it risks doing the removal this phase promises never to do.
+  # `flatpak uninstall --unused` by hand is still the way to check.
 
   # The journal is where every unattended run's output ends up, and it is the
   # one thing here that grows without anybody installing anything. Reported
@@ -1737,7 +1780,9 @@ if [[ "${GHOSTTY_ENABLED:-no}" == "yes" && -n "${GHOSTTY_DEB_REPO:-}" ]]; then
   elif [[ -z "$ghostty_suffix" ]]; then
     result 'missing' 'ghostty' "no community .deb for $OS_ID"
   else
-    ghostty_url="$(curl -fsSL "https://api.github.com/repos/${GHOSTTY_DEB_REPO}/releases/latest" 2>/dev/null \
+    ghostty_auth=()
+    [[ -n "$GITHUB_AUTH_HEADER" ]] && ghostty_auth=(-H "$GITHUB_AUTH_HEADER")
+    ghostty_url="$(curl -fsSL "${ghostty_auth[@]}" "https://api.github.com/repos/${GHOSTTY_DEB_REPO}/releases/latest" 2>/dev/null \
       | grep -o '"browser_download_url": *"[^"]*"' | sed 's/.*"\(https[^"]*\)"$/\1/' \
       | grep "_${ghostty_suffix}\.deb\$" | head -1 || true)"
     ghostty_want="$(basename "${ghostty_url:-none}" .deb | cut -s -d_ -f2)"

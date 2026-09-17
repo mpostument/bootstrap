@@ -1,0 +1,16 @@
+# crate-ci/typos config: https://github.com/crate-ci/typos
+#
+# Both entries below are real shell/terminfo tokens the dictionary mistakes
+# for misspellings - correcting either would break the code they are in.
+
+[default.extend-words]
+# terminfo(5) capability name for the End key, read as `${terminfo[kend]}`
+# in linux/bootstrap.sh's and macos/bootstrap.sh's zsh keybindings.
+# Not a typo of "kind".
+kend = "kend"
+
+[default.extend-identifiers]
+# zsh `print` flags: -P expands prompt escapes, -n suppresses the trailing
+# newline - `print -Pn '\e]2;...'` sets the terminal tab title.
+# Not a typo of "On".
+Pn = "Pn"

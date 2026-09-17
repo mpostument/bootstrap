@@ -15,6 +15,23 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.37.1]
+
+### Fixed
+
+- **`github_latest_tag` was unauthenticated.** GitHub's API allows 60
+  requests/hour per source IP without a token, shared with anything else on
+  the same address; every release-tracked tool this call is used for is
+  one more request against that budget. `GITHUB_TOKEN`/`GH_TOKEN` (read the
+  same as `gh` itself reads them) or a `gh auth login` raise that to
+  5000/hour; either is now picked up automatically, computed once per run
+  rather than per tool.
+
+- **`--doctor`'s carapace check looked for the wrong function.** carapace
+  1.7 defines `_carapace_completer`, not `_carapace` - the fragment
+  registers it with `compdef _carapace_completer <every command it
+  covers>`. A working completer was reported as never initialised.
+
 ## [1.37.0]
 
 ### Removed
