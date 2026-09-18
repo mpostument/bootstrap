@@ -15,6 +15,21 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.38.1]
+
+### Fixed
+
+- **Tab on a directory path stopped listing anything.** `cat scripts/aws/<Tab>`
+  drew an fzf pane reading `0/14` with fourteen matches and an empty list.
+  carapace completes paths by giving zsh the bare file name to display and the
+  full path as the value, with no `compadd` prefix; fzf-tab finds no prefix to
+  strip and seeds the fzf query with the whole typed word, so fzf searched for
+  `scripts/aws/` among names like `import.py` and matched none of them. The
+  fragment now sets `zstyle ':fzf-tab:*' query-string prefix`, which seeds the
+  query from the candidates' common prefix - the right answer with or without
+  carapace, and the reason this only ever bit paths deep enough to have a
+  slash in them.
+
 ## [1.38.0]
 
 ### Added

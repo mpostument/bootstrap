@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.35.0'
+BOOTSTRAP_VERSION='1.35.1'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -2310,6 +2310,14 @@ FZF_FILES
         echo "  zstyle ':completion:*:*:*:*:*' menu no"
         echo "  zstyle ':fzf-tab:*' fzf-flags --height=60% --layout=reverse --border --cycle"
         echo "  zstyle ':fzf-tab:*' switch-group ',' '.'"
+        # carapace hands zsh the bare file name to display and the full path as
+        # the value, without a compadd prefix. fzf-tab then finds no prefix to
+        # strip and seeds the fzf query with the whole typed word, so
+        # `cat scripts/aws/<Tab>` searches for "scripts/aws/" among names like
+        # "import.py" and shows 0/14 with an empty list. Seed the query from the
+        # candidates' common prefix instead, which is the right answer with or
+        # without carapace.
+        echo "  zstyle ':fzf-tab:*' query-string prefix"
         echo '  # git checkout offers refs in a meaningful order already; sorting'
         echo '  # them alphabetically buries the branch you just left.'
         echo "  zstyle ':completion:*:git-checkout:*' sort false"
