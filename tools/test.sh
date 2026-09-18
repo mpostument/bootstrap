@@ -61,6 +61,24 @@ extract_func() {   # extract_func <file> <name>
   sed -n "/^$2() {/,/^}/p" "$1"
 }
 
+# A path a native Windows program can open. Git Bash hands out /f/work-style
+# paths, which pwsh and python.exe read as F:\f\work - a directory that does
+# not exist. cygpath is there exactly where that happens; elsewhere the path is
+# already native. parity.sh does the same for the same reason.
+native_path() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi
+}
+
+# A python that runs, not merely one on PATH: Windows puts python3 and python
+# there as Microsoft Store stubs that print an install hint and exit non-zero,
+# while the real interpreter answers to the py launcher.
+PYTHON=()
+for cand in python3 python 'py -3'; do
+  read -ra words <<< "$cand"
+  if "${words[@]}" -c 'import sys' >/dev/null 2>&1; then PYTHON=("${words[@]}"); break; fi
+done
+unset cand words
+
 # ---------------------------------------------------------------- durations --
 #
 # Three implementations print the same thing or the rounding is wrong
@@ -124,7 +142,7 @@ DRIVER
   printf '\n\n   \n' > "$TMP/log3"
   is 'says something even when brew said nothing' 'no output' "$(bash "$TMP/be.sh" "$TMP/log3")"
 
-  python3 -c "print('x' * 300)" > "$TMP/log4"
+  printf 'x%.0s' {1..300} > "$TMP/log4"; echo >> "$TMP/log4"
   long="$(bash "$TMP/be.sh" "$TMP/log4")"
   is 'a wall of text is truncated to fit a result line' '90' "${#long}"
 fi
@@ -427,7 +445,9 @@ HARNESS
     bad 'the heredoc runs' 'a written plist' 'the generator failed'
   fi
 
-  if python3 - "$TMP/agent.plist" <<'PY'
+  if [[ ${#PYTHON[@]} -eq 0 ]]; then
+    skip 'it parses as a plist, with the values the agent needs' 'no working python'
+  elif "${PYTHON[@]}" - "$(native_path "$TMP/agent.plist")" <<'PY'
 import sys, plistlib
 with open(sys.argv[1], 'rb') as fh:
     plist = plistlib.load(fh)
@@ -566,18 +586,23 @@ if section 'powershell'; then
     skip 'windows/*.ps1 parse' 'pwsh is not installed'
     skip 'Format-Duration matches the shell implementation' 'pwsh is not installed'
   else
+    root_native="$(native_path "$ROOT")"
+    # Zero files is a failure, not a pass: with a path pwsh could not resolve,
+    # this loop used to find nothing, count no errors and report 'parsed'.
     parse_out="$(pwsh -NoProfile -Command "
       \$bad = 0
-      foreach (\$file in Get-ChildItem '${ROOT}/windows/*.ps1') {
+      \$files = @(Get-ChildItem '${root_native}/windows/*.ps1')
+      foreach (\$file in \$files) {
         \$errors = \$null
         [void][System.Management.Automation.Language.Parser]::ParseFile(\$file.FullName, [ref]\$null, [ref]\$errors)
         if (\$errors.Count) { \$bad++; Write-Output \"\$(\$file.Name): \$(\$errors[0].Message)\" }
       }
-      if (\$bad -eq 0) { Write-Output 'parsed' }" 2>&1)"
+      if (\$files.Count -eq 0) { Write-Output 'no .ps1 files found under ${root_native}/windows' }
+      elseif (\$bad -eq 0) { Write-Output 'parsed' }" 2>&1)"
     is 'windows/*.ps1 parse' 'parsed' "$(tail -1 <<< "$parse_out")"
 
     dur_out="$(pwsh -NoProfile -Command "
-      \$src = Get-Content -Raw '${ROOT}/windows/bootstrap.ps1'
+      \$src = Get-Content -Raw '${root_native}/windows/bootstrap.ps1'
       \$start = \$src.IndexOf('function Format-Duration')
       \$end = \$src.IndexOf('function Write-RunRecord')
       Invoke-Expression \$src.Substring(\$start, \$end - \$start)
