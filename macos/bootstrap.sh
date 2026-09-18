@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.37.1'
+BOOTSTRAP_VERSION='1.38.0'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -841,6 +841,13 @@ doctor_check_configs() {
     doctor_broken 'bat config' 'bat is not installed, so nothing reads the theme'
   fi
 
+  if command -v tldr >/dev/null 2>&1; then
+    doctor_config 'tealdeer config' "${SCRIPT_DIR}/../tealdeer/config.toml" \
+                  "${XDG_CONFIG_HOME:-$HOME/.config}/tealdeer/config.toml"
+  else
+    doctor_broken 'tealdeer config' 'tldr is not installed'
+  fi
+
   if [[ "${GHOSTTY_ENABLED:-no}" == "yes" ]]; then
     [[ -r "${HOME}/.config/ghostty/config" ]] \
       && doctor_ok 'ghostty config' "${HOME}/.config/ghostty/config" \
@@ -1500,6 +1507,21 @@ export FZF_DEFAULT_OPTS="\
   --color=selected-bg:#45475a,border:#6c7086,label:#cdd6f4"
 FZF_OPTS
       echo
+      # fzf's file source and previews. fd rather than fzf's own walker: it
+      # honours .gitignore, so Ctrl-T inside a repo does not wade through
+      # node_modules or build output. --hidden keeps .env and .github
+      # findable; .git itself is only noise. Ctrl-T previews a file in bat,
+      # Alt-C a directory as an eza tree.
+      cat <<'FZF_FILES'
+if command -v fd >/dev/null; then
+  export FZF_DEFAULT_COMMAND="fd --type f --hidden --follow --exclude .git"
+  export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
+  export FZF_ALT_C_COMMAND="fd --type d --hidden --follow --exclude .git"
+fi
+command -v bat >/dev/null && export FZF_CTRL_T_OPTS="--preview 'bat --color=always --style=numbers --line-range=:300 {}' --preview-window=right,60%,border-left"
+command -v eza >/dev/null && export FZF_ALT_C_OPTS="--preview 'eza --tree --level=2 --color=always --icons=auto {} | head -200'"
+FZF_FILES
+      echo
       # What the omz fzf plugin did: Ctrl-R, Ctrl-T, Alt-C and fzf's own
       # completion. Before atuin further down, which takes Ctrl-R back.
       echo 'command -v fzf >/dev/null && source <(fzf --zsh)'
@@ -1662,6 +1684,8 @@ FZF_OPTS
       # xh is curl for JSON APIs; xhs is xh --https, a symlink upstream.
       echo 'command -v xh     >/dev/null && alias http="xh"'
       echo 'command -v xh     >/dev/null && alias https="xh --https"'
+      echo 'command -v lazygit >/dev/null && alias lg="lazygit"'
+      echo 'command -v lazydocker >/dev/null && alias lzd="lazydocker"'
       # sd deliberately gets no `sed` alias: its pattern and replacement syntax
       # is not sed's, so anything pasted from a script would quietly do
       # something else. It is called as sd.
@@ -1845,6 +1869,20 @@ else
                 "${HOME}/.config/atuin/config.toml" 'atuin config.toml'
   deploy_config "${ATUIN_SOURCE}/themes/catppuccin-mocha.toml" \
                 "${HOME}/.config/atuin/themes/catppuccin-mocha.toml" 'atuin theme'
+fi
+
+# tealdeer config - turns on auto_update: the tldr pages download on first use
+# and refresh themselves every 30 days. tldr itself is never run here; with
+# that key set, any tldr call can reach the network, a dry run's included.
+# Since tealdeer 1.9 the XDG path wins on macOS too; ~/Library/Application
+# Support/tealdeer is only read when the XDG one does not exist.
+TEALDEER_SOURCE="${SCRIPT_DIR}/../tealdeer"
+phase 'tealdeer config'
+if ! command -v tldr >/dev/null 2>&1; then
+  result 'missing' 'tealdeer config' 'tldr is not installed'
+else
+  deploy_config "${TEALDEER_SOURCE}/config.toml" \
+                "${XDG_CONFIG_HOME:-$HOME/.config}/tealdeer/config.toml" 'tealdeer config'
 fi
 
 # bat config - the theme bat, and through it delta, render with

@@ -66,7 +66,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '1.41.1'
+$script:BootstrapVersion = '1.42.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -80,6 +80,7 @@ $script:ProfileSource = Join-Path $script:ToolRoot 'profile.ps1'
 $script:StarshipTomlSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'starship.toml'
 $script:AtuinSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'atuin'
 $script:BatSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'bat'
+$script:TealdeerSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'tealdeer'
 $script:CarapaceSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'carapace'
 $script:MergeScript = Join-Path $script:ToolRoot 'merge-terminal-settings.ps1'
 $script:MpvSource = Join-Path $script:ToolRoot 'mpv'
@@ -625,6 +626,8 @@ function Test-DoctorConfig {
            Target = (Join-Path $env:USERPROFILE '.config\starship.toml') }
         @{ Label = 'atuin config'; Source = (Join-Path $script:AtuinSource 'config.toml')
            Target = (Join-Path $env:USERPROFILE '.config\atuin\config.toml') }
+        @{ Label = 'tealdeer config'; Source = (Join-Path $script:TealdeerSource 'config.toml')
+           Target = (Join-Path $env:APPDATA 'tealdeer\config\config.toml') }
     )
     foreach ($pair in $pairs) {
         if (-not (Test-Path -LiteralPath $pair.Target)) {
@@ -1676,6 +1679,18 @@ if ($SkipShell) {
     Deploy-ManagedFile -Source (Join-Path $script:AtuinSource 'themes\catppuccin-mocha.toml') `
         -Target (Join-Path $env:USERPROFILE '.config\atuin\themes\catppuccin-mocha.toml') `
         -Group 'shell' -Label 'atuin theme'
+
+    # tealdeer config: turns on auto_update, so the tldr pages download on first
+    # use and refresh themselves every 30 days. tldr itself is never run here -
+    # with that key set, even `tldr --show-paths` can reach the network, so the
+    # path is tealdeer's own rule: %APPDATA%\tealdeer\config.
+    if (Get-Command tldr -ErrorAction SilentlyContinue) {
+        Deploy-ManagedFile -Source (Join-Path $script:TealdeerSource 'config.toml') `
+            -Target (Join-Path $env:APPDATA 'tealdeer\config\config.toml') `
+            -Group 'shell' -Label 'tealdeer config'
+    } else {
+        Add-Result -Group 'shell' -Id 'tealdeer config' -Action 'missing' -Detail 'tldr is not installed'
+    }
 
     # bat config: the theme bat, and through it delta, renders with. bat reads
     # %APPDATA%\bat on Windows, which is what `bat --config-dir` reports.

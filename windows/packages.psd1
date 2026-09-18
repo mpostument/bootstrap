@@ -40,6 +40,8 @@
                 'ducaale.xh'
                 'MrKaran.Doggo'
                 'JesseDuffield.lazygit'
+                'JesseDuffield.Lazydocker'
+                'dbrgn.tealdeer'
             )
         }
 

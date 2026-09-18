@@ -48,6 +48,18 @@ $env:FZF_DEFAULT_OPTS = @(
     '--color=selected-bg:#45475a,border:#6c7086,label:#cdd6f4'
 ) -join ' '
 
+# Previews: Ctrl+T shows the file in bat, Alt+C the directory as an eza tree.
+# PSFzf appends these to FZF_DEFAULT_OPTS for that one key. The file list itself
+# stays PSFzf's default - fzf's native walker, relative paths from the path under
+# the cursor; its fd mode would insert absolute ones. fzf runs the preview through
+# cmd.exe, hence no `| head` after eza - --level=2 is what bounds it.
+if (Get-Command bat -ErrorAction SilentlyContinue) {
+    $env:FZF_CTRL_T_OPTS = "--preview 'bat --color=always --style=numbers --line-range=:300 {}' --preview-window=right,60%,border-left"
+}
+if (Get-Command eza -ErrorAction SilentlyContinue) {
+    $env:FZF_ALT_C_OPTS = "--preview 'eza --tree --level=2 --color=always --icons=auto {}'"
+}
+
 # PSFzf -- fuzzy history (Ctrl+R), file (Ctrl+T) and git completion
 # https://github.com/kelleyma49/PSFzf
 if (Get-Command fzf -ErrorAction SilentlyContinue) {
@@ -133,6 +145,18 @@ if (Get-Command doggo -ErrorAction SilentlyContinue) {
 if (Get-Command xh -ErrorAction SilentlyContinue) {
     function http { xh @args }
     function https { xh --https @args }
+}
+
+# lazygit -- git TUI; lg is the name its own README suggests.
+# https://github.com/jesseduffield/lazygit
+if (Get-Command lazygit -ErrorAction SilentlyContinue) {
+    function lg { lazygit @args }
+}
+
+# lazydocker -- the same TUI for containers; lzd is its README's name.
+# https://github.com/jesseduffield/lazydocker
+if (Get-Command lazydocker -ErrorAction SilentlyContinue) {
+    function lzd { lazydocker @args }
 }
 
 # sd deliberately gets no `sed` alias: its pattern and replacement syntax is not

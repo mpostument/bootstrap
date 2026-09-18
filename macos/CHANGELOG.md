@@ -15,6 +15,30 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.38.0]
+
+### Added
+
+- **tealdeer (`tldr`)** in the `cli` group. A handful of worked examples per
+  command instead of the man page. Its config (`tealdeer/config.toml`,
+  deployed to `${XDG_CONFIG_HOME:-~/.config}/tealdeer` - the path tealdeer
+  prefers on macOS since 1.9) turns on `auto_update`: the pages download on
+  the first `tldr` call and refresh themselves every 30 days. The bootstrap
+  never runs `tldr` itself - with that key set, even `tldr --show-paths`
+  reaches the network, which a dry run must not. `--doctor` compares the
+  deployed config with the repo copy.
+- **lazydocker** in the `cli` group, aliased `lzd`. lazygit's sibling for
+  containers: logs, restarts, stats and prune in one screen.
+- **`lg` for lazygit.**
+
+### Changed
+
+- **fzf lists files with fd, and previews them.** Ctrl-T and Alt-C walked the
+  tree with fzf's own walker, `node_modules` and build output included, and
+  showed nothing but names. They now take `fd --hidden --exclude .git` -
+  `.gitignore` respected, dotfiles such as `.env` still findable - and Ctrl-T
+  previews the file in bat, Alt-C the directory as an `eza --tree`.
+
 ## [1.37.1]
 
 ### Fixed

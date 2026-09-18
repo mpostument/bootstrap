@@ -1,0 +1,15 @@
+# tealdeer/config.toml - the tldr client's config, deployed identically to all
+# three platforms, the same way atuin's is.
+#
+# Only the keys that differ from tealdeer's defaults are set. Deployed to
+# ${XDG_CONFIG_HOME:-~/.config}/tealdeer on Linux and macOS (the XDG path wins
+# on macOS since tealdeer 1.9) and %APPDATA%\tealdeer\config on Windows.
+
+# Pages are a download, not part of the binary. With this, the first `tldr`
+# call fetches them when there is no cache, and any call whose cache is older
+# than auto_update_interval_hours (default 720 - 30 days) refreshes it first.
+# Without it, a fresh machine answers every lookup with "run tldr --update".
+# It also fires on `tldr --show-paths`, so nothing in the bootstrap calls tldr:
+# a dry run would otherwise download the cache.
+[updates]
+auto_update = true

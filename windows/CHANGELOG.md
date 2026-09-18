@@ -20,6 +20,31 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.42.0]
+
+### Added
+
+- **tealdeer (`tldr`)** in the `cli` group (`dbrgn.tealdeer`). A handful of
+  worked examples per command instead of the man page - with Windows pages of
+  its own: `tldr -p windows robocopy`. Its config (`tealdeer/config.toml`,
+  deployed to `%APPDATA%\tealdeer\config`) turns on `auto_update`: the pages
+  download on the first `tldr` call and refresh themselves every 30 days. The
+  bootstrap never runs `tldr` itself - with that key set, even
+  `tldr --show-paths` reaches the network, which `-WhatIf` must not.
+  `-Doctor` compares the deployed config with the repo copy.
+- **lazydocker** in the `cli` group (`JesseDuffield.Lazydocker`), aliased
+  `lzd` in the profile. lazygit's sibling for containers: logs, restarts,
+  stats and prune in one screen.
+- **`lg` for lazygit** in the profile.
+
+### Changed
+
+- **fzf previews.** Ctrl+T now shows the file in bat beside the list, Alt+C
+  the directory as an `eza --tree`, through `FZF_CTRL_T_OPTS` and
+  `FZF_ALT_C_OPTS`, which PSFzf appends for that key only. The list itself is
+  still PSFzf's default - fzf's native walker, relative paths - rather than
+  PSFzf's fd mode, which would insert absolute ones.
+
 ## [1.41.1]
 
 ### Fixed
