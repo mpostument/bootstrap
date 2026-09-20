@@ -65,6 +65,16 @@ are Homebrew packages here, not separate phases as on Linux.
 `tools` is a zsh function written into the managed fragment: the `cli` group as
 of the last run, with what to type and what it does.
 
+Four fzf pickers sit beside it, defined when fzf is on `PATH`. Each only picks;
+what runs afterwards is an ordinary git or kill command.
+
+| | |
+|---|---|
+| `gb` | switch branch - local and remote, newest first, the log as the preview |
+| `gs` | browse stashes; Enter applies, ctrl-p pops, ctrl-x drops (not defined where Ghostscript owns `gs`) |
+| `fkill [signal]` | pick some of your own processes and signal them, TERM by default |
+| `cheat` | search the `tools` list, preview its tldr page, put the command on the prompt |
+
 ## The manifest
 
 `packages.conf` is sourced as bash. Software is sorted by who owns it:

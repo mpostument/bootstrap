@@ -66,7 +66,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '1.42.1'
+$script:BootstrapVersion = '1.43.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -506,6 +506,12 @@ foreach (`$c in @($list)) {
 `$out += "env:JAVA_HOME=`$env:JAVA_HOME"
 `$prompt = Get-Command prompt -CommandType Function -ErrorAction SilentlyContinue
 `$out += "fn:prompt=`$(if (`$prompt) { `$prompt.Definition -replace '\s+', ' ' } else { '' })"
+foreach (`$n in 'tools', 'gb', 'gs', 'fkill', 'cheat') {
+    `$out += "cmd:`$n=`$(if (Get-Command `$n -ErrorAction SilentlyContinue) { 1 } else { 0 })"
+}
+`$out += "tools:rows=`$(if (`$global:ToolsRows) { @(`$global:ToolsRows).Count } else { 0 })"
+`$gsApp = Get-Command gs -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+`$out += "app:gs=`$(if (`$gsApp) { `$gsApp.Source } else { '' })"
 `$out -join [Environment]::NewLine
 "@
 
@@ -620,6 +626,57 @@ function Test-DoctorRuntimes {
     }
 }
 
+# `tools` and the pickers come from the profile and tools-list.ps1, so a profile
+# that never loaded, or a list that generated empty, shows up here as a missing
+# command instead of as something odd at the prompt. fkill is PSFzf's alias.
+function Test-DoctorWorkflow {
+    if ((Get-ProbeValue 'cmd:tools') -ne '1') {
+        Add-DoctorBroken 'tools' 'no tools function in a profile-loaded shell'
+    } else {
+        $rows = [int](Get-ProbeValue 'tools:rows')
+        if ($rows -gt 0) { Add-DoctorOk 'tools' ('{0} tools listed' -f $rows) }
+        else { Add-DoctorBroken 'tools' 'defined, but its list is empty' }
+    }
+
+    if (-not (Get-ProbeValue 'resolve:fzf')) {
+        Add-DoctorNote 'workflow pickers' 'fzf is not on PATH, so gb, gs, fkill and cheat are not defined'
+        return
+    }
+    foreach ($name in 'gb', 'fkill', 'cheat') {
+        if ((Get-ProbeValue "cmd:$name") -eq '1') { Add-DoctorOk $name 'defined' }
+        else { Add-DoctorBroken $name 'not defined in a profile-loaded shell' }
+    }
+    $ghostscript = Get-ProbeValue 'app:gs'
+    if ($ghostscript) {
+        Add-DoctorNote 'gs' ("not defined on purpose - $ghostscript is Ghostscript's, not the stash picker's")
+    } elseif ((Get-ProbeValue 'cmd:gs') -eq '1') {
+        Add-DoctorOk 'gs' 'defined'
+    } else {
+        Add-DoctorBroken 'gs' 'not defined in a profile-loaded shell'
+    }
+}
+
+# tealdeer fills its page cache on first use (auto_update in tealdeer/config.toml),
+# so an empty cache heals itself and is a note; staleness is worth saying. The
+# directory is read, never asked: even `tldr --show-paths` downloads the pages
+# when they are missing, and a doctor that changes the machine is not one.
+function Test-DoctorTldrCache {
+    if (-not (Get-Command tldr -ErrorAction SilentlyContinue)) { return }
+    $dir = Join-Path $env:LOCALAPPDATA 'tealdeer\cache\tldr-pages'
+    if (-not (Test-Path -LiteralPath $dir)) {
+        Add-DoctorNote 'tldr pages' 'not downloaded yet - the first tldr fetches them'
+        return
+    }
+    $pages = @(Get-ChildItem -LiteralPath $dir -Filter '*.md' -Recurse -File -ErrorAction SilentlyContinue)
+    if ($pages.Count -eq 0) {
+        Add-DoctorNote 'tldr pages' "$dir is empty - the next tldr fetches them"
+    } elseif (-not ($pages | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-30) } | Select-Object -First 1)) {
+        Add-DoctorNote 'tldr pages' ('{0} pages, none newer than 30 days - the next tldr refreshes them' -f $pages.Count)
+    } else {
+        Add-DoctorOk 'tldr pages' ('{0} pages in {1}' -f $pages.Count, $dir)
+    }
+}
+
 function Test-DoctorConfig {
     $pairs = @(
         @{ Label = 'starship.toml'; Source = $script:StarshipTomlSource
@@ -640,6 +697,7 @@ function Test-DoctorConfig {
             Add-DoctorNote $pair.Label ('{0} differs from the repo - the next run would replace it' -f $pair.Target)
         }
     }
+    Test-DoctorTldrCache
 }
 
 function Test-DoctorSchedule {
@@ -677,6 +735,7 @@ function Invoke-Doctor {
 
     Write-Phase 'Doctor - shell integration'
     Test-DoctorShell
+    Test-DoctorWorkflow
 
     Write-Phase 'Doctor - runtimes and PATH'
     Test-DoctorRuntimes
@@ -1012,18 +1071,41 @@ function Get-CliToolsIndex {
     return $index
 }
 
-function Deploy-ToolsList {
-    param([string]$Target)
-    $cliIndex = Get-CliToolsIndex -ParityPath (Join-Path (Split-Path $script:ToolRoot -Parent) 'tools\cli-parity.conf')
-    $cliGroup = $manifest.Groups | Where-Object { $_.Name -eq 'cli' } | Select-Object -First 1
+# The text of tools-list.ps1, from rows of package/command/description. Apart
+# from Deploy-ToolsList so it can be run with a hostile description and read
+# back without the manifest or a machine to write to.
+function New-ToolsListContent {
+    param([object[]]$Rows)
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add('# managed by windows/bootstrap.ps1 - regenerated every run, edits here do not stick')
     # One row per package, then one loop that colours the columns: the package
     # id dimmed, the command to type in green (Catppuccin's, via the terminal
     # scheme), the description in the normal foreground.
     $quote = { param($s) "'" + ([string]$s).Replace("'", "''") + "'" }
+    # Global, so `cheat` in the profile can search the same list.
+    $lines.Add('$global:ToolsRows = @(')
+    foreach ($r in $Rows) {
+        $cells = @((& $quote $r[0]), (& $quote $r[1]), (& $quote $r[2]))
+        $lines.Add('    ,@({0}, {1}, {2})' -f $cells)
+    }
+    $lines.Add(')')
     $lines.Add('function tools {')
-    $lines.Add('    $rows = @(')
+    $lines.Add('    Write-Host ""')
+    $lines.Add('    foreach ($r in $global:ToolsRows) {')
+    $lines.Add('        Write-Host (''  {0,-26} '' -f $r[0]) -NoNewline -ForegroundColor DarkGray')
+    $lines.Add('        Write-Host (''{0,-42} '' -f $r[1]) -NoNewline -ForegroundColor Green')
+    $lines.Add('        Write-Host $r[2]')
+    $lines.Add('    }')
+    $lines.Add('    Write-Host ""')
+    $lines.Add('}')
+    return ($lines -join "`r`n") + "`r`n"
+}
+
+function Deploy-ToolsList {
+    param([string]$Target)
+    $cliIndex = Get-CliToolsIndex -ParityPath (Join-Path (Split-Path $script:ToolRoot -Parent) 'tools\cli-parity.conf')
+    $cliGroup = $manifest.Groups | Where-Object { $_.Name -eq 'cli' } | Select-Object -First 1
+    $rows = [System.Collections.Generic.List[object]]::new()
     if ($cliGroup) {
         foreach ($p in $cliGroup.Packages) {
             $cmd = ''; $desc = ''
@@ -1031,20 +1113,10 @@ function Deploy-ToolsList {
                 $cmd = $cliIndex[$p].Cmd
                 $desc = $cliIndex[$p].Desc
             }
-            $cells = @((& $quote $p), (& $quote $cmd), (& $quote $desc))
-            $lines.Add('        ,@({0}, {1}, {2})' -f $cells)
+            $rows.Add(@($p, $cmd, $desc))
         }
     }
-    $lines.Add('    )')
-    $lines.Add('    Write-Host ""')
-    $lines.Add('    foreach ($r in $rows) {')
-    $lines.Add('        Write-Host (''  {0,-26} '' -f $r[0]) -NoNewline -ForegroundColor DarkGray')
-    $lines.Add('        Write-Host (''{0,-42} '' -f $r[1]) -NoNewline -ForegroundColor Green')
-    $lines.Add('        Write-Host $r[2]')
-    $lines.Add('    }')
-    $lines.Add('    Write-Host ""')
-    $lines.Add('}')
-    $content = ($lines -join "`r`n") + "`r`n"
+    $content = New-ToolsListContent -Rows $rows.ToArray()
 
     $label = 'tools list: ' + (Split-Path (Split-Path $Target -Parent) -Leaf)
     $existing = if (Test-Path $Target) { Get-Content $Target -Raw } else { $null }

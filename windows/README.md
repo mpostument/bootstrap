@@ -123,6 +123,13 @@ Put the id in a group in `packages.psd1` and re-run.
 `-WhatIf` and `-Confirm` work throughout. `tools` is a function the shell phase
 writes next to your profile: the `cli` group as of the last run.
 
+The profile adds three fzf pickers, defined when fzf is on `PATH`. Each only
+picks; what runs afterwards is an ordinary git command. `gb` switches branch
+(local and remote, newest first, the log as the preview); `gs` browses stashes
+(Enter applies, ctrl-p pops, ctrl-x drops; not defined where Ghostscript owns
+`gs`); `cheat` searches the `tools` list and shows the pick's tldr page. The
+zsh side also has `fkill` - here PSFzf already provides it.
+
 ## Did last night's run work?
 
 The task runs at 04:20 and tees into `%LOCALAPPDATA%\windows-bootstrap\logs`,

@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.35.2'
+BOOTSTRAP_VERSION='1.36.0'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -663,6 +663,35 @@ if [[ "${LIST_PACKAGES:-no}" == "yes" ]]; then
   exit 0
 fi
 
+# The zsh function behind `tools`, written to stdout. It takes the table as
+# package/command/description triples, so each platform gathers its own rows and
+# the part with the quoting is shared - and testable on its own. The rows also
+# stay in a global array, so `cheat` can search the list `tools` prints.
+#
+# printf reuses its format for as many arguments as it is given, so one format
+# over a flat array of triples is the whole table. Package dimmed, command
+# green, description plain - and no escapes when the output is piped, so
+# `tools | rg fd` stays text. Every value is single-quoted, a ' inside one
+# included. The replacement goes through a quoted variable: written inline,
+# bash's handling of backslashes there garbles it, and 5.2+ would also expand
+# an & in it.
+emit_tools_function() {   # emit_tools_function [<package> <command> <description>]...
+  local q="'\\''"
+  echo '_TOOLS_ROWS=('
+  while (( $# >= 3 )); do
+    printf "  '%s' '%s' '%s'\n" "${1//\'/"$q"}" "${2//\'/"$q"}" "${3//\'/"$q"}"
+    shift 3
+  done
+  echo ')'
+  echo 'tools() {'
+  echo '  local d= c= o='
+  echo "  [[ -t 1 ]] && d=\$'\\e[2m' c=\$'\\e[32m' o=\$'\\e[0m'"
+  echo '  echo'
+  echo '  (( ${#_TOOLS_ROWS[@]} )) && printf "  ${d}%-12s${o}  ${c}%-10s${o}  %s\n" "${_TOOLS_ROWS[@]}"'
+  echo '  echo'
+  echo '}'
+}
+
 # Doctor
 #
 # Every other phase asserts that a package is installed. This one asserts that
@@ -729,7 +758,8 @@ doctor_probe() {
   cmds=''
   for can in "${!DOCTOR_CMD[@]}"; do cmds="$cmds ${DOCTOR_CMD[$can]}"; done
   # Not in the cli parity table, but just as load-bearing.
-  cmds="$cmds starship atuin carapace mise uv git gh node go java kubectl code"
+  # gs is here for the gs picker, which steps aside where Ghostscript has the name.
+  cmds="$cmds starship atuin carapace mise uv git gh node go java kubectl code gs"
 
   mktemp_tracked probe "${TMPDIR:-/tmp}/bootstrap-probe.XXXXXX"
   {
@@ -744,6 +774,12 @@ print -r -- "fn:fzf-tab=$(( $+functions[fzf-tab-complete] ))"
 print -r -- "fn:carapace=$(( $+functions[_carapace_completer] ))"
 print -r -- "fn:zoxide=$(( $+functions[__zoxide_z] ))"
 print -r -- "fn:compdef=$(( $+functions[compdef] ))"
+print -r -- "fn:tools=$(( $+functions[tools] ))"
+print -r -- "tools:rows=$(( ${#_TOOLS_ROWS[@]} / 3 ))"
+print -r -- "fn:gb=$(( $+functions[gb] ))"
+print -r -- "fn:gs=$(( $+functions[gs] ))"
+print -r -- "fn:fkill=$(( $+functions[fkill] ))"
+print -r -- "fn:cheat=$(( $+functions[cheat] ))"
 print -r -- "bind:tab=$(bindkey '^I' 2>/dev/null | head -1)"
 print -r -- "bind:up=$(bindkey '^[[A' 2>/dev/null | head -1)"
 print -r -- "alias:cat=${aliases[cat]:-}"
@@ -843,6 +879,91 @@ doctor_check_shell() {
   done
 }
 
+# A binary can be on PATH, at the right path, and still not run: the wrong
+# architecture, a library the distro does not have. doctor_check_tools cannot
+# see that. Asking for --version is the cheapest way to make the loader try, and
+# any answer at all - even "unknown option", exit 2 - proves it launched; only
+# the shell's own exec failures (126 not executable, 127 not found) and a crash
+# (132 illegal instruction, 134 abort, 139 segfault) mean it did not. Release
+# binaries only: apt's are the distro's to keep working.
+doctor_check_launch() {
+  local can cmd path rc launched=0
+  local -a limit=()
+  command -v timeout >/dev/null 2>&1 && limit=(timeout 5)
+  for can in $(printf '%s\n' "${!DOCTOR_CMD[@]}" | sort); do
+    [[ "${DOCTOR_ORIGIN[$can]}" == 'release' ]] || continue
+    cmd="${DOCTOR_CMD[$can]}"
+    path="$(probe_get "resolve:$cmd")"
+    # Missing or shadowed is doctor_check_tools' finding, not a second one here.
+    [[ -n "$path" && -x "$path" ]] || continue
+    rc=0
+    "${limit[@]}" "$path" --version </dev/null >/dev/null 2>&1 || rc=$?
+    case "$rc" in
+      126|127|132|134|139) doctor_broken "$cmd launches" "exit $rc from $path --version - wrong architecture, or a library it needs is missing" ;;
+      124) doctor_note "$cmd launches" "gave no answer to --version in 5 seconds" ;;
+      *)   launched=$((launched + 1)) ;;
+    esac
+  done
+  [[ "$launched" -gt 0 ]] && doctor_ok 'release binaries launch' "$launched answered --version"
+  return 0
+}
+
+# `tools` and the pickers come from ~/.zshrc.bootstrap and tools-list, so a
+# fragment that is deployed but never sourced, or a list that generated empty,
+# shows up here as a missing function, not as a broken alias somewhere else.
+doctor_check_workflow() {
+  local rows fn
+  if [[ "$(probe_get 'fn:tools')" != '1' ]]; then
+    doctor_broken 'tools' 'no tools function in a login shell'
+  else
+    rows="$(probe_get 'tools:rows')"
+    if [[ "${rows:-0}" -gt 0 ]]; then
+      doctor_ok 'tools' "${rows} tools listed"
+    else
+      doctor_broken 'tools' 'defined, but its list is empty'
+    fi
+  fi
+
+  if [[ -z "$(probe_get 'resolve:fzf')" ]]; then
+    doctor_note 'workflow pickers' 'fzf is not on PATH, so gb, gs, fkill and cheat are not defined'
+    return 0
+  fi
+  for fn in gb fkill cheat; do
+    [[ "$(probe_get "fn:$fn")" == '1' ]] \
+      && doctor_ok "$fn" 'defined' \
+      || doctor_broken "$fn" 'not defined in a login shell'
+  done
+  if [[ -n "$(probe_get 'resolve:gs')" ]]; then
+    doctor_note 'gs' "not defined on purpose - $(probe_get 'resolve:gs') is Ghostscript's, not the stash picker's"
+  elif [[ "$(probe_get 'fn:gs')" == '1' ]]; then
+    doctor_ok 'gs' 'defined'
+  else
+    doctor_broken 'gs' 'not defined in a login shell'
+  fi
+}
+
+# tealdeer keeps its pages in a cache it fills on first use (auto_update in
+# tealdeer/config.toml), so an empty cache heals itself and is a note. What is
+# worth saying is when it is stale. The directory is read, never asked: even
+# `tldr --show-paths` downloads the pages when they are missing, and a doctor
+# that changes the machine is not one.
+doctor_check_tldr_cache() {
+  local dir="${XDG_CACHE_HOME:-$HOME/.cache}/tealdeer/tldr-pages" count
+  command -v tldr >/dev/null 2>&1 || return 0   # the config check has said so
+  if [[ ! -d "$dir" ]]; then
+    doctor_note 'tldr pages' 'not downloaded yet - the first tldr fetches them'
+    return 0
+  fi
+  count="$(find "$dir" -type f -name '*.md' 2>/dev/null | wc -l | tr -d '[:space:]')"
+  if [[ "${count:-0}" -eq 0 ]]; then
+    doctor_note 'tldr pages' "$dir is empty - the next tldr fetches them"
+  elif [[ -z "$(find "$dir" -type f -name '*.md' -mtime -30 -print -quit 2>/dev/null)" ]]; then
+    doctor_note 'tldr pages' "$count pages, none newer than 30 days - the next tldr refreshes them"
+  else
+    doctor_ok 'tldr pages' "$count pages in $dir"
+  fi
+}
+
 doctor_check_runtimes() {
   local tool path mise_root
   mise_root="${XDG_DATA_HOME:-$HOME/.local/share}/mise"
@@ -917,6 +1038,7 @@ doctor_check_configs() {
   else
     doctor_broken 'tealdeer config' 'tldr is not installed'
   fi
+  doctor_check_tldr_cache
 
   if [[ "${GHOSTTY_ENABLED:-no}" == "yes" ]]; then
     [[ -r "${HOME}/.config/ghostty/config" ]] \
@@ -956,9 +1078,11 @@ run_doctor() {
 
   phase 'Doctor - the cli group on PATH'
   doctor_check_tools
+  doctor_check_launch
 
   phase 'Doctor - shell integration'
   doctor_check_shell
+  doctor_check_workflow
 
   phase 'Doctor - runtimes and PATH'
   doctor_check_runtimes
@@ -2429,32 +2553,96 @@ FZF_FILES
             _cli_desc["$_pty_lx"]="$_pty_desc"
           done < "$SCRIPT_DIR/../tools/cli-parity.conf"
         fi
-        # printf reuses its format for as many arguments as it is given, so one
-        # format over a flat array of package/command/description triples is
-        # the whole table. Package dimmed, command green, description plain -
-        # and no escapes when the output is piped, so `tools | rg fd` stays text.
-        # Every value is single-quoted, a ' inside one included. The replacement
-        # goes through a quoted variable: written inline, bash's handling of
-        # backslashes there garbles it, and 5.2+ would also expand an & in it.
-        _tools_sq() { local q="'\\''"; printf "'%s'" "${1//\'/"$q"}"; }
-        echo 'tools() {'
-        echo '  local d= c= o='
-        echo "  [[ -t 1 ]] && d=\$'\\e[2m' c=\$'\\e[32m' o=\$'\\e[0m'"
-        echo '  local -a rows=('
         declare -n _apt="GROUP_cli_APT"
         declare -n _flat="GROUP_cli_FLATPAK"
+        _tools_rows=()
         for pkg in "${_apt[@]:-}" "${_flat[@]:-}" "${_cli_rel[@]:-}"; do
           [[ -z "$pkg" ]] && continue
-          printf '    %s %s %s\n' "$(_tools_sq "$pkg")" \
-            "$(_tools_sq "${_cli_cmd[$pkg]:-}")" "$(_tools_sq "${_cli_desc[$pkg]:-}")"
+          _tools_rows+=("$pkg" "${_cli_cmd[$pkg]:-}" "${_cli_desc[$pkg]:-}")
         done
         unset -n _apt _flat
-        unset -f _tools_sq
-        echo '  )'
-        echo '  echo'
-        echo '  printf "  ${d}%-12s${o}  ${c}%-10s${o}  %s\n" "${rows[@]}"'
-        echo '  echo'
-        echo '}'
+        emit_tools_function "${_tools_rows[@]}"
+        unset _tools_rows
+        echo
+        cat <<'WORKFLOW'
+# Workflow pickers: fzf over git branches, stashes, processes and the tools
+# list. Each one only picks; what runs afterwards is an ordinary git or kill
+# command, printed or in the history, so nothing happens that you cannot read.
+if (( $+commands[fzf] )); then
+  # gb - switch branch. Local and remote, newest commit first, log as preview.
+  # A remote branch is checked out with --track, which makes the local branch.
+  # `command grep`: grep is an alias for rg in this file, and aliases expand in
+  # a function body when it is defined.
+  gb() {
+    git rev-parse --git-dir >/dev/null 2>&1 || { print -u2 'gb: not a git repository'; return 1; }
+    local pick
+    pick=$(git for-each-ref --sort=-committerdate --format='%(refname:short)' refs/heads refs/remotes \
+      | command grep -v '/HEAD$' \
+      | fzf --height=50% --reverse --prompt='branch> ' \
+            --preview 'git log --oneline --graph --decorate --color=always -30 {}') || return
+    if git show-ref --verify --quiet "refs/heads/$pick"; then
+      git switch "$pick"
+    else
+      git switch --track "$pick"
+    fi
+  }
+
+  # gs - browse stashes with the diff as preview (through delta when there is
+  # one). Enter applies, ctrl-p pops, ctrl-x drops; apply is the default because
+  # it leaves the stash behind. Not defined where Ghostscript owns gs.
+  if ! (( $+commands[gs] )); then
+    gs() {
+      git rev-parse --git-dir >/dev/null 2>&1 || { print -u2 'gs: not a git repository'; return 1; }
+      local show='git stash show -p --color=always {1}' out key pick
+      (( $+commands[delta] )) && show='git stash show -p {1} | delta --paging=never'
+      out=$(git stash list \
+        | fzf --height=60% --reverse --delimiter=: --prompt='stash> ' \
+              --header='enter apply / ctrl-p pop / ctrl-x drop' \
+              --expect=ctrl-p,ctrl-x --preview "$show") || return
+      key=${out%%$'\n'*}
+      pick=${${out#*$'\n'}%%:*}
+      [[ -n "$pick" ]] || return
+      case $key in
+        ctrl-p) git stash pop "$pick" ;;
+        ctrl-x) git stash drop "$pick" ;;
+        *)      git stash apply "$pick" ;;
+      esac
+    }
+  fi
+
+  # fkill [signal] - pick some of your own processes and signal them, TERM unless
+  # told otherwise. Tab marks several. -U, not -u: on macOS -u is a format.
+  fkill() {
+    local sig=${1:-TERM} pick line
+    local -a pids
+    pick=$(ps -U "$USER" -o pid,pcpu,pmem,comm \
+      | fzf --multi --header-lines=1 --height=60% --reverse --prompt="kill -$sig> " \
+            --preview 'ps -p {1} -o pid,ppid,etime,command' --preview-window=down,4) || return
+    for line in ${(f)pick}; do pids+=(${${=line}[1]}); done
+    (( ${#pids} )) || return
+    print -r -- "kill -$sig ${pids[*]}"
+    kill -"$sig" "${pids[@]}"
+  }
+
+  # cheat - search the list `tools` prints. The preview is the command's tldr
+  # page (its --help when there is none); Enter puts the command on the prompt.
+  cheat() {
+    (( ${#_TOOLS_ROWS} )) || { print -u2 'cheat: the tools list is not loaded'; return 1; }
+    local -a lines
+    local i cmd page pick
+    for (( i = 1; i + 2 <= ${#_TOOLS_ROWS}; i += 3 )); do
+      cmd=${_TOOLS_ROWS[i+1]}
+      page=${${=cmd}[1]}
+      [[ -n "$page" ]] || continue
+      lines+=("$(printf '%-12s  %-10s  %s' "${_TOOLS_ROWS[i]}" "$cmd" "${_TOOLS_ROWS[i+2]}")"$'\t'"$page")
+    done
+    pick=$(print -rl -- $lines \
+      | fzf --delimiter=$'\t' --with-nth=1 --height=70% --reverse --prompt='tool> ' \
+            --preview 'tldr --color always {2} 2>/dev/null || {2} --help 2>&1 | head -40') || return
+    print -z -- "${pick##*$'\t'}"
+  }
+fi
+WORKFLOW
         echo
         echo '[ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH"'
         echo

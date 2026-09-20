@@ -159,6 +159,62 @@ if (Get-Command lazydocker -ErrorAction SilentlyContinue) {
     function lzd { lazydocker @args }
 }
 
+# Workflow pickers: fzf over git branches, stashes and the tools list. Each one
+# only picks; what runs afterwards is an ordinary git command. The zsh side has
+# the same names, plus fkill - which PSFzf already provides here
+# (-EnableAliasFuzzyKillProcess above), so it is not redefined.
+if (Get-Command fzf -ErrorAction SilentlyContinue) {
+    # gb - switch branch. Local and remote, newest commit first, log as preview.
+    # A remote branch is checked out with --track, which makes the local branch.
+    function gb {
+        git rev-parse --git-dir *> $null
+        if ($LASTEXITCODE -ne 0) { Write-Error 'gb: not a git repository'; return }
+        $pick = git for-each-ref --sort=-committerdate '--format=%(refname:short)' refs/heads refs/remotes |
+            Where-Object { $_ -notmatch '/HEAD$' } |
+            fzf --height=50% --reverse --prompt='branch> ' --preview 'git log --oneline --graph --decorate --color=always -30 {}'
+        if (-not $pick) { return }
+        git show-ref --verify --quiet "refs/heads/$pick"
+        if ($LASTEXITCODE -eq 0) { git switch $pick } else { git switch --track $pick }
+    }
+
+    # gs - browse stashes with the diff as preview (through delta when there is
+    # one). Enter applies, ctrl-p pops, ctrl-x drops; apply is the default because
+    # it leaves the stash behind. Not defined where Ghostscript owns gs.
+    if (-not (Get-Command gs -CommandType Application -ErrorAction SilentlyContinue)) {
+        function gs {
+            git rev-parse --git-dir *> $null
+            if ($LASTEXITCODE -ne 0) { Write-Error 'gs: not a git repository'; return }
+            $show = 'git stash show -p --color=always {1}'
+            if (Get-Command delta -ErrorAction SilentlyContinue) { $show = 'git stash show -p {1} | delta --paging=never' }
+            # --expect prints the key that ended the pick on the first line, empty for Enter.
+            $out = @(git stash list | fzf --height=60% --reverse --delimiter=: --prompt='stash> ' `
+                --header='enter apply / ctrl-p pop / ctrl-x drop' --expect=ctrl-p,ctrl-x --preview $show)
+            if ($out.Count -lt 2) { return }
+            $pick = ($out[1] -split ':')[0]
+            switch ($out[0]) {
+                'ctrl-p' { git stash pop $pick }
+                'ctrl-x' { git stash drop $pick }
+                default  { git stash apply $pick }
+            }
+        }
+    }
+
+    # cheat - search the list `tools` prints. The preview is the command's tldr
+    # page (its --help when there is none); the pick is shown as its tldr page,
+    # since a running function cannot type onto the prompt the way zsh's print -z does.
+    function cheat {
+        if (-not $global:ToolsRows) { Write-Error 'cheat: the tools list is not loaded'; return }
+        $lines = foreach ($r in $global:ToolsRows) {
+            $page = ($r[1].Trim() -split '\s+')[0]
+            if (-not $page) { continue }
+            ('{0,-26} {1,-10} {2}' -f $r[0], $r[1], $r[2]) + "`t" + $page
+        }
+        $pick = $lines | fzf --delimiter "`t" --with-nth=1 --height=70% --reverse --prompt='tool> ' `
+            --preview 'tldr --color always {2}'
+        if ($pick) { tldr ($pick -split "`t")[-1] }
+    }
+}
+
 # sd deliberately gets no `sed` alias: its pattern and replacement syntax is not
 # sed's, so anything pasted from a script or a README would silently do
 # something else. Call it as sd. https://github.com/chmln/sd
