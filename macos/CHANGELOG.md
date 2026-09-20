@@ -15,6 +15,17 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.38.2]
+
+### Changed
+
+- **`tools` colours its columns.** The package name is dim, the command to
+  type is green, the description is plain. The colours switch off when the
+  output is not a terminal, so `tools | rg fd` still returns clean text. The
+  generated function is one `printf` over an array of rows, every value
+  single-quoted - an apostrophe in a description can no longer break the
+  fragment.
+
 ## [1.38.1]
 
 ### Fixed

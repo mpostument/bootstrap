@@ -20,6 +20,16 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.42.1]
+
+### Changed
+
+- **`tools` colours its columns instead of printing everything grey.** The
+  package id stays dim, the command to type is green, the description is in
+  the normal foreground. The generated `tools-list.ps1` is now a table of
+  rows and one loop, so the colours are set in one place rather than on
+  every line.
+
 ## [1.42.0]
 
 ### Added

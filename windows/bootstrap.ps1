@@ -66,7 +66,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '1.42.0'
+$script:BootstrapVersion = '1.42.1'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -1018,18 +1018,30 @@ function Deploy-ToolsList {
     $cliGroup = $manifest.Groups | Where-Object { $_.Name -eq 'cli' } | Select-Object -First 1
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add('# managed by windows/bootstrap.ps1 - regenerated every run, edits here do not stick')
+    # One row per package, then one loop that colours the columns: the package
+    # id dimmed, the command to type in green (Catppuccin's, via the terminal
+    # scheme), the description in the normal foreground.
+    $quote = { param($s) "'" + ([string]$s).Replace("'", "''") + "'" }
     $lines.Add('function tools {')
-    $lines.Add('    Write-Host ""')
+    $lines.Add('    $rows = @(')
     if ($cliGroup) {
         foreach ($p in $cliGroup.Packages) {
-            $text = $p
+            $cmd = ''; $desc = ''
             if ($cliIndex.ContainsKey($p)) {
-                $info = $cliIndex[$p]
-                $text = '{0,-26} {1,-42} {2}' -f $p, $info.Cmd, $info.Desc
+                $cmd = $cliIndex[$p].Cmd
+                $desc = $cliIndex[$p].Desc
             }
-            $lines.Add("    Write-Host '  $($text.Replace("'", "''"))' -ForegroundColor DarkGray")
+            $cells = @((& $quote $p), (& $quote $cmd), (& $quote $desc))
+            $lines.Add('        ,@({0}, {1}, {2})' -f $cells)
         }
     }
+    $lines.Add('    )')
+    $lines.Add('    Write-Host ""')
+    $lines.Add('    foreach ($r in $rows) {')
+    $lines.Add('        Write-Host (''  {0,-26} '' -f $r[0]) -NoNewline -ForegroundColor DarkGray')
+    $lines.Add('        Write-Host (''{0,-42} '' -f $r[1]) -NoNewline -ForegroundColor Green')
+    $lines.Add('        Write-Host $r[2]')
+    $lines.Add('    }')
     $lines.Add('    Write-Host ""')
     $lines.Add('}')
     $content = ($lines -join "`r`n") + "`r`n"

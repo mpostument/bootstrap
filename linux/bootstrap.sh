@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.35.1'
+BOOTSTRAP_VERSION='1.35.2'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -2429,19 +2429,30 @@ FZF_FILES
             _cli_desc["$_pty_lx"]="$_pty_desc"
           done < "$SCRIPT_DIR/../tools/cli-parity.conf"
         fi
+        # printf reuses its format for as many arguments as it is given, so one
+        # format over a flat array of package/command/description triples is
+        # the whole table. Package dimmed, command green, description plain -
+        # and no escapes when the output is piped, so `tools | rg fd` stays text.
+        # Every value is single-quoted, a ' inside one included. The replacement
+        # goes through a quoted variable: written inline, bash's handling of
+        # backslashes there garbles it, and 5.2+ would also expand an & in it.
+        _tools_sq() { local q="'\\''"; printf "'%s'" "${1//\'/"$q"}"; }
         echo 'tools() {'
-        echo '  echo'
+        echo '  local d= c= o='
+        echo "  [[ -t 1 ]] && d=\$'\\e[2m' c=\$'\\e[32m' o=\$'\\e[0m'"
+        echo '  local -a rows=('
         declare -n _apt="GROUP_cli_APT"
         declare -n _flat="GROUP_cli_FLATPAK"
         for pkg in "${_apt[@]:-}" "${_flat[@]:-}" "${_cli_rel[@]:-}"; do
           [[ -z "$pkg" ]] && continue
-          if [[ -n "${_cli_cmd[$pkg]:-}" ]]; then
-            printf "  echo '  %-12s  %-10s  %s'\n" "$pkg" "${_cli_cmd[$pkg]}" "${_cli_desc[$pkg]}"
-          else
-            printf "  echo '  %s'\n" "$pkg"
-          fi
+          printf '    %s %s %s\n' "$(_tools_sq "$pkg")" \
+            "$(_tools_sq "${_cli_cmd[$pkg]:-}")" "$(_tools_sq "${_cli_desc[$pkg]:-}")"
         done
         unset -n _apt _flat
+        unset -f _tools_sq
+        echo '  )'
+        echo '  echo'
+        echo '  printf "  ${d}%-12s${o}  ${c}%-10s${o}  %s\n" "${rows[@]}"'
         echo '  echo'
         echo '}'
         echo
