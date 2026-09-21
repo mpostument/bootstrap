@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.36.0'
+BOOTSTRAP_VERSION='1.36.1'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -834,6 +834,15 @@ doctor_check_shell() {
     doctor_ok 'fragment is sourced' '.zshrc has the source line'
   else
     doctor_broken 'fragment is sourced' 'nothing in ~/.zshrc sources it, so none of it is in effect'
+  fi
+
+  # The probe runs `zsh -lic` explicitly, so it passes even when the account
+  # starts bash - which is exactly when none of this reaches a real login.
+  doctor_shell="$(getent passwd "$(id -un)" | cut -d: -f7)"
+  if [[ "$(basename "${doctor_shell:-}")" == "zsh" ]]; then
+    doctor_ok 'login shell' "$doctor_shell"
+  else
+    doctor_broken 'login shell' "${doctor_shell:-unset}, not zsh - run: chsh -s $(command -v zsh)"
   fi
 
   [[ "$(probe_get 'env:starship')" == 'yes' ]] \
@@ -2227,6 +2236,7 @@ else
     FRAGMENT="${HOME}/.zshrc.bootstrap"
     if [[ "$DRY_RUN" == "yes" ]]; then
       result 'would-install' 'zsh config' "$FRAGMENT"
+      result 'would-install' 'login shell' 'zsh, if the account still starts another'
     else
       mktemp_tracked NEW_FRAGMENT "${FRAGMENT}.XXXXXX"
       chmod 0644 "$NEW_FRAGMENT"
@@ -2687,6 +2697,24 @@ WORKFLOW
       else
         printf '\n%s\n' "$SOURCE_LINE" >> "$ZSHRC"
         result 'installed' 'zshrc hook' "appended to $ZSHRC"
+      fi
+
+      # Everything above is inert until zsh is what a login starts: sshd and
+      # the terminal launch the shell named in /etc/passwd, and bash never
+      # reads ~/.zshrc. chsh needs the shell listed in /etc/shells, which the
+      # zsh package does itself; run through run_priv, it skips the password
+      # prompt chsh would give the account and works from an unattended run.
+      ZSH_BIN="$(command -v zsh)"
+      LOGIN_USER="$(id -un)"
+      CURRENT_SHELL="$(getent passwd "$LOGIN_USER" | cut -d: -f7)"
+      if [[ "$CURRENT_SHELL" == "$ZSH_BIN" || "$(basename "${CURRENT_SHELL:-}")" == "zsh" ]]; then
+        result 'current' 'login shell' "$CURRENT_SHELL"
+      elif ! grep -qxF "$ZSH_BIN" /etc/shells 2>/dev/null; then
+        result 'failed' 'login shell' "$ZSH_BIN is not in /etc/shells - add it, then: chsh -s $ZSH_BIN"
+      elif run_priv chsh -s "$ZSH_BIN" "$LOGIN_USER" >/dev/null 2>&1; then
+        result 'installed' 'login shell' "${CURRENT_SHELL:-unset} -> $ZSH_BIN (takes effect at next login)"
+      else
+        result 'failed' 'login shell' "run by hand: sudo chsh -s $ZSH_BIN $LOGIN_USER"
       fi
 
     fi

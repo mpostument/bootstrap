@@ -15,6 +15,18 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.36.1]
+
+### Fixed
+
+- **A finished bootstrap left the account on bash.** It installed zsh and wrote
+  `~/.zshrc` and `~/.zshrc.bootstrap`, but never changed the login shell, so sshd
+  and the terminal kept starting bash, which never reads either file. The
+  `--doctor` probe missed it because it launches `zsh -lic` itself. There is now a
+  `login shell` step that runs `chsh -s` through `run_priv` (no password prompt,
+  fine unattended); it takes effect at the next login. `--doctor` reports the shell
+  in `/etc/passwd` and flags anything that is not zsh.
+
 ## [1.36.0]
 
 ### Added
