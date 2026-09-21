@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.39.0'
+BOOTSTRAP_VERSION='1.40.0'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -565,10 +565,14 @@ parity_row() {    # parity_row <package>
 # bash's handling of backslashes there garbles it, and 5.2+ would also expand
 # an & in it.
 emit_tools_function() {   # emit_tools_function [<package> <command> <description>]...
+  # A row is emitted single-quoted, so a literal ' has to become '\'' . The
+  # replacement is written bare rather than as "$q": bash 3.2 - still what
+  # macOS ships as /bin/bash - takes double quotes inside ${x//pat/repl}
+  # literally and would bake them into the description.
   local q="'\\''"
   echo '_TOOLS_ROWS=('
   while (( $# >= 3 )); do
-    printf "  '%s' '%s' '%s'\n" "${1//\'/"$q"}" "${2//\'/"$q"}" "${3//\'/"$q"}"
+    printf "  '%s' '%s' '%s'\n" "${1//\'/$q}" "${2//\'/$q}" "${3//\'/$q}"
     shift 3
   done
   echo ')'
@@ -709,6 +713,7 @@ print -r -- "fn:gb=$(( $+functions[gb] ))"
 print -r -- "fn:gs=$(( $+functions[gs] ))"
 print -r -- "fn:fkill=$(( $+functions[fkill] ))"
 print -r -- "fn:cheat=$(( $+functions[cheat] ))"
+print -r -- "fn:y=$(( $+functions[y] ))"
 print -r -- "bind:tab=$(bindkey '^I' 2>/dev/null | head -1)"
 print -r -- "bind:up=$(bindkey '^[[A' 2>/dev/null | head -1)"
 print -r -- "alias:cat=${aliases[cat]:-}"
@@ -827,6 +832,14 @@ doctor_check_workflow() {
     fi
   fi
 
+  if [[ -z "$(probe_get 'resolve:yazi')" ]]; then
+    doctor_note 'y' 'yazi is not on PATH, so the y wrapper is not defined'
+  elif [[ "$(probe_get 'fn:y')" == '1' ]]; then
+    doctor_ok 'y' 'defined'
+  else
+    doctor_broken 'y' 'not defined in a login shell'
+  fi
+
   if [[ -z "$(probe_get 'resolve:fzf')" ]]; then
     doctor_note 'workflow pickers' 'fzf is not on PATH, so gb, gs, fkill and cheat are not defined'
     return 0
@@ -914,6 +927,30 @@ doctor_check_runtimes() {
 
 # Config this script deploys by copying: if the copy has drifted, a later run
 # will replace it, so the honest verdict is "differs", not "broken".
+# btop_theme_of <btop.conf> - the theme named in it, empty when the file or the
+# key is absent. btop.conf is `key = "value"` lines, not YAML, so this is sed's
+# job rather than yq's. Read by the doctor as well as the phase that sets it.
+btop_theme_of() {
+  [[ -f "$1" ]] || return 0
+  sed -n 's/^color_theme[[:space:]]*=[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' "$1" \
+    | tail -1
+}
+
+# k9s_paths - the config file and skins directory, into _K9S_CFG and _K9S_SKINS.
+# `k9s info` is the only answer that is right everywhere: the directory moved
+# to XDG in 0.30 and differs by platform regardless. The output is coloured,
+# hence the escape strip, and k9s has spelled the line both Config and
+# Configuration. Defined up here because the doctor runs and exits long before
+# the phase that deploys the skin.
+k9s_paths() {
+  local info
+  info="$(k9s info 2>/dev/null | sed $'s/\033\[[0-9;]*m//g')"
+  _K9S_CFG="$(printf '%s\n' "$info" | sed -n 's/^Config[a-z]*:[[:space:]]*//p' | head -1)"
+  _K9S_SKINS="$(printf '%s\n' "$info" | sed -n 's/^Skins:[[:space:]]*//p' | head -1)"
+  [[ -n "$_K9S_SKINS" || -z "$_K9S_CFG" ]] || _K9S_SKINS="$(dirname "$_K9S_CFG")/skins"
+  [[ -n "$_K9S_CFG" ]]
+}
+
 doctor_config() {   # doctor_config <label> <repo copy> <deployed path>
   local label="$1" src="$2" dst="$3"
   if [[ ! -r "$dst" ]]; then
@@ -924,6 +961,50 @@ doctor_config() {   # doctor_config <label> <repo copy> <deployed path>
     doctor_ok "$label" "$dst"
   else
     doctor_note "$label" "$dst differs from the repo - the next run would replace it"
+  fi
+}
+
+# The three themes the bootstrap activates rather than owns. The failure worth
+# catching here is a theme file deployed with nothing naming it: every install
+# step says ok, and the colours never change.
+doctor_check_themes() {
+  local skin lazygit_dir theme
+  if ! command -v k9s >/dev/null 2>&1; then
+    :
+  elif ! k9s_paths; then
+    doctor_broken 'k9s skin' 'k9s info named no config file'
+  else
+    doctor_config 'k9s skin' "${SCRIPT_DIR}/../k9s/skins/catppuccin-mocha.yaml" \
+                  "${_K9S_SKINS}/catppuccin-mocha.yaml"
+    skin=''
+    [[ -f "$_K9S_CFG" ]] && command -v yq >/dev/null 2>&1 \
+      && skin="$(yq '.k9s.ui.skin // ""' "$_K9S_CFG" 2>/dev/null || true)"
+    case "$skin" in
+      catppuccin-mocha) doctor_ok 'k9s ui.skin' 'catppuccin-mocha' ;;
+      '') doctor_broken 'k9s ui.skin' "unset in $_K9S_CFG - nothing tells k9s to use the skin" ;;
+      *)  doctor_note 'k9s ui.skin' "$skin - yours, not the repo's" ;;
+    esac
+  fi
+
+  if command -v lazygit >/dev/null 2>&1; then
+    lazygit_dir="$(lazygit --print-config-dir 2>/dev/null || true)"
+    if [[ -z "$lazygit_dir" ]]; then
+      doctor_broken 'lazygit config' 'lazygit --print-config-dir said nothing'
+    else
+      doctor_config 'lazygit config' "${SCRIPT_DIR}/../lazygit/config.yml" \
+                    "${lazygit_dir}/config.yml"
+    fi
+  fi
+
+  if command -v btop >/dev/null 2>&1; then
+    doctor_config 'btop theme' "${SCRIPT_DIR}/../btop/themes/catppuccin_mocha.theme" \
+                  "${XDG_CONFIG_HOME:-$HOME/.config}/btop/themes/catppuccin_mocha.theme"
+    theme="$(btop_theme_of "${XDG_CONFIG_HOME:-$HOME/.config}/btop/btop.conf")"
+    case "$theme" in
+      catppuccin_mocha) doctor_ok 'btop color_theme' 'catppuccin_mocha' ;;
+      ''|Default) doctor_broken 'btop color_theme' 'unset in btop.conf - nothing tells btop to use the theme' ;;
+      *) doctor_note 'btop color_theme' "$theme - yours, not the repo's" ;;
+    esac
   fi
 }
 
@@ -996,6 +1077,7 @@ run_doctor() {
 
   phase 'Doctor - deployed config'
   doctor_check_configs
+  doctor_check_themes
 
   phase 'Doctor - the daily run'
   doctor_check_schedule
@@ -1918,6 +2000,22 @@ if (( $+commands[fzf] )); then
     print -z -- "${pick##*$'\t'}"
   }
 fi
+
+# y - yazi, then cd to wherever you quit it. yazi writes that directory to the
+# file named by --cwd-file; without a wrapper you always come back to where you
+# started. Not inside the fzf guard above: yazi has a finder of its own.
+if (( $+commands[yazi] )); then
+  y() {
+    local tmp cwd
+    tmp=$(mktemp -t yazi-cwd.XXXXXX) || return
+    yazi "$@" --cwd-file="$tmp"
+    cwd=$(<"$tmp")
+    rm -f -- "$tmp"
+    if [[ -n "$cwd" && "$cwd" != "$PWD" ]]; then
+      builtin cd -- "$cwd"
+    fi
+  }
+fi
 WORKFLOW
       echo
       echo 'command -v gmake  >/dev/null && alias make="gmake"'
@@ -2111,6 +2209,116 @@ else
     deploy_config "$_spec" "${_carapace_cfg}/carapace/specs/$(basename "$_spec")" \
                   "carapace spec $(basename "$_spec" .yaml)"
   done
+fi
+
+# Theme activation - k9s, lazygit and btop
+#
+# The theme file is the repo's and is copied like every config above. The key
+# that *names* it is not: k9s rewrites its config.yaml on every quit and btop
+# rewrites btop.conf on every exit, so those two files cannot be owned here.
+# The key in them is set only when it is unset - a theme you picked is a
+# choice, the same rule the git config below follows. lazygit has no separate
+# theme file at all, so there the whole config.yml is the repo's.
+
+# set_yaml_key <file> <yq path> <value> <label> - set one key, only when unset.
+# yq is in the cli group on all three platforms; without it the step says so
+# rather than guessing at somebody's YAML with sed.
+set_yaml_key() {
+  local file="$1" key="$2" want="$3" label="$4" have=''
+  if ! command -v yq >/dev/null 2>&1; then
+    result 'missing' "$label" 'yq is not installed, so nothing can set the key'
+    return
+  fi
+  [[ -f "$file" ]] && have="$(yq "${key} // \"\"" "$file" 2>/dev/null || true)"
+  if [[ "$have" == "$want" ]]; then
+    result 'current' "$label" "$want"
+  elif [[ -n "$have" ]]; then
+    result 'skipped' "$label" "yours is ${have} - set ${key} to ${want} by hand to switch"
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    result 'would-install' "$label" "${key} = ${want} in ${file}"
+  elif mkdir -p "$(dirname "$file")" && touch "$file" \
+       && yq -i "${key} = \"${want}\"" "$file"; then
+    result 'installed' "$label" "${key} = ${want} in ${file}"
+  else
+    result 'failed' "$label" "yq could not set ${key} in ${file}"
+  fi
+}
+
+# btop_set_theme <btop.conf> <theme> - the same rule as set_yaml_key, for a
+# file that is not YAML. "Default" counts as unset: it is btop's built-in.
+btop_set_theme() {
+  local conf="$1" want="$2" have
+  have="$(btop_theme_of "$conf")"
+  case "$have" in
+    "$want")
+      result 'current' 'btop color_theme' "$want" ;;
+    ''|Default)
+      if [[ "$DRY_RUN" == "yes" ]]; then
+        result 'would-install' 'btop color_theme' "${want} in ${conf}"
+      elif [[ -f "$conf" ]] && grep -q '^color_theme' "$conf"; then
+        if sed -i '' "s/^color_theme.*/color_theme = \"${want}\"/" "$conf"; then
+          result 'upgraded' 'btop color_theme' "$conf"
+        else
+          result 'failed' 'btop color_theme' "sed could not rewrite $conf"
+        fi
+      else
+        mkdir -p "$(dirname "$conf")"
+        printf 'color_theme = "%s"\n' "$want" >> "$conf"
+        result 'installed' 'btop color_theme' "$conf"
+      fi ;;
+    *)
+      result 'skipped' 'btop color_theme' \
+             "yours is ${have} - set color_theme to ${want} by hand to switch" ;;
+  esac
+}
+
+K9S_SOURCE="${SCRIPT_DIR}/../k9s"
+phase 'k9s skin'
+if ! command -v k9s >/dev/null 2>&1; then
+  result 'missing' 'k9s skin' 'k9s is not installed'
+elif ! k9s_paths; then
+  result 'failed' 'k9s skin' 'k9s info named no config file'
+else
+  deploy_config "${K9S_SOURCE}/skins/catppuccin-mocha.yaml" \
+                "${_K9S_SKINS}/catppuccin-mocha.yaml" 'k9s skin'
+  set_yaml_key "$_K9S_CFG" '.k9s.ui.skin' 'catppuccin-mocha' 'k9s ui.skin'
+fi
+
+# lazygit config. Its colours live in the one config file, so there is no theme
+# to copy beside it: config.yml is the repo's, and a run replaces a copy that
+# has drifted from it. The first replacement of a config that was not ours is
+# kept as .bak - the courtesy Deploy-ManagedFile already does on Windows.
+LAZYGIT_SOURCE="${SCRIPT_DIR}/../lazygit"
+phase 'lazygit config'
+if ! command -v lazygit >/dev/null 2>&1; then
+  result 'missing' 'lazygit config' 'lazygit is not installed'
+else
+  _lazygit_dir="$(lazygit --print-config-dir 2>/dev/null || true)"
+  if [[ -z "$_lazygit_dir" ]]; then
+    result 'failed' 'lazygit config' 'lazygit --print-config-dir said nothing'
+  else
+    _lazygit_cfg="${_lazygit_dir}/config.yml"
+    if [[ "$DRY_RUN" != "yes" && -f "$_lazygit_cfg" && ! -f "${_lazygit_cfg}.bak" ]] \
+       && ! cmp -s "${LAZYGIT_SOURCE}/config.yml" "$_lazygit_cfg"; then
+      cp "$_lazygit_cfg" "${_lazygit_cfg}.bak"
+      result 'installed' 'lazygit config backup' "${_lazygit_cfg}.bak"
+    fi
+    deploy_config "${LAZYGIT_SOURCE}/config.yml" "$_lazygit_cfg" 'lazygit config'
+  fi
+fi
+
+# btop theme. There is no btop on Windows - btop4win is a separate port, and
+# cli-parity.conf says so - which is why this step has no counterpart there.
+BTOP_SOURCE="${SCRIPT_DIR}/../btop"
+phase 'btop theme'
+if ! command -v btop >/dev/null 2>&1; then
+  result 'missing' 'btop theme' 'btop is not installed'
+else
+  _btop_dir="${XDG_CONFIG_HOME:-$HOME/.config}/btop"
+  _btop_conf="${_btop_dir}/btop.conf"
+  deploy_config "${BTOP_SOURCE}/themes/catppuccin_mocha.theme" \
+                "${_btop_dir}/themes/catppuccin_mocha.theme" 'btop theme'
+  btop_set_theme "$_btop_conf" 'catppuccin_mocha'
 fi
 
 # Git config

@@ -15,6 +15,31 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.40.0]
+
+### Added
+
+- **yazi**, the terminal file manager, in the cli group, with the same `y`
+  wrapper as Linux: yazi writes the directory you quit in to `--cwd-file` and
+  `y` cds there. Outside the fzf guard the other pickers are behind - yazi has
+  a finder of its own.
+- **Catppuccin Mocha for k9s, lazygit and btop**, the same three theme files
+  and the same rule as Linux: the file is the repo's, the key that names it is
+  set only when unset, because k9s and btop both rewrite the file holding it.
+  lazygit has no separate theme file, so its whole `config.yml` is the repo's
+  and the first config that was not ours is kept as `config.yml.bak`.
+- **`--doctor` checks that each theme is in effect**, reporting the file and
+  the key separately - a skin deployed with nothing naming it looks installed
+  and changes nothing - and **checks the `y` wrapper** alongside the pickers.
+
+### Changed
+
+- **k9s's paths come from `k9s info`**, not from guessing at XDG: on macOS they
+  are under `~/Library/Application Support`, and the location moved in 0.30.
+- **`tools/test.sh` covers theme activation**, driving the macOS copy of the
+  writers here and the Linux copy on CI - `sed -i` takes a suffix argument on
+  BSD and none on GNU.
+
 ## [1.39.0]
 
 ### Added
