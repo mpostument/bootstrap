@@ -46,6 +46,12 @@ Homebrew, and not under `sudo`.
 - Never destructive: installs and upgrades only, and backs up config it replaces.
   The one thing pruned is what an upgrade superseded - old versions and
   download caches - and only where the manifest asks for it.
+- Config the repo owns is copied; a setting that is yours is left alone. The
+  themes are both: the theme file is the repo's, and the one key that activates
+  it - k9s's `ui.skin`, btop's `color_theme` - is set only when it is unset,
+  because k9s and btop rewrite those files themselves and a theme you picked is
+  a choice. `--doctor` reports the file and the key separately, so a theme that
+  is deployed but not in effect does not read as healthy.
 
 ## Checks
 
@@ -63,8 +69,9 @@ shellcheck over `tools/`, PSScriptAnalyzer over `windows/`, and the tests.
 `tools/test.sh` asserts what the three scripts promise each other — that the
 duration formatters agree across bash and PowerShell, that all three write the
 same run record, that `--status` survives a record a killed run left
-half-written, that the launchd plist parses, and that the apt cache prunes by
-age and only by age. The functions under test are extracted from the scripts
+half-written, that the launchd plist parses, that the apt cache prunes by age
+and only by age, and that theme activation writes when the key is unset and
+keeps its hands off when it is not. The functions under test are extracted from the scripts
 themselves, so a test cannot pass against a stale copy. Anything it needs and
 cannot find — `plutil`, GNU `find`, `pwsh` — is skipped out loud.
 

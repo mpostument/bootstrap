@@ -66,7 +66,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '1.43.0'
+$script:BootstrapVersion = '1.44.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -82,6 +82,8 @@ $script:AtuinSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'atuin'
 $script:BatSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'bat'
 $script:TealdeerSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'tealdeer'
 $script:CarapaceSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'carapace'
+$script:K9sSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'k9s'
+$script:LazygitSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'lazygit'
 $script:MergeScript = Join-Path $script:ToolRoot 'merge-terminal-settings.ps1'
 $script:MpvSource = Join-Path $script:ToolRoot 'mpv'
 
@@ -506,7 +508,7 @@ foreach (`$c in @($list)) {
 `$out += "env:JAVA_HOME=`$env:JAVA_HOME"
 `$prompt = Get-Command prompt -CommandType Function -ErrorAction SilentlyContinue
 `$out += "fn:prompt=`$(if (`$prompt) { `$prompt.Definition -replace '\s+', ' ' } else { '' })"
-foreach (`$n in 'tools', 'gb', 'gs', 'fkill', 'cheat') {
+foreach (`$n in 'tools', 'gb', 'gs', 'fkill', 'cheat', 'y') {
     `$out += "cmd:`$n=`$(if (Get-Command `$n -ErrorAction SilentlyContinue) { 1 } else { 0 })"
 }
 `$out += "tools:rows=`$(if (`$global:ToolsRows) { @(`$global:ToolsRows).Count } else { 0 })"
@@ -638,6 +640,14 @@ function Test-DoctorWorkflow {
         else { Add-DoctorBroken 'tools' 'defined, but its list is empty' }
     }
 
+    if (-not (Get-ProbeValue 'resolve:yazi')) {
+        Add-DoctorNote 'y' 'yazi is not on PATH, so the y wrapper is not defined'
+    } elseif ((Get-ProbeValue 'cmd:y') -eq '1') {
+        Add-DoctorOk 'y' 'defined'
+    } else {
+        Add-DoctorBroken 'y' 'not defined in a profile-loaded shell'
+    }
+
     if (-not (Get-ProbeValue 'resolve:fzf')) {
         Add-DoctorNote 'workflow pickers' 'fzf is not on PATH, so gb, gs, fkill and cheat are not defined'
         return
@@ -677,6 +687,63 @@ function Test-DoctorTldrCache {
     }
 }
 
+function Test-DoctorFile {
+    # Config this script deploys by copying: if the copy has drifted, a later
+    # run will replace it, so the honest verdict is "differs", not "broken".
+    param(
+        [string]$Label,
+        [string]$Source,
+        [string]$Target
+    )
+    if (-not (Test-Path -LiteralPath $Target)) {
+        Add-DoctorBroken $Label ('not deployed at {0}' -f $Target)
+    } elseif (-not (Test-Path -LiteralPath $Source)) {
+        Add-DoctorNote $Label ('deployed, but the repo copy is missing at {0}' -f $Source)
+    } elseif ((Get-FileHash -LiteralPath $Source).Hash -eq (Get-FileHash -LiteralPath $Target).Hash) {
+        Add-DoctorOk $Label $Target
+    } else {
+        Add-DoctorNote $Label ('{0} differs from the repo - the next run would replace it' -f $Target)
+    }
+}
+
+function Test-DoctorThemes {
+    # A theme file deployed with nothing naming it is the failure worth
+    # catching: every install step says ok, and the colours never change.
+    if (Get-Command k9s -ErrorAction SilentlyContinue) {
+        $paths = Get-K9sPaths
+        if (-not $paths) {
+            Add-DoctorBroken 'k9s skin' 'k9s info named no config file'
+        } else {
+            Test-DoctorFile -Label 'k9s skin' `
+                -Source (Join-Path $script:K9sSource 'skins\catppuccin-mocha.yaml') `
+                -Target (Join-Path $paths.Skins 'catppuccin-mocha.yaml')
+            $skin = ''
+            if ((Test-Path -LiteralPath $paths.Config) -and (Get-Command yq -ErrorAction SilentlyContinue)) {
+                $skin = (& yq '.k9s.ui.skin' $paths.Config 2>$null | Select-Object -First 1)
+                if ($null -eq $skin -or $skin -eq 'null') { $skin = '' }
+            }
+            if ($skin -eq 'catppuccin-mocha') {
+                Add-DoctorOk 'k9s ui.skin' 'catppuccin-mocha'
+            } elseif (-not $skin) {
+                Add-DoctorBroken 'k9s ui.skin' ('unset in {0} - nothing tells k9s to use the skin' -f $paths.Config)
+            } else {
+                Add-DoctorNote 'k9s ui.skin' ("{0} - yours, not the repo's" -f $skin)
+            }
+        }
+    }
+
+    if (Get-Command lazygit -ErrorAction SilentlyContinue) {
+        $dir = (& lazygit --print-config-dir 2>$null | Select-Object -First 1)
+        if (-not $dir) {
+            Add-DoctorBroken 'lazygit config' 'lazygit --print-config-dir said nothing'
+        } else {
+            Test-DoctorFile -Label 'lazygit config' `
+                -Source (Join-Path $script:LazygitSource 'config.yml') `
+                -Target (Join-Path $dir.Trim() 'config.yml')
+        }
+    }
+}
+
 function Test-DoctorConfig {
     $pairs = @(
         @{ Label = 'starship.toml'; Source = $script:StarshipTomlSource
@@ -687,15 +754,7 @@ function Test-DoctorConfig {
            Target = (Join-Path $env:APPDATA 'tealdeer\config\config.toml') }
     )
     foreach ($pair in $pairs) {
-        if (-not (Test-Path -LiteralPath $pair.Target)) {
-            Add-DoctorBroken $pair.Label ('not deployed at {0}' -f $pair.Target)
-        } elseif (-not (Test-Path -LiteralPath $pair.Source)) {
-            Add-DoctorNote $pair.Label ('deployed, but the repo copy is missing at {0}' -f $pair.Source)
-        } elseif ((Get-FileHash -LiteralPath $pair.Source).Hash -eq (Get-FileHash -LiteralPath $pair.Target).Hash) {
-            Add-DoctorOk $pair.Label $pair.Target
-        } else {
-            Add-DoctorNote $pair.Label ('{0} differs from the repo - the next run would replace it' -f $pair.Target)
-        }
+        Test-DoctorFile -Label $pair.Label -Source $pair.Source -Target $pair.Target
     }
     Test-DoctorTldrCache
 }
@@ -742,6 +801,7 @@ function Invoke-Doctor {
 
     Write-Phase 'Doctor - deployed config'
     Test-DoctorConfig
+    Test-DoctorThemes
 
     Write-Phase 'Doctor - the daily run'
     Test-DoctorSchedule -Schedule $Manifest.Schedule
@@ -1049,6 +1109,75 @@ function Install-NerdFont {
     } finally {
         Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Set-YamlKey {
+    # One key, set only when it is unset - k9s rewrites its config.yaml on
+    # every quit, so the file cannot be the repo's and a skin you picked is a
+    # choice. The same rule, and the same yq, as the zsh platforms.
+    #
+    # The value goes in through strenv rather than a quoted yq expression:
+    # PowerShell before 7.3 mangles embedded quotes on their way to a native
+    # command, and ConvertTo-NativeArgument is not defined this early.
+    param(
+        [string]$File,
+        [string]$Key,
+        [string]$Value,
+        [string]$Label
+    )
+    if (-not (Get-Command yq -ErrorAction SilentlyContinue)) {
+        Add-Result -Group 'shell' -Id $Label -Action 'missing' -Detail 'yq is not installed, so nothing can set the key'
+        return
+    }
+    $have = ''
+    if (Test-Path -LiteralPath $File) {
+        $have = (& yq $Key $File 2>$null | Select-Object -First 1)
+        if ($null -eq $have -or $have -eq 'null') { $have = '' }
+    }
+    if ($have -eq $Value) {
+        Add-Result -Group 'shell' -Id $Label -Action 'current' -Detail $Value
+        return
+    }
+    if ($have) {
+        Add-Result -Group 'shell' -Id $Label -Action 'skipped' `
+            -Detail ('yours is {0} - set {1} to {2} by hand to switch' -f $have, $Key, $Value)
+        return
+    }
+    $detail = '{0} = {1} in {2}' -f $Key, $Value, $File
+    if (-not $PSCmdlet.ShouldProcess($File, "set $Key")) {
+        Add-Result -Group 'shell' -Id $Label -Action 'would-install' -Detail $detail
+        return
+    }
+    New-Item -ItemType Directory -Path (Split-Path $File -Parent) -Force | Out-Null
+    if (-not (Test-Path -LiteralPath $File)) { New-Item -ItemType File -Path $File -Force | Out-Null }
+    $env:BOOTSTRAP_YQ_VALUE = $Value
+    & yq -i "$Key = strenv(BOOTSTRAP_YQ_VALUE)" $File
+    $code = $LASTEXITCODE
+    Remove-Item Env:\BOOTSTRAP_YQ_VALUE -ErrorAction SilentlyContinue
+    if ($code -eq 0) {
+        Add-Result -Group 'shell' -Id $Label -Action 'installed' -Detail $detail
+    } else {
+        Add-Result -Group 'shell' -Id $Label -Action 'failed' -Detail ('yq could not set {0} in {1}' -f $Key, $File)
+    }
+}
+
+function Get-K9sPaths {
+    # `k9s info` is the only answer that is right everywhere: the directory
+    # moved to XDG in 0.30 and differs by platform regardless. Its output is
+    # coloured, hence the escape strip, and k9s has spelled the line both
+    # Config and Configuration. Returns $null when k9s names no config file.
+    $esc = [char]27
+    $lines = @(& k9s info 2>$null) -replace "$esc\[[0-9;]*m", ''
+    $first = {
+        param($pattern)
+        $hit = $lines | Select-String -Pattern $pattern | Select-Object -First 1
+        if ($hit) { $hit.Matches[0].Groups[1].Value.Trim() } else { '' }
+    }
+    $config = & $first '^Config[a-z]*:\s*(.+)$'
+    if (-not $config) { return $null }
+    $skins = & $first '^Skins:\s*(.+)$'
+    if (-not $skins) { $skins = Join-Path (Split-Path $config -Parent) 'skins' }
+    @{ Config = $config; Skins = $skins }
 }
 
 function Get-CliToolsIndex {
@@ -1825,6 +1954,41 @@ if ($SkipShell) {
         }
     } else {
         Add-Result -Group 'shell' -Id 'carapace specs' -Action 'missing' -Detail 'carapace is not installed'
+    }
+
+
+    # k9s skin, and lazygit's config. The two themes this platform shares with
+    # Linux and macOS - there is no btop here, so no btop theme either.
+    #
+    # The skin file is the repo's; the key that names it is not, because k9s
+    # rewrites config.yaml on every quit. lazygit has no separate theme file at
+    # all, so there the whole config.yml is the repo's and Deploy-ManagedFile's
+    # usual .bak keeps whatever was there first.
+    if (Get-Command k9s -ErrorAction SilentlyContinue) {
+        $k9sPaths = Get-K9sPaths
+        if (-not $k9sPaths) {
+            Add-Result -Group 'shell' -Id 'k9s skin' -Action 'failed' -Detail 'k9s info named no config file'
+        } else {
+            Deploy-ManagedFile -Source (Join-Path $script:K9sSource 'skins\catppuccin-mocha.yaml') `
+                -Target (Join-Path $k9sPaths.Skins 'catppuccin-mocha.yaml') `
+                -Group 'shell' -Label 'k9s skin' -Marker 'managed by the bootstrap'
+            Set-YamlKey -File $k9sPaths.Config -Key '.k9s.ui.skin' -Value 'catppuccin-mocha' -Label 'k9s ui.skin'
+        }
+    } else {
+        Add-Result -Group 'shell' -Id 'k9s skin' -Action 'missing' -Detail 'k9s is not installed'
+    }
+
+    if (Get-Command lazygit -ErrorAction SilentlyContinue) {
+        $lazygitDir = (& lazygit --print-config-dir 2>$null | Select-Object -First 1)
+        if (-not $lazygitDir) {
+            Add-Result -Group 'shell' -Id 'lazygit config' -Action 'failed' -Detail 'lazygit --print-config-dir said nothing'
+        } else {
+            Deploy-ManagedFile -Source (Join-Path $script:LazygitSource 'config.yml') `
+                -Target (Join-Path $lazygitDir.Trim() 'config.yml') `
+                -Group 'shell' -Label 'lazygit config' -Marker 'managed by the bootstrap'
+        }
+    } else {
+        Add-Result -Group 'shell' -Id 'lazygit config' -Action 'missing' -Detail 'lazygit is not installed'
     }
 
     $editions = @(

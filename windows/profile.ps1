@@ -162,7 +162,8 @@ if (Get-Command lazydocker -ErrorAction SilentlyContinue) {
 # Workflow pickers: fzf over git branches, stashes and the tools list. Each one
 # only picks; what runs afterwards is an ordinary git command. The zsh side has
 # the same names, plus fkill - which PSFzf already provides here
-# (-EnableAliasFuzzyKillProcess above), so it is not redefined.
+# (-EnableAliasFuzzyKillProcess above), so it is not redefined. `y`, the yazi
+# wrapper, is below rather than here: it needs yazi, not fzf.
 if (Get-Command fzf -ErrorAction SilentlyContinue) {
     # gb - switch branch. Local and remote, newest commit first, log as preview.
     # A remote branch is checked out with --track, which makes the local branch.
@@ -212,6 +213,23 @@ if (Get-Command fzf -ErrorAction SilentlyContinue) {
         $pick = $lines | fzf --delimiter "`t" --with-nth=1 --height=70% --reverse --prompt='tool> ' `
             --preview 'tldr --color always {2}'
         if ($pick) { tldr ($pick -split "`t")[-1] }
+    }
+}
+
+# y -- yazi, then cd to wherever you quit it. yazi writes that directory to the
+# file named by --cwd-file; without a wrapper you always come back to where you
+# started. Outside the fzf block above: yazi has a finder of its own.
+if (Get-Command yazi -ErrorAction SilentlyContinue) {
+    function y {
+        $tmp = [System.IO.Path]::GetTempFileName()
+        try {
+            yazi @args --cwd-file="$tmp"
+            $cwd = (Get-Content -LiteralPath $tmp -Raw -ErrorAction SilentlyContinue)
+            if ($cwd) { $cwd = $cwd.Trim() }
+            if ($cwd -and $cwd -ne $PWD.Path) { Set-Location -LiteralPath $cwd }
+        } finally {
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 

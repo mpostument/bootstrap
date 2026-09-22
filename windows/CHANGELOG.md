@@ -20,6 +20,33 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.44.0]
+
+### Added
+
+- **yazi** (`sxyazi.yazi`) in the cli group, and a `y` function in the profile:
+  yazi writes the directory you quit in to `--cwd-file` and `y` sets the
+  location there. Outside the fzf block the other pickers are in - yazi has a
+  finder of its own.
+- **Catppuccin Mocha for k9s and lazygit.** The two of the three the other
+  platforms theme that exist here; there is no btop on Windows, and
+  `cli-parity.conf` already says why. The skin file is deployed like any other
+  config and `k9s.ui.skin` is set only when unset, because k9s rewrites
+  `config.yaml` on every quit. lazygit has no separate theme file, so its whole
+  `config.yml` is deployed, with `Deploy-ManagedFile`'s usual `.bak` for
+  whatever was there first.
+- **`-Doctor` checks that each theme is in effect**, file and key separately,
+  and **checks the `y` function** alongside the pickers.
+
+### Changed
+
+- **`Set-YamlKey` passes the value through `strenv`** rather than a quoted yq
+  expression: PowerShell before 7.3 mangles embedded quotes on the way to a
+  native command, and `ConvertTo-NativeArgument` is defined too late in the
+  script to help here.
+- **The file comparison behind `-Doctor`'s config checks is its own function**,
+  `Test-DoctorFile`, now that the theme checks want it too.
+
 ## [1.43.0]
 
 ### Added

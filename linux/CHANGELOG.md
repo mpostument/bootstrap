@@ -15,6 +15,46 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.37.0]
+
+### Added
+
+- **yazi, a file manager in the terminal**, as a release binary - two panes,
+  previews through the tools already here (bat, fd, rg, ffmpeg), and its
+  package manager `ya` beside it, both out of the one musl zip. With it a `y`
+  wrapper in zsh: yazi writes the directory you quit in to `--cwd-file`, and
+  `y` cds there, so browsing to somewhere and pressing q leaves you in it.
+  `y` sits outside the fzf guard the other pickers are behind - yazi has a
+  finder of its own.
+- **Catppuccin Mocha for k9s, lazygit and btop.** The last three tools still on
+  their own defaults while starship, bat, delta, atuin and ghostty share one
+  palette. Each theme file is the repo's and is copied like any other config;
+  what is not the repo's is the key that names it, because k9s rewrites
+  `config.yaml` on every quit and btop rewrites `btop.conf` on every exit. So
+  `k9s.ui.skin` and `color_theme` are set only when unset - a theme you picked
+  is a choice, the same rule the git config already follows - and a run says
+  `skipped` rather than replacing it. lazygit has no separate theme file at
+  all, so there the whole `config.yml` is the repo's, and the first config that
+  was not ours is kept as `config.yml.bak`.
+- **`--doctor` checks that each theme is in effect, not merely deployed.** A
+  skin file sitting in `skins/` with nothing naming it is the failure worth
+  catching: every install step says ok and the colours never change. It reports
+  the file and the key separately, and calls a theme of your own a note rather
+  than a fault.
+- **`--doctor` checks the `y` wrapper**, the way it already checks `gb`, `gs`,
+  `fkill` and `cheat`.
+
+### Changed
+
+- **`k9s info` is what the script asks for k9s's paths**, rather than guessing
+  at XDG: the directory moved in 0.30 and is different on every platform. The
+  skins directory comes from the same answer.
+- **`tools/test.sh` covers theme activation** - both writers driven against
+  scratch files in every state a real config turns up in: absent, written
+  before a theme was picked, holding the built-in default, already ours, and
+  holding somebody else's. It drives whichever of the two scripts would really
+  run on the machine, since `sed -i` takes a suffix on BSD and none on GNU.
+
 ## [1.36.1]
 
 ### Fixed

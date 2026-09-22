@@ -787,7 +787,7 @@ if section 'workflow pickers'; then
   fi
 
   printf '%s\n' "$wf_linux" | sed '1d;$d' > "$TMP/pickers.zsh"
-  for fn in gb gs fkill cheat; do
+  for fn in gb gs fkill cheat y; do
     contains "the picker block defines $fn" "$fn() {" "$(cat "$TMP/pickers.zsh")"
   done
   if command -v zsh >/dev/null 2>&1; then
@@ -848,6 +848,7 @@ function Add-DoctorBroken { param($Id, $Detail) $script:seen += "broken:$Id" }
 function Add-DoctorNote   { param($Id, $Detail) $script:seen += "note:$Id" }
 function Get-ProbeValue   { param($Key) if ($script:facts.ContainsKey($Key)) { $script:facts[$Key] } else { '' } }
 $healthy = @{ 'cmd:tools' = '1'; 'tools:rows' = '12'; 'resolve:fzf' = 'C:\fzf.exe'
+              'resolve:yazi' = 'C:\yazi.exe'; 'cmd:y' = '1'
               'cmd:gb' = '1'; 'cmd:gs' = '1'; 'cmd:fkill' = '1'; 'cmd:cheat' = '1' }
 # `+` on hashtables throws on a repeated key rather than overriding it.
 function With([hashtable]$base, [hashtable]$over) { $c = $base.Clone(); foreach ($k in $over.Keys) { $c[$k] = $over[$k] }; $c }
@@ -857,13 +858,138 @@ function Run([hashtable]$facts) { $script:facts = $facts; $script:seen = @(); Te
 "emptylist=$(Run (With $healthy @{ 'tools:rows' = '0' }))"
 "nofzf=$(Run @{ 'cmd:tools' = '1'; 'tools:rows' = '3' })"
 "ghostscript=$(Run (With $healthy @{ 'cmd:gs' = '0'; 'app:gs' = 'C:\gs\gs.exe' }))"
+"noyazi=$(Run (With $healthy @{ 'resolve:yazi' = ''; 'cmd:y' = '0' }))"
 PWSH
     win_doc="$(T_ROOT="$(native_path "$ROOT")" pwsh -NoProfile -File "$(native_path "$TMP")/doctor-win.ps1" 2>&1)"
-    contains 'windows doctor: a healthy shell is all ok' 'healthy=ok:tools,ok:gb,ok:fkill,ok:cheat,ok:gs' "$win_doc"
+    contains 'windows doctor: a healthy shell is all ok' 'healthy=ok:tools,ok:y,ok:gb,ok:fkill,ok:cheat,ok:gs' "$win_doc"
     contains 'windows doctor: no profile means no tools'  'broken:tools' "$win_doc"
     contains 'windows doctor: an empty list is broken'    'emptylist=broken:tools' "$win_doc"
-    contains 'windows doctor: no fzf is a note, not a failure' 'nofzf=ok:tools,note:workflow pickers' "$win_doc"
+    contains 'windows doctor: no fzf is a note, not a failure' 'nofzf=ok:tools,note:y,note:workflow pickers' "$win_doc"
+    contains 'windows doctor: no yazi is a note, not a failure' 'noyazi=ok:tools,note:y,ok:gb' "$win_doc"
     contains "windows doctor: Ghostscript's gs is a note" 'note:gs' "$win_doc"
+  fi
+fi
+
+# ---------------------------------------------------------- theme activation --
+#
+# k9s, lazygit and btop are themed by deploying one file and setting one key.
+# The deploy is a copy like any other; the key is the part with a rule - set it
+# when it is unset, leave a choice of somebody's alone - so that is what is
+# driven here, with the real functions and scratch files.
+
+if section 'theme activation'; then
+  for f in k9s/skins/catppuccin-mocha.yaml lazygit/config.yml btop/themes/catppuccin_mocha.theme; do
+    [[ -s "${ROOT}/$f" ]] && ok "$f is in the repo" || bad "$f is in the repo" 'a non-empty file' 'missing or empty'
+  done
+
+  # The skin file's name is what the ui.skin key has to say, and the theme
+  # file's is what color_theme has to say. A rename of either without the other
+  # leaves a theme nothing reads.
+  skin_key="$(sed -n "s/.*set_yaml_key .* '\.k9s\.ui\.skin' '\([^']*\)'.*/\1/p" \
+              "${ROOT}/linux/bootstrap.sh" | head -1)"
+  is 'the k9s skin file is the one ui.skin names' 'catppuccin-mocha' "$skin_key"
+  btop_key="$(sed -n "s/^ *btop_set_theme .* '\([^']*\)'.*/\1/p" \
+              "${ROOT}/linux/bootstrap.sh" | head -1)"
+  is 'the btop theme file is the one color_theme names' 'catppuccin_mocha' "$btop_key"
+
+  # sed -i takes a suffix argument on BSD and none on GNU, so the two scripts
+  # spell the rewrite differently. Drive the one that would really run here.
+  theme_src="${ROOT}/linux/bootstrap.sh"
+  [[ "$(uname -s)" == Darwin ]] && theme_src="${ROOT}/macos/bootstrap.sh"
+
+  # btop.conf is not YAML, so its reader and writer are plain sed. Every state
+  # a real btop.conf turns up in: absent, written before a theme was picked,
+  # holding the built-in default, already ours, and holding somebody else's.
+  {
+    printf 'DRY_RUN=no\n'
+    printf 'result() { printf "%%s %%s\\n" "$1" "$3"; }\n'
+    extract_func "$theme_src" btop_theme_of
+    extract_func "$theme_src" btop_set_theme
+    printf 'btop_set_theme "$1" catppuccin_mocha\n'
+    printf 'printf "now=%%s\\n" "$(btop_theme_of "$1")"\n'
+  } > "$TMP/btop.sh"
+
+  bt() { bash "$TMP/btop.sh" "$1" 2>&1; }
+
+  conf="$TMP/btop-absent.conf"
+  out="$(bt "$conf")"
+  contains 'btop: no btop.conf yet is written, not skipped' 'installed' "$out"
+  contains 'btop: and the theme takes'                      'now=catppuccin_mocha' "$out"
+
+  conf="$TMP/btop-default.conf"
+  printf '#comment\ncolor_theme = "Default"\nupdate_ms = 2000\n' > "$conf"
+  out="$(bt "$conf")"
+  contains 'btop: the built-in Default counts as unset' 'upgraded' "$out"
+  contains 'btop: and is replaced'                      'now=catppuccin_mocha' "$out"
+  is      'btop: the rest of btop.conf is untouched' 'update_ms = 2000' \
+          "$(grep '^update_ms' "$conf")"
+
+  conf="$TMP/btop-empty.conf"
+  printf 'color_theme = ""\n' > "$conf"
+  contains 'btop: an empty value counts as unset' 'now=catppuccin_mocha' "$(bt "$conf")"
+
+  conf="$TMP/btop-ours.conf"
+  printf 'color_theme = "catppuccin_mocha"\n' > "$conf"
+  contains 'btop: a second run changes nothing' 'current' "$(bt "$conf")"
+
+  conf="$TMP/btop-theirs.conf"
+  printf 'color_theme = "gruvbox_dark"\n' > "$conf"
+  out="$(bt "$conf")"
+  contains 'btop: a theme of your own is left alone' 'skipped' "$out"
+  contains 'btop: really left alone'                 'now=gruvbox_dark' "$out"
+
+  # The same rule over YAML, which is yq's job rather than sed's.
+  if ! command -v yq >/dev/null 2>&1; then
+    skip 'the k9s ui.skin key' 'yq is not installed'
+  else
+    {
+      printf 'DRY_RUN=no\n'
+      printf 'result() { printf "%%s %%s\\n" "$1" "$3"; }\n'
+      extract_func "$theme_src" set_yaml_key
+      printf 'set_yaml_key "$1" .k9s.ui.skin catppuccin-mocha skin\n'
+      printf 'printf "now=%%s\\n" "$(yq ".k9s.ui.skin // \\"\\"" "$1")"\n'
+    } > "$TMP/yamlkey.sh"
+
+    yk() { bash "$TMP/yamlkey.sh" "$1" 2>&1; }
+
+    cfg="$TMP/k9s-absent.yaml"
+    out="$(yk "$cfg")"
+    contains 'k9s: no config.yaml yet is written' 'installed' "$out"
+    contains 'k9s: and the skin takes'            'now=catppuccin-mocha' "$out"
+
+    cfg="$TMP/k9s-partial.yaml"
+    printf 'k9s:\n  refreshRate: 5\n  ui:\n    headless: false\n' > "$cfg"
+    out="$(yk "$cfg")"
+    contains 'k9s: an existing config gains the key' 'installed' "$out"
+    is 'k9s: and keeps everything else' '5' "$(yq '.k9s.refreshRate' "$cfg")"
+
+    cfg="$TMP/k9s-ours.yaml"
+    printf 'k9s:\n  ui:\n    skin: catppuccin-mocha\n' > "$cfg"
+    contains 'k9s: a second run changes nothing' 'current' "$(yk "$cfg")"
+
+    cfg="$TMP/k9s-theirs.yaml"
+    printf 'k9s:\n  ui:\n    skin: dracula\n' > "$cfg"
+    out="$(yk "$cfg")"
+    contains 'k9s: a skin of your own is left alone' 'skipped' "$out"
+    contains 'k9s: really left alone'                'now=dracula' "$out"
+
+    # A dry run is the whole promise of --dry-run: it must not write.
+    cfg="$TMP/k9s-dry.yaml"
+    sed 's/^DRY_RUN=no$/DRY_RUN=yes/' "$TMP/yamlkey.sh" > "$TMP/yamlkey-dry.sh"
+    bash "$TMP/yamlkey-dry.sh" "$cfg" >/dev/null 2>&1
+    [[ -e "$cfg" ]] && bad '--dry-run writes no config.yaml' 'no file' 'it made one' \
+                    || ok '--dry-run writes no config.yaml'
+  fi
+
+  # The skin and the lazygit config have to parse, or k9s and lazygit reject
+  # them at startup and the colours silently stay default.
+  if command -v yq >/dev/null 2>&1; then
+    for f in k9s/skins/catppuccin-mocha.yaml lazygit/config.yml; do
+      if yq -e '.' "${ROOT}/$f" >/dev/null 2>&1; then ok "$f is valid YAML"
+      else bad "$f is valid YAML" 'parses' "$(yq '.' "${ROOT}/$f" 2>&1 | head -1)"; fi
+    done
+  else
+    skip 'the deployed YAML parses' 'yq is not installed'
   fi
 fi
 

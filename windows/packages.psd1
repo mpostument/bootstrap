@@ -41,6 +41,7 @@
                 'MrKaran.Doggo'
                 'JesseDuffield.lazygit'
                 'JesseDuffield.Lazydocker'
+                'sxyazi.yazi'
                 'dbrgn.tealdeer'
             )
         }

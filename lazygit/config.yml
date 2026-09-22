@@ -1,0 +1,41 @@
+# config.yml - lazygit's config, managed by the bootstrap on every platform.
+#
+# Unlike k9s and btop, lazygit has no separate theme file: its colours live in
+# the one config file, under gui.theme. So this whole file is the repo's, and a
+# run replaces a copy that has drifted from it - the first replacement is kept
+# as config.yml.bak. Settings of your own belong here, in the repo, where all
+# three machines get them.
+#
+# The palette is Catppuccin Mocha, the same one starship.toml, the bat theme,
+# the atuin theme, the k9s skin and the ghostty config use. Colours from
+# catppuccin/lazygit (MIT).
+gui:
+  theme:
+    activeBorderColor:
+      - '#89b4fa'
+      - bold
+    inactiveBorderColor:
+      - '#a6adc8'
+    searchingActiveBorderColor:
+      - '#f9e2af'
+    optionsTextColor:
+      - '#89b4fa'
+    selectedLineBgColor:
+      - '#313244'
+    inactiveViewSelectedLineBgColor:
+      - '#6c7086'
+    cherryPickedCommitFgColor:
+      - '#89b4fa'
+    cherryPickedCommitBgColor:
+      - '#45475a'
+    markedBaseCommitFgColor:
+      - '#89b4fa'
+    markedBaseCommitBgColor:
+      - '#f9e2af'
+    unstagedChangesColor:
+      - '#f38ba8'
+    defaultFgColor:
+      - '#cdd6f4'
+
+  authorColors:
+    '*': '#b4befe'
