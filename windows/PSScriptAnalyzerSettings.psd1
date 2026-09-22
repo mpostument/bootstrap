@@ -48,6 +48,14 @@
         # them now would break nothing and read worse.
         'PSUseSingularNouns'
 
+        # 2, both `$global:ToolsRows`. One file writes that list and another
+        # reads it: bootstrap.ps1 generates tools-list.ps1, the profile
+        # dot-sources it, `cheat` in the profile reads it back, and -Doctor
+        # asks a fresh shell how many rows it has. A script-scoped variable
+        # belongs to the file it is written in, so it would not survive any of
+        # those hops - this one is global on purpose.
+        'PSAvoidGlobalVars'
+
         # 1. A BOM is what Windows PowerShell 5.1 needs to read a UTF-8 file,
         # and what this repository deliberately does not write elsewhere.
         'PSUseBOMForUnicodeEncodedFile'

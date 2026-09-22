@@ -15,6 +15,17 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.37.1]
+
+### Fixed
+
+- **difftastic stopped installing and upgrading.** 0.71.0 put the version into
+  its asset name - `difft-0.71.0-x86_64-unknown-linux-gnu.tar.gz` where every
+  release up to 0.70.0 was `difft-x86_64-unknown-linux-gnu.tar.gz` - so the
+  URL the manifest builds has 404ed since. A machine that already has difft
+  kept the copy it had; a fresh one got nothing. `verify-manifests.yml` caught
+  it on both architectures, which is what that workflow is for.
+
 ## [1.37.0]
 
 ### Added
