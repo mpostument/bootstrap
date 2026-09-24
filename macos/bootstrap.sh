@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.40.0'
+BOOTSTRAP_VERSION='1.41.0'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -936,6 +936,35 @@ btop_theme_of() {
     | tail -1
 }
 
+# yazi_flavor_of <theme.toml> - the dark flavor named in it, empty when the
+# file, the table or the key is absent. theme.toml is TOML and there is no TOML
+# reader in the cli group, but the shape that matters is one key in one table,
+# which awk reads exactly. Both spellings count: the [flavor] table yazi's own
+# docs show, and the dotted flavor.dark a TOML writer may leave instead - miss
+# the second and the phase below would append a table that is already there,
+# which is a duplicate key and a config yazi refuses to load.
+yazi_flavor_of() {
+  [[ -f "$1" ]] || return 0
+  awk -v q="'" '
+    /^[[:space:]]*\[/ {
+      table = ($0 ~ /^[[:space:]]*\[flavor\][[:space:]]*(#.*)?$/)
+      top = 0
+      next
+    }
+    NR == 1 { top = 1 }
+    (table || top) && $0 ~ /^[[:space:]]*(flavor\.)?dark[[:space:]]*=/ {
+      if (top && $0 !~ /^[[:space:]]*flavor\.dark/) next
+      line = $0
+      sub(/^[^=]*=[[:space:]]*/, "", line)
+      sub(/[[:space:]]*#.*$/, "", line)
+      gsub(/[[:space:]]+$/, "", line)
+      gsub("^[\"" q "]|[\"" q "]$", "", line)
+      print line
+      exit
+    }
+  ' "$1"
+}
+
 # k9s_paths - the config file and skins directory, into _K9S_CFG and _K9S_SKINS.
 # `k9s info` is the only answer that is right everywhere: the directory moved
 # to XDG in 0.30 and differs by platform regardless. The output is coloured,
@@ -968,7 +997,7 @@ doctor_config() {   # doctor_config <label> <repo copy> <deployed path>
 # catching here is a theme file deployed with nothing naming it: every install
 # step says ok, and the colours never change.
 doctor_check_themes() {
-  local skin lazygit_dir theme
+  local skin lazygit_dir theme flavor yazi_dir
   if ! command -v k9s >/dev/null 2>&1; then
     :
   elif ! k9s_paths; then
@@ -1004,6 +1033,23 @@ doctor_check_themes() {
       catppuccin_mocha) doctor_ok 'btop color_theme' 'catppuccin_mocha' ;;
       ''|Default) doctor_broken 'btop color_theme' 'unset in btop.conf - nothing tells btop to use the theme' ;;
       *) doctor_note 'btop color_theme' "$theme - yours, not the repo's" ;;
+    esac
+  fi
+
+  if command -v yazi >/dev/null 2>&1; then
+    yazi_dir="${YAZI_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/yazi}"
+    doctor_config 'yazi flavor' \
+      "${SCRIPT_DIR}/../yazi/flavors/catppuccin-mocha.yazi/flavor.toml" \
+      "${yazi_dir}/flavors/catppuccin-mocha.yazi/flavor.toml"
+    doctor_config 'yazi tmTheme' \
+      "${SCRIPT_DIR}/../yazi/flavors/catppuccin-mocha.yazi/tmtheme.xml" \
+      "${yazi_dir}/flavors/catppuccin-mocha.yazi/tmtheme.xml"
+    flavor="$(yazi_flavor_of "${yazi_dir}/theme.toml")"
+    case "$flavor" in
+      catppuccin-mocha) doctor_ok 'yazi dark flavor' 'catppuccin-mocha' ;;
+      '') doctor_broken 'yazi dark flavor' \
+            "unset in ${yazi_dir}/theme.toml - nothing tells yazi to use the flavor" ;;
+      *) doctor_note 'yazi dark flavor' "$flavor - yours, not the repo's" ;;
     esac
   fi
 }
@@ -2272,6 +2318,48 @@ btop_set_theme() {
   esac
 }
 
+# yazi_set_flavor <theme.toml> <flavor> - the same rule as set_yaml_key, for
+# TOML. Three shapes to land in: no file, a file with a [flavor] table the key
+# is missing from, and a file with no such table. awk writes a whole new file
+# rather than editing in place, because `sed -i` spells its backup argument
+# differently on macOS and Linux and this function is the same on both.
+yazi_set_flavor() {
+  local file="$1" want="$2" have tmp
+  have="$(yazi_flavor_of "$file")"
+  case "$have" in
+    "$want")
+      result 'current' 'yazi dark flavor' "$want" ;;
+    '')
+      if [[ "$DRY_RUN" == "yes" ]]; then
+        result 'would-install' 'yazi dark flavor' "${want} in ${file}"
+      elif [[ ! -f "$file" ]]; then
+        mkdir -p "$(dirname "$file")"
+        printf '[flavor]\ndark = "%s"\n' "$want" > "$file"
+        result 'installed' 'yazi dark flavor' "$file"
+      elif grep -q '^[[:space:]]*\[flavor\]' "$file"; then
+        tmp="${file}.bootstrap.$$"
+        if awk -v want="$want" '
+             { print }
+             !done && /^[[:space:]]*\[flavor\][[:space:]]*(#.*)?$/ {
+               printf "dark = \"%s\"\n", want
+               done = 1
+             }
+           ' "$file" > "$tmp" && mv "$tmp" "$file"; then
+          result 'upgraded' 'yazi dark flavor' "$file"
+        else
+          rm -f "$tmp"
+          result 'failed' 'yazi dark flavor' "could not rewrite $file"
+        fi
+      else
+        printf '\n[flavor]\ndark = "%s"\n' "$want" >> "$file"
+        result 'upgraded' 'yazi dark flavor' "$file"
+      fi ;;
+    *)
+      result 'skipped' 'yazi dark flavor' \
+             "yours is ${have} - set dark to ${want} by hand to switch" ;;
+  esac
+}
+
 K9S_SOURCE="${SCRIPT_DIR}/../k9s"
 phase 'k9s skin'
 if ! command -v k9s >/dev/null 2>&1; then
@@ -2319,6 +2407,26 @@ else
   deploy_config "${BTOP_SOURCE}/themes/catppuccin_mocha.theme" \
                 "${_btop_dir}/themes/catppuccin_mocha.theme" 'btop theme'
   btop_set_theme "$_btop_conf" 'catppuccin_mocha'
+fi
+
+# yazi flavor. A flavor is a directory, not a file - flavor.toml and the
+# tmTheme the preview pane highlights code with - so the package is copied
+# piece by piece. It is self-contained on purpose: the theme.toml catppuccin
+# publishes instead names a .tmTheme by absolute path, which one file shared by
+# three platforms cannot carry. theme.toml here is yours, not the repo's, so
+# the key naming the flavor is set only when unset, as with k9s and btop.
+YAZI_SOURCE="${SCRIPT_DIR}/../yazi"
+phase 'yazi flavor'
+if ! command -v yazi >/dev/null 2>&1; then
+  result 'missing' 'yazi flavor' 'yazi is not installed'
+else
+  _yazi_dir="${YAZI_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/yazi}"
+  _yazi_pkg="${_yazi_dir}/flavors/catppuccin-mocha.yazi"
+  deploy_config "${YAZI_SOURCE}/flavors/catppuccin-mocha.yazi/flavor.toml" \
+                "${_yazi_pkg}/flavor.toml" 'yazi flavor'
+  deploy_config "${YAZI_SOURCE}/flavors/catppuccin-mocha.yazi/tmtheme.xml" \
+                "${_yazi_pkg}/tmtheme.xml" 'yazi tmTheme'
+  yazi_set_flavor "${_yazi_dir}/theme.toml" 'catppuccin-mocha'
 fi
 
 # Git config

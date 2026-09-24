@@ -48,9 +48,9 @@ Homebrew, and not under `sudo`.
   download caches - and only where the manifest asks for it.
 - Config the repo owns is copied; a setting that is yours is left alone. The
   themes are both: the theme file is the repo's, and the one key that activates
-  it - k9s's `ui.skin`, btop's `color_theme` - is set only when it is unset,
-  because k9s and btop rewrite those files themselves and a theme you picked is
-  a choice. `--doctor` reports the file and the key separately, so a theme that
+  it - k9s's `ui.skin`, btop's `color_theme`, yazi's `dark` flavor - is set
+  only when it is unset, because those files are rewritten by the tools
+  themselves or hold settings of yours, and a theme you picked is a choice. `--doctor` reports the file and the key separately, so a theme that
   is deployed but not in effect does not read as healthy.
 
 ## Checks

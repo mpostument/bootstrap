@@ -993,6 +993,208 @@ if section 'theme activation'; then
   fi
 fi
 
+# ------------------------------------------------------------ yazi flavor ----
+#
+# The flavor package is copied like any other config, so what is worth testing
+# is the key that names it: theme.toml is the user's file, and the rule is the
+# one k9s and btop already follow - set it only when it is unset. The two
+# functions are lifted out of the scripts, so a stale copy cannot pass.
+
+if section 'yazi flavor'; then
+  yazi_flavor_src="${ROOT}/yazi/flavors/catppuccin-mocha.yazi"
+
+  for f in flavor.toml tmtheme.xml LICENSE LICENSE-tmtheme; do
+    if [[ -f "${yazi_flavor_src}/${f}" ]]; then ok "yazi flavor ships ${f}"
+    else bad "yazi flavor ships ${f}" 'the file' 'missing'; fi
+  done
+
+  # The directory name is the flavor name yazi looks up, so it has to be the
+  # one the scripts write into theme.toml.
+  if grep -q "yazi_set_flavor .*'catppuccin-mocha'" "${ROOT}/macos/bootstrap.sh" \
+     && [[ -d "${yazi_flavor_src}" ]]; then
+    ok 'the flavor directory is the one theme.toml names'
+  else
+    bad 'the flavor directory is the one theme.toml names' \
+        'catppuccin-mocha.yazi, named by the phase' 'they disagree'
+  fi
+
+  if [[ -n "${PYTHON[*]}" ]]; then
+    if "${PYTHON[@]}" -c "import tomllib,sys; tomllib.load(open(sys.argv[1],'rb'))" \
+         "${yazi_flavor_src}/flavor.toml" 2>/dev/null; then
+      ok 'flavor.toml is valid TOML'
+    else
+      bad 'flavor.toml is valid TOML' 'parses' 'it does not'
+    fi
+    if "${PYTHON[@]}" -c "
+import sys, xml.etree.ElementTree as ET
+ET.parse(sys.argv[1])" "${yazi_flavor_src}/tmtheme.xml" 2>/dev/null; then
+      ok 'tmtheme.xml is valid XML'
+    else
+      bad 'tmtheme.xml is valid XML' 'parses' 'it does not'
+    fi
+  else
+    skip 'the flavor files parse' 'no python3 with tomllib'
+  fi
+
+  # linux and macos run the same two functions; a fix to one that misses the
+  # other is the failure this catches.
+  yazi_funcs_of() {
+    extract_func "$1" yazi_flavor_of
+    extract_func "$1" yazi_set_flavor
+  }
+  yz_linux="$(yazi_funcs_of "${ROOT}/linux/bootstrap.sh")"
+  yz_macos="$(yazi_funcs_of "${ROOT}/macos/bootstrap.sh")"
+  if [[ -n "$yz_linux" && "$yz_linux" == "$yz_macos" ]]; then
+    ok 'linux and macos share the yazi functions'
+  else
+    bad 'linux and macos share the yazi functions' 'identical, non-empty' 'they differ or are missing'
+  fi
+
+  # The reader, against the shapes a theme.toml comes in.
+  {
+    echo 'yazi_flavor_of_probe() { yazi_flavor_of "$1"; }'
+    printf '%s\n' "$yz_macos"
+  } > "$TMP/yazi-read.sh"
+
+  read_case() {   # read_case <label> <want> <file contents>
+    printf '%b' "$3" > "$TMP/theme.toml"
+    is "$1" "$2" "$(bash -c ". '$TMP/yazi-read.sh'; yazi_flavor_of '$TMP/theme.toml'")"
+  }
+  read_case 'reads the [flavor] table'        'catppuccin-mocha' '[flavor]\ndark = "catppuccin-mocha"\n'
+  read_case 'reads a dotted flavor.dark'      'catppuccin-mocha' 'flavor.dark = "catppuccin-mocha"\n'
+  read_case 'reads a single-quoted value'     'dracula'          "[flavor]\ndark = 'dracula'  # mine\n"
+  read_case 'ignores dark in another table'   ''                 '[mgr]\ndark = "notthis"\n'
+  read_case 'a table with only light is unset' ''                '[flavor]\nlight = "catppuccin-latte"\n'
+  read_case 'a file with no flavor is unset'  ''                 '[mgr]\ncwd = { fg = "#94e2d5" }\n'
+  is 'a theme.toml that is not there is unset' '' \
+     "$(bash -c ". '$TMP/yazi-read.sh'; yazi_flavor_of '$TMP/no-such-theme.toml'")"
+
+  # The writer. DRY_RUN and result() are the script's, so they are stubbed the
+  # way the btop tests above stub them.
+  {
+    echo 'DRY_RUN="${DRY_RUN:-no}"'
+    printf 'result() { printf "%%s\\n" "$1"; }\n'
+    printf '%s\n' "$yz_macos"
+  } > "$TMP/yazi-set.sh"
+  set_case() {   # set_case <file> [assignment] - prints the action, leaves the file
+    # The assignment goes on the call, not on the `.`: bash keeps a prefix
+    # assignment to a special builtin only in POSIX mode, and this is not it.
+    bash -c ". '$TMP/yazi-set.sh'; ${2:-} yazi_set_flavor '$1' catppuccin-mocha"
+  }
+
+  cfg="$TMP/yazi-new.toml"
+  is 'no theme.toml yet is written, not skipped' 'installed' "$(set_case "$cfg")"
+  is 'and the flavor takes' 'catppuccin-mocha' \
+     "$(bash -c ". '$TMP/yazi-read.sh'; yazi_flavor_of '$cfg'")"
+  is 'a second run changes nothing' 'current' "$(set_case "$cfg")"
+
+  cfg="$TMP/yazi-notable.toml"
+  printf '[mgr]\ncwd = { fg = "#94e2d5" }\n' > "$cfg"
+  is 'a theme.toml with no [flavor] table gains one' 'upgraded' "$(set_case "$cfg")"
+  is 'and the flavor takes' 'catppuccin-mocha' \
+     "$(bash -c ". '$TMP/yazi-read.sh'; yazi_flavor_of '$cfg'")"
+  contains 'and the rest of the file is untouched' 'cwd = { fg = "#94e2d5" }' "$(cat "$cfg")"
+
+  cfg="$TMP/yazi-light.toml"
+  printf '[flavor]\nlight = "catppuccin-latte"\n' > "$cfg"
+  is 'a [flavor] table without dark gains the key' 'upgraded' "$(set_case "$cfg")"
+  contains 'and light is left alone' 'light = "catppuccin-latte"' "$(cat "$cfg")"
+
+  cfg="$TMP/yazi-theirs.toml"
+  printf '[flavor]\ndark = "dracula"\n' > "$cfg"
+  is 'a flavor of your own is left alone' 'skipped' "$(set_case "$cfg")"
+  is 'really left alone' 'dracula' \
+     "$(bash -c ". '$TMP/yazi-read.sh'; yazi_flavor_of '$cfg'")"
+
+  cfg="$TMP/yazi-dry.toml"
+  is '--dry-run says what it would do' 'would-install' "$(set_case "$cfg" 'DRY_RUN=yes')"
+  [[ -e "$cfg" ]] && bad '--dry-run writes no theme.toml' 'no file' 'it made one' \
+                  || ok '--dry-run writes no theme.toml'
+
+  # Every file the writer produces has to be TOML yazi will load.
+  if [[ -n "${PYTHON[*]}" ]]; then
+    for f in "$TMP"/yazi-new.toml "$TMP"/yazi-notable.toml "$TMP"/yazi-light.toml; do
+      if "${PYTHON[@]}" -c "import tomllib,sys; tomllib.load(open(sys.argv[1],'rb'))" "$f" 2>/dev/null; then
+        ok "$(basename "$f") is still valid TOML"
+      else
+        bad "$(basename "$f") is still valid TOML" 'parses' "$(cat "$f")"
+      fi
+    done
+  fi
+fi
+
+# ------------------------------------------------------------ the prompt ----
+#
+# starship.toml is one file shared by all three platforms, so a mistake in it
+# is a mistake everywhere. The right prompt is the part that breaks quietly:
+# zsh drops it as soon as the line you are typing reaches it, so a context
+# name wide enough - an EKS ARN is 55 columns - means no cluster shown on any
+# real command. These assert the config parses and that the alias that keeps
+# it narrow still fires.
+
+if section 'prompt'; then
+  if [[ -n "${PYTHON[*]}" ]]; then
+    if "${PYTHON[@]}" -c "import tomllib,sys; tomllib.load(open(sys.argv[1],'rb'))" \
+         "${ROOT}/starship.toml" 2>/dev/null; then
+      ok 'starship.toml is valid TOML'
+    else
+      bad 'starship.toml is valid TOML' 'parses' \
+        "$("${PYTHON[@]}" -c "import tomllib,sys; tomllib.load(open(sys.argv[1],'rb'))" \
+             "${ROOT}/starship.toml" 2>&1 | tail -1)"
+    fi
+  else
+    skip 'starship.toml is valid TOML' 'no python3 with tomllib'
+  fi
+
+  # The shells build the profile name as ctx_$group, so every group their
+  # case arms can produce needs a profile of that name in starship.toml - a
+  # missing one renders an empty prompt and the context silently vanishes.
+  if [[ -n "${PYTHON[*]}" ]]; then
+    have=$("${PYTHON[@]}" -c "
+import tomllib,sys
+print('\n'.join(sorted(tomllib.load(open(sys.argv[1],'rb')).get('profiles', {}))))" \
+      "${ROOT}/starship.toml")
+    groups=$( { sed -n "s/.*group=\\([a-z]*\\) ;;.*/\\1/p" "${ROOT}/linux/bootstrap.sh" \
+                                                              "${ROOT}/macos/bootstrap.sh"
+                sed -n "s/^ *\\([a-z]*\\) *= *@(.*/\\1/p" "${ROOT}/windows/profile.ps1"
+              } | sort -u )
+    for group in $groups; do
+      case $'\n'"$have"$'\n' in
+        *$'\n'"ctx_$group"$'\n'*) ok "starship.toml defines ctx_$group" ;;
+        *) bad "starship.toml defines ctx_$group" "ctx_$group in [profiles]" "$have" ;;
+      esac
+    done
+    [[ -z "$groups" ]] && bad 'the shells name at least one context group' 'some groups' 'none found'
+  else
+    skip 'every ctx_ profile the shells name exists' 'no python3 with tomllib'
+  fi
+
+  # The EKS alias, against a context name of the shape AWS actually hands out.
+  if command -v starship >/dev/null 2>&1; then
+    cat > "$TMP/kubeconfig" <<'YAML'
+apiVersion: v1
+kind: Config
+current-context: arn:aws:eks:us-west-2:774305598313:cluster/csaa-blue
+clusters: []
+users: []
+contexts:
+- name: arn:aws:eks:us-west-2:774305598313:cluster/csaa-blue
+  context: {cluster: c, user: u}
+YAML
+    rendered=$(KUBECONFIG="$TMP/kubeconfig" STARSHIP_CONFIG="${ROOT}/starship.toml" \
+                 starship prompt --profile ctx_kube --terminal-width=200 2>/dev/null \
+               | sed -e 's/%{[^%]*%}//g' -e $'s/\033\[[0-9;]*m//g')
+    contains 'an EKS ARN is trimmed to region/account/name' \
+             'us-west-2/774305598313/csaa-blue' "$rendered"
+    case "$rendered" in
+      *arn:aws:eks*) bad 'the ARN prefix is gone from the prompt' 'no arn:aws:eks' "$rendered" ;;
+      *)             ok  'the ARN prefix is gone from the prompt' ;;
+    esac
+  else
+    skip 'the EKS context alias' 'starship is not installed'
+  fi
+fi
+
 # ---------------------------------------------------------------- summary ----
 
 printf '\n%s== summary%s\n' "$C_CYAN" "$C_RESET"

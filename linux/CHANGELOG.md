@@ -15,6 +15,24 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.38.0]
+
+### Added
+
+- **Catppuccin Mocha for yazi**, the last tool in the set still on its own
+  colours. The flavor is a directory rather than a file - `flavor.toml` and
+  the `tmtheme.xml` the preview pane highlights code with - and it is
+  deployed whole to `~/.config/yazi/flavors/`. What catppuccin publishes for yazi instead is a
+  `theme.toml` naming a `.tmTheme` by absolute path, which one copy shared by
+  three platforms cannot carry; the flavor package from `yazi-rs/flavors`
+  (MIT) is self-contained, so it is the one vendored here.
+- **`theme.toml` keeps the same rule as k9s and btop**: the file is yours, and
+  `dark` is set only when it is unset - a flavor you chose is a choice, not
+  drift. Both spellings count as set, the `[flavor]` table and a dotted
+  `flavor.dark`, so a run cannot append a table that is already there.
+- **`--doctor` checks the flavor**, the two files and the key that names them
+  separately, the same three lines as macOS.
+
 ## [1.37.1]
 
 ### Fixed

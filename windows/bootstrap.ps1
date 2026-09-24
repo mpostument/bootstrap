@@ -66,7 +66,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '1.44.0'
+$script:BootstrapVersion = '1.45.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -84,6 +84,7 @@ $script:TealdeerSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'tealde
 $script:CarapaceSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'carapace'
 $script:K9sSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'k9s'
 $script:LazygitSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'lazygit'
+$script:YaziSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'yazi'
 $script:MergeScript = Join-Path $script:ToolRoot 'merge-terminal-settings.ps1'
 $script:MpvSource = Join-Path $script:ToolRoot 'mpv'
 
@@ -742,6 +743,26 @@ function Test-DoctorThemes {
                 -Target (Join-Path $dir.Trim() 'config.yml')
         }
     }
+
+    if (Get-Command yazi -ErrorAction SilentlyContinue) {
+        $yaziHome = Get-YaziConfigHome
+        $pkg = Join-Path $yaziHome 'flavors\catppuccin-mocha.yazi'
+        Test-DoctorFile -Label 'yazi flavor' `
+            -Source (Join-Path $script:YaziSource 'flavors\catppuccin-mocha.yazi\flavor.toml') `
+            -Target (Join-Path $pkg 'flavor.toml')
+        Test-DoctorFile -Label 'yazi tmTheme' `
+            -Source (Join-Path $script:YaziSource 'flavors\catppuccin-mocha.yazi\tmtheme.xml') `
+            -Target (Join-Path $pkg 'tmtheme.xml')
+        $themeFile = Join-Path $yaziHome 'theme.toml'
+        $flavor = Get-YaziFlavor -File $themeFile
+        if ($flavor -eq 'catppuccin-mocha') {
+            Add-DoctorOk 'yazi dark flavor' 'catppuccin-mocha'
+        } elseif (-not $flavor) {
+            Add-DoctorBroken 'yazi dark flavor' ('unset in {0} - nothing tells yazi to use the flavor' -f $themeFile)
+        } else {
+            Add-DoctorNote 'yazi dark flavor' ("{0} - yours, not the repo's" -f $flavor)
+        }
+    }
 }
 
 function Test-DoctorConfig {
@@ -1159,6 +1180,91 @@ function Set-YamlKey {
     } else {
         Add-Result -Group 'shell' -Id $Label -Action 'failed' -Detail ('yq could not set {0} in {1}' -f $Key, $File)
     }
+}
+
+function Get-YaziConfigHome {
+    # Yazi's own order: YAZI_CONFIG_HOME wins, otherwise %APPDATA%\yazi\config.
+    # Not the XDG path the zsh platforms use - on Windows yazi does not read it.
+    if ($env:YAZI_CONFIG_HOME) { return $env:YAZI_CONFIG_HOME }
+    return (Join-Path $env:APPDATA 'yazi\config')
+}
+
+function Get-YaziFlavor {
+    # The dark flavor named in theme.toml, '' when the file, the table or the
+    # key is absent. The same two spellings the zsh platforms read: the
+    # [flavor] table yazi documents, and a dotted flavor.dark before any table
+    # - miss the second and Set-YaziFlavor would append a table that is
+    # already there, which is a duplicate key and a file yazi refuses to load.
+    param([string]$File)
+    if (-not (Test-Path -LiteralPath $File)) { return '' }
+    $table = $false
+    $top = $true
+    foreach ($line in @(Get-Content -LiteralPath $File)) {
+        if ($line -match '^\s*\[') {
+            $table = ($line -match '^\s*\[flavor\]\s*(#.*)?$')
+            $top = $false
+            continue
+        }
+        $raw = ''
+        if ($top -and $line -match '^\s*flavor\.dark\s*=\s*(.+)$') { $raw = $matches[1] }
+        elseif ($table -and $line -match '^\s*dark\s*=\s*(.+)$') { $raw = $matches[1] }
+        if ($raw) { return ($raw -replace '\s*#.*$', '').Trim().Trim('"', "'") }
+    }
+    return ''
+}
+
+function Set-YaziFlavor {
+    # The same rule as Set-YamlKey, for TOML: set the key only when it is
+    # unset. Three shapes to land in - no file, a [flavor] table the key is
+    # missing from, and a file with no such table.
+    param(
+        [string]$File,
+        [string]$Value,
+        [string]$Label
+    )
+    $have = Get-YaziFlavor -File $File
+    if ($have -eq $Value) {
+        Add-Result -Group 'shell' -Id $Label -Action 'current' -Detail $Value
+        return
+    }
+    if ($have) {
+        Add-Result -Group 'shell' -Id $Label -Action 'skipped' `
+            -Detail ('yours is {0} - set dark to {1} by hand to switch' -f $have, $Value)
+        return
+    }
+    $detail = 'dark = {0} in {1}' -f $Value, $File
+    if (-not $PSCmdlet.ShouldProcess($File, 'set the dark flavor')) {
+        Add-Result -Group 'shell' -Id $Label -Action 'would-install' -Detail $detail
+        return
+    }
+    New-Item -ItemType Directory -Path (Split-Path $File -Parent) -Force | Out-Null
+    $key = 'dark = "{0}"' -f $Value
+    $action = 'upgraded'
+    if (-not (Test-Path -LiteralPath $File)) {
+        $out = @('[flavor]', $key)
+        $action = 'installed'
+    } else {
+        $out = New-Object System.Collections.Generic.List[string]
+        $inserted = $false
+        foreach ($line in @(Get-Content -LiteralPath $File)) {
+            $out.Add($line)
+            if (-not $inserted -and $line -match '^\s*\[flavor\]\s*(#.*)?$') {
+                $out.Add($key)
+                $inserted = $true
+            }
+        }
+        if (-not $inserted) {
+            $out.Add('')
+            $out.Add('[flavor]')
+            $out.Add($key)
+        }
+        $out = $out.ToArray()
+    }
+    # WriteAllLines rather than Set-Content: -Encoding UTF8 writes a BOM under
+    # PowerShell 5.1, and a BOM is not something a TOML reader has to accept.
+    $full = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($File)
+    [System.IO.File]::WriteAllLines($full, [string[]]$out, (New-Object System.Text.UTF8Encoding($false)))
+    Add-Result -Group 'shell' -Id $Label -Action $action -Detail $detail
 }
 
 function Get-K9sPaths {
@@ -1989,6 +2095,24 @@ if ($SkipShell) {
         }
     } else {
         Add-Result -Group 'shell' -Id 'lazygit config' -Action 'missing' -Detail 'lazygit is not installed'
+    }
+
+    # yazi's flavor. A flavor is a directory, not a file - flavor.toml and the
+    # tmTheme the preview pane highlights code with - so the package is copied
+    # piece by piece. theme.toml is not the repo's: it is where your own
+    # overrides live, so the key naming the flavor is set only when unset.
+    if (Get-Command yazi -ErrorAction SilentlyContinue) {
+        $yaziHome = Get-YaziConfigHome
+        $yaziPkg = Join-Path $yaziHome 'flavors\catppuccin-mocha.yazi'
+        Deploy-ManagedFile -Source (Join-Path $script:YaziSource 'flavors\catppuccin-mocha.yazi\flavor.toml') `
+            -Target (Join-Path $yaziPkg 'flavor.toml') `
+            -Group 'shell' -Label 'yazi flavor' -Marker 'managed by the bootstrap'
+        Deploy-ManagedFile -Source (Join-Path $script:YaziSource 'flavors\catppuccin-mocha.yazi\tmtheme.xml') `
+            -Target (Join-Path $yaziPkg 'tmtheme.xml') `
+            -Group 'shell' -Label 'yazi tmTheme' -Marker 'managed by the bootstrap'
+        Set-YaziFlavor -File (Join-Path $yaziHome 'theme.toml') -Value 'catppuccin-mocha' -Label 'yazi dark flavor'
+    } else {
+        Add-Result -Group 'shell' -Id 'yazi flavor' -Action 'missing' -Detail 'yazi is not installed'
     }
 
     $editions = @(

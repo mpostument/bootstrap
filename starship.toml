@@ -156,6 +156,14 @@ symbol = '☸ '
 style = 'blue bold'
 format = '[$symbol$context( \($namespace\))]($style) '
 
+# EKS names a context by its full ARN, which is 55 columns of which only three
+# fields differ between clusters. zsh hides the right prompt as soon as the line
+# you are typing reaches it, so a context this wide means no cluster shown on
+# any real command. Keep region, account and cluster name.
+[[kubernetes.contexts]]
+context_pattern = '^arn:aws:eks:(?P<region>[^:]+):(?P<account>[0-9]+):cluster/(?P<name>.+)$'
+context_alias = '$region/$account/$name'
+
 [helm]
 style = 'teal bold'
 symbol = '⎈ '
