@@ -564,6 +564,7 @@ parity_row() {    # parity_row <package>
 # included. The replacement goes through a quoted variable: written inline,
 # bash's handling of backslashes there garbles it, and 5.2+ would also expand
 # an & in it.
+# shellcheck disable=SC2028  # the echoes print code: \e must stay literal
 emit_tools_function() {   # emit_tools_function [<package> <command> <description>]...
   # A row is emitted single-quoted, so a literal ' has to become '\'' . The
   # replacement is written bare rather than as "$q": bash 3.2 - still what
