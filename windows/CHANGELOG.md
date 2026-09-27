@@ -20,6 +20,49 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.47.0]
+
+### Added
+
+- **`-Select`: choose which packages this machine has.** A menu of every
+  winget package and uv tool in the manifest - fzf when it is on `PATH`, with
+  the current pick pre-ticked through a `load` binding, and a numbered console
+  list on a first run before fzf is installed. Ticked is installed; unticked
+  and installed is uninstalled, after one confirmation listing all of it.
+  Declining abandons the whole pick rather than saving it without the
+  removals, which would leave those packages installed but unwanted, and
+  never offered for removal again.
+- **The pick is saved** to `%LOCALAPPDATA%\windows-bootstrap\selection.json`,
+  beside `last-run`, and every later run follows it, the daily task included.
+  It keeps two lists: `Selected`, what was ticked, and `Known`, everything the
+  menu offered - so an unticked package can be told from one the manifest
+  gained since. With no file every package is wanted, exactly as before.
+- **`Required` in `packages.psd1`**: ids that are always installed and show
+  locked in the menu - pwsh, git, uv and mise, which other phases stand on.
+  Optional, so an older manifest still loads; an id no group lists fails the
+  run up front.
+- **New packages are asked about, not assumed.** A manual run asks once per
+  package the manifest gained since the last pick and remembers the answer
+  either way. An unattended run installs none of them and reports each as
+  `deselected`, so nothing arrives on the machine that nobody chose.
+- **User-scope packages uninstall from an elevated run.** winget refuses
+  (`0x8A15007D`) to remove a package installed per user - most portable CLIs -
+  from an administrator process. That one call is rerun un-elevated as the
+  same user, through a throwaway scheduled task with `RunLevel Limited` that is
+  removed when it finishes.
+- **What the menu offers to remove follows the machine**: anything unticked
+  and still installed that a menu has offered before. A removal that failed
+  is offered again on the next `-Select` instead of being stranded as
+  unticked-but-installed.
+- **Result actions `removed`, `would-remove` and `deselected`**, and the run
+  history now records a removal as `-id`.
+
+### Removed
+
+- **ILSpy**, added in 1.46.0: dropped before anyone depended on it. Taking it
+  out of the manifest stops installs and upgrades; a copy already installed
+  stays until `winget uninstall icsharpcode.ILSpy`.
+
 ## [1.46.0]
 
 ### Added

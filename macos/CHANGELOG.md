@@ -15,6 +15,14 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.43.0]
+
+### Removed
+
+- **ILSpy**, added in 1.42.0: dropped before anyone depended on it. Taking it
+  out of the manifest stops installs and upgrades; a copy already installed
+  stays until `brew uninstall --cask ilspy`.
+
 ## [1.42.0]
 
 ### Added

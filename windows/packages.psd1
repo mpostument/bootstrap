@@ -61,7 +61,6 @@
                 'Python.Launcher'
                 'DenoLand.Deno'
                 'Microsoft.DotNet.SDK.10'
-                'icsharpcode.ILSpy'
                 'mitmproxy.mitmproxy'
                 # node, go and java are not here: they come from
                 # mise/tools.conf at the repo root, the one list all three
@@ -162,6 +161,17 @@
                 'Zoom.Zoom.EXE'
             )
         }
+    )
+
+    # Always installed: bootstrap.ps1 -Select shows these locked, and a saved
+    # pick that leaves one out is overruled. Each is something another phase
+    # stands on - the daily task runs under pwsh, the git phase and the update
+    # check need git, uv installs every UvTools entry, mise the runtimes.
+    Required = @(
+        'Microsoft.PowerShell'
+        'Git.Git'
+        'astral-sh.uv'
+        'jdx.mise'
     )
 
     Pins = @{

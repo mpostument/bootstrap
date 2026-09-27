@@ -102,6 +102,33 @@ winget search "<name>"      # find the exact id
 
 Put the id in a group in `packages.psd1` and re-run.
 
+## Choosing packages
+
+```powershell
+.\bootstrap.ps1 -Select            # tick what this machine should have
+.\bootstrap.ps1 -Select -WhatIf    # the same menu, and what it would change
+```
+
+`-Select` opens every package in the manifest as a menu - fzf when it is on
+`PATH` (Tab ticks, type to search), a numbered list before it is. Your current
+pick comes pre-ticked. On Enter, what you ticked is installed and what you
+unticked is uninstalled, after one confirmation that lists it; saying no keeps
+everything and saves nothing. Packages in `Required` in `packages.psd1` show
+locked (■) and are always installed - they are what other phases depend on.
+A package installed for your user alone - most CLI tools - is uninstalled
+un-elevated through a one-off scheduled task, since winget refuses to remove
+those from an administrator shell. Anything unticked that is still installed
+is offered for removal again on the next `-Select`.
+
+The pick is saved to `%LOCALAPPDATA%\windows-bootstrap\selection.json`, outside
+the checkout, and every later run follows it - the daily task too. Without that
+file every package is wanted, as before `-Select` existed; delete it to go back.
+
+A package added to the manifest after your last pick is asked about once, on
+the next manual run (`install it? [y/N]`), and the answer is remembered. The
+daily task never asks and never installs it; it reports it as `deselected`.
+Only `-Select` ever uninstalls anything.
+
 ## Options
 
 ```powershell

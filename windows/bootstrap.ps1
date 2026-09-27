@@ -32,6 +32,11 @@
     Pass --include-unknown to winget upgrade.
 .PARAMETER Silent
     Pass --silent to winget, suppressing installer UI.
+.PARAMETER Select
+    Open a menu of every package in the manifest, tick what this machine should
+    have, and apply it: install what was ticked, uninstall what was unticked
+    after one confirmation. Required packages are shown locked. The pick is
+    saved and every later run - the daily task too - installs only that.
 .PARAMETER ListGroups
     Print the groups and their package counts, then exit.
 .PARAMETER ListPackages
@@ -57,6 +62,7 @@ param(
     [switch]$SkipUpdateCheck,
     [switch]$IncludeUnknown,
     [switch]$Silent,
+    [switch]$Select,
     [switch]$ListGroups,
     [switch]$ListPackages,
     [switch]$ShowVersion,
@@ -66,7 +72,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '1.46.0'
+$script:BootstrapVersion = '1.47.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -136,7 +142,7 @@ function Add-Result {
         [string]$Id,
         [ValidateSet('installed', 'upgraded', 'current', 'held', 'present',
                      'missing', 'failed', 'would-install', 'would-upgrade', 'skipped',
-                     'ok', 'broken')]
+                     'removed', 'would-remove', 'deselected', 'ok', 'broken')]
         [string]$Action,
         [string]$Detail = ''
     )
@@ -145,6 +151,8 @@ function Add-Result {
         'upgraded'      { 'Green' }
         'would-install' { 'Yellow' }
         'would-upgrade' { 'Yellow' }
+        'removed'       { 'Magenta' }
+        'would-remove'  { 'Yellow' }
         'held'          { 'DarkYellow' }
         'missing'       { 'Yellow' }
         'failed'        { 'Red' }
@@ -314,6 +322,9 @@ function Get-PackageDelta {
         } elseif ($Before[$id] -ne $After[$id]) {
             $moved += ('{0} {1}>{2}' -f $id, $Before[$id], $After[$id])
         }
+    }
+    foreach ($id in ($Before.Keys | Sort-Object)) {
+        if (-not $After.ContainsKey($id)) { $moved += ('-{0}' -f $id) }
     }
     if ($moved.Count -eq 0) { return '' }
     if ($moved.Count -gt 8) {
@@ -1546,6 +1557,196 @@ function Install-MpvAddon {
     }
 }
 
+# Selection - which of the manifest's packages this machine wants
+#
+# The manifest is the catalog; what this machine takes from it lives beside
+# last-run, outside the checkout, so a git pull never fights a pick and the
+# daily task - which nobody watches - still knows what to install. With no
+# selection file every package is wanted, which is how every run behaved before
+# -Select existed. Required ids (the manifest's Required list) are wanted
+# whatever the file says: the menu shows them locked.
+#
+# The file keeps two lists. Selected is what was ticked; Known is everything
+# the menu offered. The difference matters for removal: an id that is not
+# Selected but is Known was unticked, and may be uninstalled; one that is not
+# Known is new to the manifest since, and nobody has decided about it yet.
+
+$script:SelectionFile = Join-Path $script:StateRoot 'windows-bootstrap\selection.json'
+$script:RequiredIds = @()
+
+function Get-UvToolVersion {
+    param([string]$Name, [string[]]$Listing)
+    foreach ($line in $Listing) {
+        # `uv tool list` prints "name vX.Y.Z" per tool and "- command" beneath it
+        if ($line -match '^(\S+)\s+v(\S+)' -and $Matches[1] -eq $Name) { return $Matches[2] }
+    }
+    return ''
+}
+
+function Get-CatalogItems {
+    param($Manifest)
+    foreach ($g in $Manifest.Groups) {
+        foreach ($id in $g.Packages) {
+            [pscustomobject]@{ Group = $g.Name; Id = $id; Kind = 'winget' }
+        }
+        if ($g.Contains('UvTools')) {
+            foreach ($t in $g.UvTools) {
+                [pscustomobject]@{ Group = $g.Name; Id = $t.Split('|')[0]; Kind = 'uv' }
+            }
+        }
+    }
+}
+
+function Read-Selection {
+    if (-not (Test-Path $script:SelectionFile)) { return $null }
+    try {
+        $json = Get-Content $script:SelectionFile -Raw | ConvertFrom-Json
+        return [pscustomobject]@{ Selected = @($json.Selected); Known = @($json.Known) }
+    } catch {
+        Write-Warning ("{0} is unreadable ({1}); treating every package as selected." -f
+            $script:SelectionFile, $_.Exception.Message)
+        return $null
+    }
+}
+
+function Save-Selection {
+    param([string[]]$Selected, [string[]]$Known)
+    $dir = Split-Path $script:SelectionFile -Parent
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    [ordered]@{ Selected = @($Selected | Sort-Object); Known = @($Known | Sort-Object) } |
+        ConvertTo-Json | Set-Content -Path $script:SelectionFile -Encoding UTF8
+}
+
+function Test-ItemWanted {
+    param([string]$Id, $Selection)
+    if ($script:RequiredIds -contains $Id) { return $true }
+    if ($null -eq $Selection) { return $true }
+    if ($Selection.Selected -contains $Id) { return $true }
+    # Not ticked. Either unticked in the menu, or new to the manifest since and
+    # left out on purpose: a manual run has already asked about new ids by the
+    # time this is called (the "New in the manifest" phase), so one still
+    # unknown here belongs to an unattended run, which never installs what
+    # nobody chose - the next manual run asks.
+    return $false
+}
+
+function Get-DeselectedReason {
+    param([string]$Id, $Selection)
+    if ($Selection.Known -notcontains $Id) { return 'new in the manifest - the next manual run asks' }
+    return ''
+}
+
+# fzf when it is on PATH: search, Tab to tick, the current pick pre-ticked
+# through a load binding - pos() moves to a line and toggle ticks it, and load
+# fires once the whole list is in, so every position exists. Without fzf (a
+# first run, before the cli group has installed it) a numbered list in the
+# console does the same job, slower. Returns the ticked ids, or $null if the
+# menu was cancelled.
+function Show-SelectionMenu {
+    param([object[]]$Items, [string[]]$Ticked)
+    $lock = [char]0x25A0
+
+    if (Get-Command fzf -ErrorAction SilentlyContinue) {
+        $lines = @(); $binds = @()
+        for ($i = 0; $i -lt $Items.Count; $i++) {
+            $it = $Items[$i]
+            $mark = if ($script:RequiredIds -contains $it.Id) { "$lock required" } elseif ($it.Kind -eq 'uv') { 'uv tool' } else { '' }
+            $lines += ("{0}`t{1,-9} {2,-40} {3}" -f $it.Id, $it.Group, $it.Id, $mark)
+            if ($Ticked -contains $it.Id) { $binds += ('pos({0})+toggle' -f ($i + 1)) }
+        }
+        $load = 'load:' + ((@($binds) + 'first') -join '+')
+        $picked = $lines | fzf --multi --reverse --no-sort --delimiter "`t" --with-nth 2 `
+            --header "Tab tick/untick  Enter apply  Esc cancel  $lock required: always installed" `
+            --prompt 'packages> ' --bind $load
+        if ($LASTEXITCODE -ne 0) { return $null }
+        return @($picked | ForEach-Object { $_.Split("`t")[0] })
+    }
+
+    $state = @{}
+    foreach ($it in $Items) { $state[$it.Id] = $Ticked -contains $it.Id }
+    while ($true) {
+        Write-Host ''
+        for ($i = 0; $i -lt $Items.Count; $i++) {
+            $it = $Items[$i]
+            $box = if ($script:RequiredIds -contains $it.Id) { "[$lock]" } elseif ($state[$it.Id]) { '[x]' } else { '[ ]' }
+            Write-Host ('  {0,3} {1} {2,-9} {3}' -f ($i + 1), $box, $it.Group, $it.Id)
+        }
+        $answer = Read-Host 'Numbers to toggle (e.g. 3 7 12), Enter to apply, q to cancel'
+        if ($answer -eq 'q') { return $null }
+        if ([string]::IsNullOrWhiteSpace($answer)) { break }
+        foreach ($n in ($answer -split '[\s,]+' | Where-Object { $_ -match '^\d+$' })) {
+            $i = [int]$n - 1
+            if ($i -ge 0 -and $i -lt $Items.Count) { $state[$Items[$i].Id] = -not $state[$Items[$i].Id] }
+        }
+    }
+    return @($Items | Where-Object { $state[$_.Id] } | ForEach-Object { $_.Id })
+}
+
+# winget will not uninstall a user-scope package from an elevated process -
+# 0x8A15007D, "cannot be uninstalled when running with administrator
+# privileges" - and that is most portable CLIs, installed per user from a
+# non-elevated shell. The one call is rerun un-elevated as the same user: a
+# throwaway scheduled task with RunLevel Limited, which Task Scheduler starts in
+# this user's session on the filtered token. The task is removed afterwards.
+# LastTaskResult reads 0x41301 while running and 0x41303 before the first run.
+$script:WingetUserScopeWhileElevated = -1978335107
+
+function Invoke-WingetUnelevated {
+    param([string[]]$WingetArgs)
+    $name = 'windows-bootstrap-unelevated-{0}' -f ([guid]::NewGuid().ToString('N').Substring(0, 8))
+    $log = Join-Path $env:TEMP "$name.log"
+    $winget = (Get-Command winget).Source
+    $cmdLine = '/d /c ""{0}" {1} > "{2}" 2>&1"' -f $winget, ($WingetArgs -join ' '), $log
+    $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    try {
+        $task = @{
+            TaskName  = $name
+            Action    = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument $cmdLine
+            Principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+        }
+        Register-ScheduledTask @task -Force | Out-Null
+        Start-ScheduledTask -TaskName $name
+        $deadline = (Get-Date).AddMinutes(5)
+        do {
+            Start-Sleep -Milliseconds 500
+            $result = (Get-ScheduledTaskInfo -TaskName $name).LastTaskResult
+        } while ($result -in @(0x41301, 0x41303) -and (Get-Date) -lt $deadline)
+        $output = if (Test-Path $log) { Get-Content $log -Raw } else { '' }
+        return [pscustomobject]@{ ExitCode = [int]$result; Output = "$output".Trim() }
+    } finally {
+        Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
+        Remove-Item $log -ErrorAction SilentlyContinue -WhatIf:$false
+    }
+}
+
+function Uninstall-Item {
+    param($Item)
+    $verb = if ($Item.Kind -eq 'uv') { 'uv tool uninstall' } else { 'winget uninstall' }
+    if (-not $PSCmdlet.ShouldProcess($Item.Id, $verb)) {
+        Add-Result -Group $Item.Group -Id $Item.Id -Action 'would-remove'
+        return
+    }
+    if ($Item.Kind -eq 'uv') {
+        & uv tool uninstall $Item.Id *> $null
+        $ok = $LASTEXITCODE -eq 0
+        $why = 'uv tool uninstall failed'
+    } else {
+        $a = @('uninstall', '--id', $Item.Id, '-e', '--accept-source-agreements', '--disable-interactivity')
+        if ($Silent) { $a += '--silent' }
+        $r = Invoke-Winget $a
+        if ($r.ExitCode -eq $script:WingetUserScopeWhileElevated -and (Test-Elevated)) {
+            $r = Invoke-WingetUnelevated $a
+        }
+        $ok = $r.ExitCode -eq 0
+        $why = 'exit {0}: {1}' -f $r.ExitCode, (Get-LastLine $r.Output)
+    }
+    if ($ok) {
+        Add-Result -Group $Item.Group -Id $Item.Id -Action 'removed'
+    } else {
+        Add-Result -Group $Item.Group -Id $Item.Id -Action 'failed' -Detail $why
+    }
+}
+
 if ($Status) { Show-RunStatus; exit $script:StatusExit }
 if ($History) { Show-RunHistory; exit 0 }
 
@@ -1560,6 +1761,17 @@ $missing = @($required | Where-Object { -not $manifest.Contains($_) })
 if ($missing.Count -gt 0) {
     throw ("Manifest is missing required section(s): {0}. Found: {1}. See {2}." -f
         ($missing -join ', '), (@($manifest.Keys) -join ', '), $ManifestPath)
+}
+
+# Optional, so a manifest written before -Select still loads. An id here that
+# no group lists is a typo that would silently lock nothing.
+if ($manifest.Contains('Required')) {
+    $script:RequiredIds = @($manifest.Required)
+    $catalogIds = @(Get-CatalogItems -Manifest $manifest | ForEach-Object { $_.Id })
+    $stray = @($script:RequiredIds | Where-Object { $catalogIds -notcontains $_ })
+    if ($stray.Count -gt 0) {
+        throw ("Required lists id(s) no group has: {0}. See {1}." -f ($stray -join ', '), $ManifestPath)
+    }
 }
 
 # The run record can now say where an unattended run's output went - the task
@@ -1671,12 +1883,94 @@ if ($Doctor) { exit (Invoke-Doctor -Manifest $manifest) }
 
 $script:RunRecording = $true
 
+# Selection - the menu, and the uninstalls it asks for
+#
+# Declining the removal prompt abandons the whole pick, not just the removals:
+# saving the pick without them would leave those packages installed but
+# unwanted, and the next menu - which only offers to remove what was wanted -
+# would never offer them again.
+
+$selection = Read-Selection
+if ($Select) {
+    Write-Phase 'Selection'
+    if (-not $script:RunInteractive) {
+        throw '-Select needs a terminal: it opens a menu and asks before it uninstalls anything.'
+    }
+    $catalog = @(Get-CatalogItems -Manifest $manifest)
+    $wantedBefore = @($catalog | Where-Object { Test-ItemWanted -Id $_.Id -Selection $selection } |
+            ForEach-Object { $_.Id })
+    $ticked = Show-SelectionMenu -Items $catalog -Ticked $wantedBefore
+
+    if ($null -eq $ticked) {
+        Write-Host '  menu cancelled - nothing changed' -ForegroundColor DarkGray
+    } else {
+        $ticked = @(@($ticked) + $script:RequiredIds | Select-Object -Unique)
+        $uvNow = @()
+        if (Get-Command uv -ErrorAction SilentlyContinue) { $uvNow = @(& uv tool list 2>$null) }
+        # Unticked, installed, and offered by a menu before (or no pick yet, when
+        # everything was wanted) - not "wanted before", which would strand a
+        # package whose uninstall failed: saved as unticked, never offered again.
+        $toRemove = @($catalog | Where-Object {
+                ($null -eq $selection -or $selection.Known -contains $_.Id) -and
+                $ticked -notcontains $_.Id -and $(
+                    if ($_.Kind -eq 'uv') { [bool](Get-UvToolVersion -Name $_.Id -Listing $uvNow) }
+                    else { Test-PackageInstalled -Id $_.Id -InstalledMap $installed })
+            })
+
+        $apply = $true
+        if ($toRemove.Count -gt 0 -and -not $WhatIfPreference) {
+            Write-Host ''
+            Write-Host '  Unticked, and installed - these will be uninstalled:' -ForegroundColor Yellow
+            foreach ($item in $toRemove) { Write-Host ('    {0,-9} {1}' -f $item.Group, $item.Id) }
+            $apply = (Read-Host '  Uninstall them? [y/N]') -match '^(y|yes)$'
+        }
+
+        if (-not $apply) {
+            Write-Host '  kept everything - the pick was not saved' -ForegroundColor DarkGray
+        } else {
+            $selection = [pscustomobject]@{ Selected = $ticked; Known = @($catalog | ForEach-Object { $_.Id }) }
+            if ($PSCmdlet.ShouldProcess($script:SelectionFile, 'save the selection')) {
+                Save-Selection -Selected $selection.Selected -Known $selection.Known
+            }
+            foreach ($item in $toRemove) { Uninstall-Item -Item $item }
+        }
+    }
+}
+
+# New in the manifest - asked about once, on a manual run
+#
+# Only with a selection file: without one every package is wanted anyway. A
+# "no" is remembered as much as a "yes" - the id joins Known either way, which
+# is what stops the question coming back. An unattended run asks nothing and
+# records nothing, so the next manual run still asks.
+
+if ($null -ne $selection -and $script:RunInteractive) {
+    $new = @(Get-CatalogItems -Manifest $manifest | Where-Object {
+            $selection.Known -notcontains $_.Id -and $script:RequiredIds -notcontains $_.Id })
+    if ($new.Count -gt 0) {
+        Write-Phase 'New in the manifest since your last pick'
+        foreach ($item in $new) {
+            $prompt = '  {0} ({1}{2}) - install it? [y/N]' -f $item.Id, $item.Group,
+                $(if ($item.Kind -eq 'uv') { ', uv tool' } else { '' })
+            if ((Read-Host $prompt) -match '^(y|yes)$') { $selection.Selected = @($selection.Selected) + $item.Id }
+            $selection.Known = @($selection.Known) + $item.Id
+        }
+        if ($PSCmdlet.ShouldProcess($script:SelectionFile, 'save the selection')) {
+            Save-Selection -Selected $selection.Selected -Known $selection.Known
+        }
+    }
+}
+
 # Phase 1 - packages
 
 foreach ($group in $selected) {
     Write-Phase ('{0} - {1}' -f $group.Name, $group.Description)
 
     foreach ($id in $group.Packages) {
+        if (-not (Test-ItemWanted -Id $id -Selection $selection)) {
+            Add-Result -Group $group.Name -Id $id -Action 'deselected' -Detail (Get-DeselectedReason -Id $id -Selection $selection)
+            continue
+        }
         $version = ''
         if ($null -ne $installed -and $installed.ContainsKey($id)) { $version = $installed[$id] }
 
@@ -1714,18 +2008,14 @@ Update-SessionPath
 # package, so uv is how Windows gets them at all; uv itself is astral-sh.uv in
 # the dev group, just installed by the loop above.
 
-function Get-UvToolVersion {
-    param([string]$Name, [string[]]$Listing)
-    foreach ($line in $Listing) {
-        # `uv tool list` prints "name vX.Y.Z" per tool and "- command" beneath it
-        if ($line -match '^(\S+)\s+v(\S+)' -and $Matches[1] -eq $Name) { return $Matches[2] }
-    }
-    return ''
-}
-
 $uvEntries = @()
 foreach ($group in $selected) {
-    if ($group.Contains('UvTools')) { $uvEntries += @($group.UvTools) }
+    if (-not $group.Contains('UvTools')) { continue }
+    foreach ($entry in $group.UvTools) {
+        $tool = $entry.Split('|')[0]
+        if (Test-ItemWanted -Id $tool -Selection $selection) { $uvEntries += $entry }
+        else { Add-Result -Group 'uv' -Id $tool -Action 'deselected' -Detail (Get-DeselectedReason -Id $tool -Selection $selection) }
+    }
 }
 
 if ($uvEntries.Count -gt 0) {
@@ -2568,8 +2858,8 @@ if ($SkipShell) {
 
 Write-Phase 'Summary'
 
-$order = @('installed', 'upgraded', 'would-install', 'would-upgrade', 'failed',
-    'missing', 'held', 'skipped', 'current', 'present')
+$order = @('installed', 'upgraded', 'removed', 'would-install', 'would-upgrade', 'would-remove',
+    'failed', 'missing', 'held', 'skipped', 'deselected', 'current', 'present')
 $script:Results | Group-Object Action | Sort-Object { $order.IndexOf($_.Name) } | ForEach-Object {
     Write-Host ('  {0,-16}{1}' -f $_.Name, $_.Count)
 }
@@ -2581,7 +2871,7 @@ if ($failed.Count -gt 0) {
     $failed | ForEach-Object { Write-Host ('    {0,-44}{1}' -f $_.Id, $_.Detail) -ForegroundColor Red }
 }
 
-$changed = @($script:Results | Where-Object { $_.Action -in @('installed', 'upgraded') })
+$changed = @($script:Results | Where-Object { $_.Action -in @('installed', 'upgraded', 'removed') })
 if ($changed.Count -gt 0) {
     Write-Host ''
     Write-Host '  Open a new terminal to pick up PATH and profile changes.' -ForegroundColor Yellow
