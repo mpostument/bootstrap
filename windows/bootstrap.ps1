@@ -66,7 +66,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '1.45.0'
+$script:BootstrapVersion = '1.46.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion

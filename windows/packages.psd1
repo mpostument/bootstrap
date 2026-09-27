@@ -61,6 +61,8 @@
                 'Python.Launcher'
                 'DenoLand.Deno'
                 'Microsoft.DotNet.SDK.10'
+                'icsharpcode.ILSpy'
+                'mitmproxy.mitmproxy'
                 # node, go and java are not here: they come from
                 # mise/tools.conf at the repo root, the one list all three
                 # platforms share.
@@ -89,6 +91,8 @@
         @{
             Name        = 'cloud'
             Description = 'Cloud and Kubernetes CLIs'
+            # popeye and k8sgpt (Linux and macOS have them) are absent: neither
+            # publishes a winget package, only release archives.
             Packages    = @(
                 'Kubernetes.kubectl'
                 'Kubecolor.kubecolor'
@@ -134,6 +138,14 @@
                 'Bitwarden.Bitwarden'
                 'Bitwarden.CLI'
                 'Microsoft.PowerToys'
+                # Sysinternals through Portmaster below are Windows-only: none of
+                # the six ships a Linux or macOS build the other manifests can use.
+                'Microsoft.Sysinternals.Suite'
+                'Devolutions.UniGetUI'
+                'REALiX.HWiNFO'
+                'CrystalDewWorld.CrystalDiskInfo'
+                'Klocman.BulkCrapUninstaller'
+                'Safing.Portmaster'
                 'Valve.Steam'
                 'Telegram.TelegramDesktop'
                 'Obsidian.Obsidian'

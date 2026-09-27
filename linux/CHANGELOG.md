@@ -15,6 +15,36 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.0]
+
+### Added
+
+- **popeye**, in the cloud group next to k9s - same author, other half of the
+  job: k9s is for looking at a cluster, popeye scans one and grades it -
+  orphaned ConfigMaps and Secrets, pods without limits, services with no
+  endpoints. A release binary; it answers only `popeye version`,
+  which `binary_version` already tries last, so it needs no `VERSION_ARGS`.
+- **k8sgpt**, beside it - the other question: popeye grades what is sloppy,
+  k8sgpt lists what is broken right now (CrashLoopBackOff, Pending pods,
+  unbound PVCs, an Ingress pointing at nothing). The scan is local; only
+  `--explain` sends findings to an LLM backend, and `--anonymize` masks
+  resource names before they leave the machine. A release binary,
+  with the same `version`-only answer as popeye.
+- Windows gets neither: no winget package exists for either tool.
+- **mitmproxy** in the dev group - an HTTP(S) proxy that shows every request
+  and response an app makes: Bruno sends requests, mitmproxy watches what your
+  app, game or CLI sends. `mitmproxy` (TUI), `mitmweb` (browser UI) and
+  `mitmdump`. HTTPS needs its CA certificate trusted, which stays a manual
+  step - visit mitm.it through the proxy - since a bootstrap that silently
+  trusts an interception CA is the wrong default. Through `uv tool`, in a
+  new `GROUP_dev_UV`: the archive's package trails upstream by majors.
+
+### Not added
+
+- **ILSpy**, which macOS 1.42.0 and Windows 1.46.0 gained: upstream's Linux
+  build is an amd64-only .deb, and there is no general installer for a .deb
+  from a release yet - only ghostty's own block.
+
 ## [1.38.0]
 
 ### Added

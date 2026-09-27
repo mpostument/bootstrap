@@ -20,6 +20,43 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.46.0]
+
+### Added
+
+- **Sysinternals Suite** in the apps group - Process Explorer for what holds a
+  file or DLL open, Autoruns for everything that starts with the system,
+  Procmon for every file and registry access a process makes. winget versions
+  it by date (`2026-07-09`) rather than semver; it upgrades like any other
+  package, since winget compares its own version strings.
+- **UniGetUI**, beside it - one window for what is outdated across winget,
+  pip, npm and dotnet tools. It can update packages on its own schedule too;
+  leave that off if the daily bootstrap task is meant to be the only updater.
+- **HWiNFO** - hardware and sensor inspection: temperatures, clocks, voltages
+  and WHEA memory errors, with a sensor log for a run under load.
+- **CrystalDiskInfo** - SMART health for SSDs and HDDs, wear and reallocated
+  sectors behind a Good / Caution / Bad verdict.
+- **Bulk Crap Uninstaller** - everything installed, including orphans with no
+  uninstaller and what a removal left behind, and removes them in bulk.
+- **Portmaster** - which app connects where: domains, countries and
+  connection counts per process, with a per-app block list. It installs a
+  network filter driver and answers DNS itself, so if WSL, Rancher Desktop or
+  a VPN loses name resolution after install, that is the first place to look.
+- **ILSpy** in the dev group, beside the .NET SDK - decompiles any .NET
+  assembly back to C#: a NuGet package with no source, a Unity plugin, a
+  build's `Assembly-CSharp.dll`, without opening a solution in Rider first.
+- **mitmproxy** in the dev group - an HTTP(S) proxy that shows every request
+  and response an app makes: Bruno sends requests, mitmproxy watches what your
+  app, game or CLI sends. `mitmproxy` (TUI), `mitmweb` (browser UI) and
+  `mitmdump`. HTTPS needs its CA certificate trusted, which stays a manual
+  step - visit mitm.it through the proxy - since a bootstrap that silently
+  trusts an interception CA is the wrong default. `mitmproxy.mitmproxy`.
+
+### Not added
+
+- **popeye and k8sgpt**, which Linux 1.39.0 and macOS 1.42.0 gained: neither
+  publishes a winget package. `packages.psd1` says so beside the cloud group.
+
 ## [1.45.0]
 
 ### Added
