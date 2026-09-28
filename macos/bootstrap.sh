@@ -314,10 +314,17 @@ cleanup_tmp() {
 
 # EXIT covers a normal end and a die; INT and TERM re-exit with the signal's
 # conventional status, which fires the EXIT trap in turn - cleanup_tmp is
-# idempotent, so running twice costs nothing.
+# idempotent, so running twice costs nothing. The --select menu's own restore
+# is defined further down, so an exit before that point - --version, --help,
+# a die in preflight - must not call it.
+restore_terminal() {
+  if declare -F menu_restore >/dev/null; then menu_restore; fi
+  return 0
+}
+
 on_exit() {
   local rc=$?
-  menu_restore
+  restore_terminal
   cleanup_tmp
   write_state "$rc" || true
   notify_failure "$rc" || true
@@ -325,7 +332,7 @@ on_exit() {
 }
 
 trap on_exit EXIT
-trap 'menu_restore; cleanup_tmp; exit 130' INT
+trap 'restore_terminal; cleanup_tmp; exit 130' INT
 trap 'cleanup_tmp; exit 143' TERM
 
 
