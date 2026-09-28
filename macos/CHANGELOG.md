@@ -15,6 +15,23 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.44.0]
+
+### Added
+
+- **ILSpy is back** in the dev group, dropped in 1.43.0: decompiles any .NET
+  assembly to C# - a NuGet package with no source, a Unity plugin, a build's
+  Assembly-CSharp.dll. From the Homebrew cask. Linux still has none - its
+  build is an amd64-only .deb. On a machine with a saved --select pick it is
+  new to the manifest, so the next manual run asks whether to install it; the
+  scheduled run leaves it out until then.
+
+### Fixed
+
+- **The summary counts what --select did.** 1.43.0 added the removed,
+  would-remove and deselected results but left them out of the summary's list,
+  so a run that uninstalled something reported nothing of it at the end.
+
 ## [1.43.0]
 
 ### Added

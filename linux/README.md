@@ -57,6 +57,7 @@ none. Override with `--gui` or `--no-gui`.
 
 ```
 --dry-run          Show what would change, touch nothing.
+--select           Tick which packages this machine has - see below.
 --groups a,b       Limit to named groups. Default is every group.
 --list-groups      Print the groups in the manifest and exit.
 --list-packages    Print every package/tool this script manages and exit.
@@ -89,6 +90,47 @@ what runs afterwards is an ordinary git or kill command.
 | `gs` | browse stashes; Enter applies, ctrl-p pops, ctrl-x drops (not defined where Ghostscript owns `gs`) |
 | `fkill [signal]` | pick some of your own processes and signal them, TERM by default |
 | `cheat` | search the `tools` list, preview its tldr page, put the command on the prompt |
+
+## Choosing packages
+
+```bash
+./bootstrap.sh --select            # tick what this machine should have
+./bootstrap.sh --select --dry-run  # the same menu, and what it would change
+```
+
+`--select` opens every package in the manifest as a menu, a section per group
+- apt packages, flatpaks and uv tools together - and a `releases` section for
+the release binaries, which belong to no group:
+
+```
+   [x] shell                        9/9
+ >   [■] git                              1:2.43.0         required
+     [x] git-lfs                          3.4.1
+   [-] releases                    40/41
+     [ ] popeye                           -                release
+```
+
+Up/Down or j/k move, PgUp/PgDn and Home/End jump; Space ticks a package, or on
+a section ticks all of it - and clears it if it was all ticked. Enter applies,
+q or Esc cancels. Your current pick comes pre-ticked; `REQUIRED` in
+`packages.conf` (zsh, git, uv) shows locked and is always installed.
+
+On Enter, what you ticked is installed and what you unticked is uninstalled,
+after one confirmation that lists it - `apt-get remove` through sudo,
+`flatpak uninstall`, `uv tool uninstall`, or the binary deleted from
+`~/.local/bin`. apt removes whatever depends on a package along with it, so
+each removal is simulated first: if it would take anything else, it is not
+run, and the result names what would have gone.
+
+The pick is saved to `/var/lib/bootstrap-linux/selection` - there and not in
+`$HOME`, because the systemd timer runs as root and has to read it - one
+`yes <package>` or `no <package>` per line, written through sudo. Every later
+run follows it, the timer too. Without that file every package is wanted, as
+before `--select` existed; delete it to go back. A package added to the
+manifest after your pick is asked about once on the next manual run and the
+answer kept; the timer never asks and never installs it. A section with
+nothing ticked counts as switched off, and its newcomers are left out without
+asking. Only `--select` ever uninstalls anything.
 
 ## The manifest
 

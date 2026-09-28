@@ -61,13 +61,13 @@
                 'Python.Launcher'
                 'DenoLand.Deno'
                 'Microsoft.DotNet.SDK.10'
+                'icsharpcode.ILSpy'
                 'mitmproxy.mitmproxy'
                 # node, go and java are not here: they come from
                 # mise/tools.conf at the repo root, the one list all three
                 # platforms share.
                 'jdx.mise'
                 'astral-sh.uv'
-                'koalaman.shellcheck'
             )
         }
 
@@ -188,12 +188,6 @@
             By     = 'JetBrains Toolbox'
             Detect = 'JetBrains Toolbox (Rider)*'
             Note   = 'Toolbox self-updates it; winget also publishes JetBrains.Rider, which would fight it'
-        }
-        @{
-            Id     = 'Android Studio'
-            By     = 'JetBrains Toolbox'
-            Detect = 'JetBrains Toolbox (AndroidStudio)*'
-            Note   = 'same Toolbox instance as Rider'
         }
     )
 

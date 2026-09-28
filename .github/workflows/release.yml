@@ -280,7 +280,7 @@ jobs:
             mkdir -p "$stage"
             for entry in *; do
               case "$entry" in
-                windows|linux|macos|stage-*|_typos.toml|bootstrap-*) continue ;;
+                windows|linux|macos|stage-*|_typos.toml|bootstrap-*|release-notes.md) continue ;;
               esac
               cp -R "$entry" "$stage/"
             done

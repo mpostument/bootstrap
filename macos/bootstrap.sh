@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.43.0'
+BOOTSTRAP_VERSION='1.44.0'
 BOOTSTRAP_PLATFORM='macos'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -3232,7 +3232,7 @@ fi
 
 phase 'Summary'
 
-for action in installed upgraded would-install would-upgrade failed missing no-gui held skipped current present; do
+for action in installed upgraded removed would-install would-upgrade would-remove failed missing no-gui held skipped deselected current present; do
   count=0
   for a in "${RESULT_ACTIONS[@]:-}"; do [[ "$a" == "$action" ]] && count=$((count + 1)); done
   [[ "$count" -gt 0 ]] && printf '  %-16s%s\n' "$action" "$count"

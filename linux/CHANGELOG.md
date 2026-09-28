@@ -15,6 +15,30 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.41.0]
+
+### Added
+
+- **`--select`: choose which packages this machine has**, the same design as
+  macOS 1.43.0 and Windows 1.47.0: a menu of every apt package, flatpak and uv
+  tool by group, plus a releases section for the release binaries, which
+  belong to no group. Unticked and installed is uninstalled after one
+  confirmation - apt-get remove through sudo, flatpak uninstall, uv tool
+  uninstall, or the binary deleted from ~/.local/bin.
+- **apt removals are simulated first.** apt-get remove takes everything that
+  depends on a package with it - python3 would take half the system - so a
+  removal that would take anything but the package itself is not run, and the
+  result names what would have gone.
+- **The pick lives in /var/lib/bootstrap-linux/selection**, not under $HOME:
+  the systemd timer runs as root and has to read the pick a person made. An
+  interactive run writes it through sudo, which it already has for apt.
+  REQUIRED in packages.conf - zsh, git and uv - is always installed and locked
+  in the menu. New packages are asked about once on a manual run; the timer
+  installs none of them and reports each as deselected, and a section with
+  nothing ticked counts as switched off.
+- **The run history records a removal** as -pkg, and the summary counts
+  removed, would-remove and deselected.
+
 ## [1.40.0]
 
 ### Added

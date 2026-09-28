@@ -20,6 +20,16 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.48.0]
+
+### Added
+
+- **ILSpy is back** in the dev group, dropped in 1.47.0: decompiles any .NET
+  assembly to C# - a NuGet package with no source, a Unity plugin, a build's
+  Assembly-CSharp.dll. From winget, `icsharpcode.ILSpy`. On a machine with a
+  saved -Select pick it is new to the manifest, so the next manual run asks
+  whether to install it; the scheduled run leaves it out until then.
+
 ## [1.47.0]
 
 ### Added

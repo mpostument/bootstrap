@@ -75,7 +75,7 @@ $ErrorActionPreference = 'Stop'
 # The parameters as given, for the rerun after an update.
 $script:BoundParams = @{} + $PSBoundParameters
 
-$script:BootstrapVersion = '1.47.0'
+$script:BootstrapVersion = '1.48.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
