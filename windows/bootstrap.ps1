@@ -1636,50 +1636,145 @@ function Get-DeselectedReason {
     return ''
 }
 
-# fzf when it is on PATH: search, Tab to tick, the current pick pre-ticked
-# through a load binding - pos() moves to a line and toggle ticks it, and load
-# fires once the whole list is in, so every position exists. Without fzf (a
-# first run, before the cli group has installed it) a numbered list in the
-# console does the same job, slower. Returns the ticked ids, or $null if the
-# menu was cancelled.
-function Show-SelectionMenu {
-    param([object[]]$Items, [string[]]$Ticked)
+# The menu, drawn by hand rather than through fzf: fzf marks only what is
+# ticked - an unticked line has no empty box - and ticking a whole section
+# from inside it takes a shell command per keypress. Rows are a header per
+# group with its packages beneath. Space on a package ticks it; on a header it
+# ticks the whole section, or clears it when all of it is ticked already.
+# Required packages stay ticked whatever is pressed.
+#
+# Everything but the key loop is plain data in and out - the rows, a toggle,
+# a section's state, the lines of one frame - so it can be exercised without a
+# console. Show-SelectionMenu returns the ticked ids, or $null on Esc.
+
+function Get-MenuRows {
+    param([object[]]$Items)
+    $rows = New-Object System.Collections.ArrayList
+    foreach ($g in @($Items | ForEach-Object { $_.Group } | Select-Object -Unique)) {
+        [void]$rows.Add([pscustomobject]@{ Kind = 'group'; Group = $g; Item = $null })
+        foreach ($it in @($Items | Where-Object { $_.Group -eq $g })) {
+            [void]$rows.Add([pscustomobject]@{ Kind = 'item'; Group = $g; Item = $it })
+        }
+    }
+    return , $rows.ToArray()
+}
+
+function Switch-MenuRow {
+    param($Row, [object[]]$Items, [hashtable]$State)
+    if ($Row.Kind -eq 'item') {
+        if ($script:RequiredIds -notcontains $Row.Item.Id) { $State[$Row.Item.Id] = -not $State[$Row.Item.Id] }
+        return
+    }
+    $free = @($Items | Where-Object { $_.Group -eq $Row.Group -and $script:RequiredIds -notcontains $_.Id })
+    $allOn = @($free | Where-Object { -not $State[$_.Id] }).Count -eq 0
+    foreach ($m in $free) { $State[$m.Id] = -not $allOn }
+}
+
+function Get-GroupState {
+    param([string]$Group, [object[]]$Items, [hashtable]$State)
+    $members = @($Items | Where-Object { $_.Group -eq $Group })
+    $on = @($members | Where-Object { $State[$_.Id] }).Count
+    $box = if ($on -eq 0) { '[ ]' } elseif ($on -eq $members.Count) { '[x]' } else { '[-]' }
+    return [pscustomobject]@{ Box = $box; On = $on; Total = $members.Count }
+}
+
+# One frame as lines of coloured parts: @{ Parts = @(@{ T = text; C = colour }); Cursor = bool }.
+function Get-MenuFrame {
+    param([object[]]$Rows, [object[]]$Items, [hashtable]$State, [hashtable]$Versions,
+        [int]$Cursor, [int]$Top, [int]$Height)
     $lock = [char]0x25A0
-
-    if (Get-Command fzf -ErrorAction SilentlyContinue) {
-        $lines = @(); $binds = @()
-        for ($i = 0; $i -lt $Items.Count; $i++) {
-            $it = $Items[$i]
-            $mark = if ($script:RequiredIds -contains $it.Id) { "$lock required" } elseif ($it.Kind -eq 'uv') { 'uv tool' } else { '' }
-            $lines += ("{0}`t{1,-9} {2,-40} {3}" -f $it.Id, $it.Group, $it.Id, $mark)
-            if ($Ticked -contains $it.Id) { $binds += ('pos({0})+toggle' -f ($i + 1)) }
+    $on = @($Items | Where-Object { $State[$_.Id] }).Count
+    $frame = @(
+        @{ Cursor = $false; Parts = @(@{ T = (' Packages - {0} of {1} ticked' -f $on, $Items.Count); C = 'Cyan' }) }
+        @{ Cursor = $false; Parts = @(@{ T = ' Up/Down move  Space tick (on a section: all of it)  Enter apply  Esc cancel'; C = 'DarkGray' }) }
+    )
+    for ($r = $Top; $r -lt $Top + $Height; $r++) {
+        if ($r -ge $Rows.Count) { $frame += @{ Cursor = $false; Parts = @() }; continue }
+        $row = $Rows[$r]
+        $pointer = if ($r -eq $Cursor) { ' > ' } else { '   ' }
+        if ($row.Kind -eq 'group') {
+            $g = Get-GroupState -Group $row.Group -Items $Items -State $State
+            $boxColour = switch ($g.Box) { '[x]' { 'Green' } '[-]' { 'Yellow' } default { 'DarkGray' } }
+            $parts = @(
+                @{ T = $pointer; C = 'White' }
+                @{ T = $g.Box + ' '; C = $boxColour }
+                @{ T = '{0,-27}' -f $row.Group; C = 'Cyan' }
+                @{ T = '{0}/{1}' -f $g.On, $g.Total; C = 'DarkGray' }
+            )
+        } else {
+            $it = $row.Item
+            $required = $script:RequiredIds -contains $it.Id
+            if ($required) { $box = "[$lock]"; $boxColour = 'Yellow' }
+            elseif ($State[$it.Id]) { $box = '[x]'; $boxColour = 'Green' }
+            else { $box = '[ ]'; $boxColour = 'DarkGray' }
+            $version = if ($Versions.ContainsKey($it.Id) -and $Versions[$it.Id]) { $Versions[$it.Id] } else { '-' }
+            $note = if ($required) { 'required' } elseif ($it.Kind -eq 'uv') { 'uv tool' } else { '' }
+            $parts = @(
+                @{ T = $pointer + '  '; C = 'White' }
+                @{ T = $box + ' '; C = $boxColour }
+                @{ T = '{0,-36}' -f $it.Id; C = $(if ($State[$it.Id]) { 'White' } else { 'DarkGray' }) }
+                @{ T = '{0,-18}' -f $version; C = $(if ($version -eq '-') { 'DarkGray' } else { 'Green' }) }
+                @{ T = $note; C = $(if ($required) { 'Yellow' } else { 'DarkGray' }) }
+            )
         }
-        $load = 'load:' + ((@($binds) + 'first') -join '+')
-        $picked = $lines | fzf --multi --reverse --no-sort --delimiter "`t" --with-nth 2 `
-            --header "Tab tick/untick  Enter apply  Esc cancel  $lock required: always installed" `
-            --prompt 'packages> ' --bind $load
-        if ($LASTEXITCODE -ne 0) { return $null }
-        return @($picked | ForEach-Object { $_.Split("`t")[0] })
+        $frame += @{ Cursor = ($r -eq $Cursor); Parts = $parts }
     }
+    $frame += @{ Cursor = $false; Parts = @(@{ T = (' {0}/{1}' -f ($Cursor + 1), $Rows.Count); C = 'DarkGray' }) }
+    return , $frame
+}
 
+function Write-MenuFrame {
+    param([object[]]$Frame, [int]$Width)
+    [Console]::SetCursorPosition(0, 0)
+    foreach ($line in $Frame) {
+        $used = 0
+        $back = if ($line.Cursor) { 'DarkGray' } else { $Host.UI.RawUI.BackgroundColor }
+        foreach ($p in $line.Parts) {
+            $text = [string]$p.T
+            if ($used + $text.Length -gt $Width) { $text = $text.Substring(0, [Math]::Max(0, $Width - $used)) }
+            if ($text) { Write-Host $text -ForegroundColor $p.C -BackgroundColor $back -NoNewline }
+            $used += $text.Length
+        }
+        Write-Host (' ' * [Math]::Max(0, $Width - $used)) -BackgroundColor $back
+    }
+}
+
+function Show-SelectionMenu {
+    param([object[]]$Items, [string[]]$Ticked, [hashtable]$Versions = @{})
     $state = @{}
-    foreach ($it in $Items) { $state[$it.Id] = $Ticked -contains $it.Id }
-    while ($true) {
-        Write-Host ''
-        for ($i = 0; $i -lt $Items.Count; $i++) {
-            $it = $Items[$i]
-            $box = if ($script:RequiredIds -contains $it.Id) { "[$lock]" } elseif ($state[$it.Id]) { '[x]' } else { '[ ]' }
-            Write-Host ('  {0,3} {1} {2,-9} {3}' -f ($i + 1), $box, $it.Group, $it.Id)
+    foreach ($it in $Items) { $state[$it.Id] = ($Ticked -contains $it.Id) -or ($script:RequiredIds -contains $it.Id) }
+    $rows = Get-MenuRows -Items $Items
+    $raw = $Host.UI.RawUI
+    $cursor = 0; $top = 0
+    $cursorWas = [Console]::CursorVisible
+    [Console]::CursorVisible = $false
+    Clear-Host
+    try {
+        while ($true) {
+            $height = [Math]::Max(5, $raw.WindowSize.Height - 4)
+            $width = [Math]::Max(40, $raw.WindowSize.Width - 1)
+            if ($cursor -lt $top) { $top = $cursor }
+            if ($cursor -ge $top + $height) { $top = $cursor - $height + 1 }
+            Write-MenuFrame -Width $width -Frame (Get-MenuFrame -Rows $rows -Items $Items -State $state `
+                    -Versions $Versions -Cursor $cursor -Top $top -Height $height)
+
+            $key = $raw.ReadKey('NoEcho,IncludeKeyDown')
+            switch ($key.VirtualKeyCode) {
+                38 { $cursor = [Math]::Max(0, $cursor - 1) }                    # Up
+                40 { $cursor = [Math]::Min($rows.Count - 1, $cursor + 1) }      # Down
+                33 { $cursor = [Math]::Max(0, $cursor - $height) }              # PgUp
+                34 { $cursor = [Math]::Min($rows.Count - 1, $cursor + $height) } # PgDn
+                36 { $cursor = 0 }                                              # Home
+                35 { $cursor = $rows.Count - 1 }                                # End
+                32 { Switch-MenuRow -Row $rows[$cursor] -Items $Items -State $state }  # Space
+                13 { return @($Items | Where-Object { $state[$_.Id] } | ForEach-Object { $_.Id }) }  # Enter
+                27 { return $null }                                             # Esc
+            }
         }
-        $answer = Read-Host 'Numbers to toggle (e.g. 3 7 12), Enter to apply, q to cancel'
-        if ($answer -eq 'q') { return $null }
-        if ([string]::IsNullOrWhiteSpace($answer)) { break }
-        foreach ($n in ($answer -split '[\s,]+' | Where-Object { $_ -match '^\d+$' })) {
-            $i = [int]$n - 1
-            if ($i -ge 0 -and $i -lt $Items.Count) { $state[$Items[$i].Id] = -not $state[$Items[$i].Id] }
-        }
+    } finally {
+        [Console]::CursorVisible = $cursorWas
+        Clear-Host
     }
-    return @($Items | Where-Object { $state[$_.Id] } | ForEach-Object { $_.Id })
 }
 
 # winget will not uninstall a user-scope package from an elevated process -
@@ -1899,14 +1994,20 @@ if ($Select) {
     $catalog = @(Get-CatalogItems -Manifest $manifest)
     $wantedBefore = @($catalog | Where-Object { Test-ItemWanted -Id $_.Id -Selection $selection } |
             ForEach-Object { $_.Id })
-    $ticked = Show-SelectionMenu -Items $catalog -Ticked $wantedBefore
+    $uvNow = @()
+    if (Get-Command uv -ErrorAction SilentlyContinue) { $uvNow = @(& uv tool list 2>$null) }
+    $versions = @{}
+    if ($null -ne $installed) { foreach ($k in $installed.Keys) { $versions[$k] = $installed[$k] } }
+    foreach ($it in @($catalog | Where-Object { $_.Kind -eq 'uv' })) {
+        $v = Get-UvToolVersion -Name $it.Id -Listing $uvNow
+        if ($v) { $versions[$it.Id] = $v }
+    }
+    $ticked = Show-SelectionMenu -Items $catalog -Ticked $wantedBefore -Versions $versions
 
     if ($null -eq $ticked) {
         Write-Host '  menu cancelled - nothing changed' -ForegroundColor DarkGray
     } else {
         $ticked = @(@($ticked) + $script:RequiredIds | Select-Object -Unique)
-        $uvNow = @()
-        if (Get-Command uv -ErrorAction SilentlyContinue) { $uvNow = @(& uv tool list 2>$null) }
         # Unticked, installed, and offered by a menu before (or no pick yet, when
         # everything was wanted) - not "wanted before", which would strand a
         # package whose uninstall failed: saved as unticked, never offered again.
@@ -1949,7 +2050,17 @@ if ($null -ne $selection -and $script:RunInteractive) {
             $selection.Known -notcontains $_.Id -and $script:RequiredIds -notcontains $_.Id })
     if ($new.Count -gt 0) {
         Write-Phase 'New in the manifest since your last pick'
+        $catalogNow = @(Get-CatalogItems -Manifest $manifest)
         foreach ($item in $new) {
+            # A group with nothing ticked was switched off whole: its newcomers
+            # are left out without asking, and remembered as a no.
+            $groupOn = @($catalogNow | Where-Object {
+                    $_.Group -eq $item.Group -and $selection.Selected -contains $_.Id }).Count -gt 0
+            if (-not $groupOn) {
+                Write-Host ('  {0,-14}{1,-44}group {2} is switched off' -f 'deselected', $item.Id, $item.Group) -ForegroundColor DarkGray
+                $selection.Known = @($selection.Known) + $item.Id
+                continue
+            }
             $prompt = '  {0} ({1}{2}) - install it? [y/N]' -f $item.Id, $item.Group,
                 $(if ($item.Kind -eq 'uv') { ', uv tool' } else { '' })
             if ((Read-Host $prompt) -match '^(y|yes)$') { $selection.Selected = @($selection.Selected) + $item.Id }

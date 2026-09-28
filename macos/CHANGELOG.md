@@ -17,6 +17,35 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [1.43.0]
 
+### Added
+
+- **`--select`: choose which packages this Mac has**, the same design as
+  Windows 1.47.0. A menu of every formula and cask in the manifest, drawn by
+  the script: a section per group with its packages beneath, each with a
+  `[x]` or `[ ]` box and its installed version, the current pick pre-ticked.
+  Space on a section ticks all of it, or clears it when all of it was ticked,
+  and the section shows `[x]`, `[-]` or `[ ]`. Keys are read from `/dev/tty`
+  a byte at a time; everything else - the rows, a toggle, a frame - is plain
+  functions over indexed arrays, since bash 3.2 has no associative ones.
+- **Unticked and installed is uninstalled** with `brew uninstall`, after one
+  confirmation listing all of it; declining keeps everything and saves
+  nothing. What is offered follows the machine - unticked, installed, offered
+  before - so a formula brew refused to remove because another depends on it
+  is offered again next time.
+- **The pick is saved** to `~/.local/state/bootstrap-macos/selection` as plain
+  `yes`/`no` lines, and every later run follows it, the launchd agent
+  included. A line that is neither makes the file untrusted, and every package
+  is wanted - a garbled file never unticks everything. No file, no change.
+- **`REQUIRED` in `packages.conf`** - git, mise and uv - always installed and
+  locked in the menu. Optional, so an older manifest still loads; an id no
+  group lists fails the run up front.
+- **New packages are asked about once** on a manual run and the answer kept;
+  the agent installs none of them and reports each as `deselected`. A section
+  with nothing ticked counts as switched off, and its newcomers are left out
+  without asking.
+- **The run history records a removal** as `-pkg`, and the menu restores the
+  terminal on Ctrl-C as well as on exit.
+
 ### Removed
 
 - **ILSpy**, added in 1.42.0: dropped before anyone depended on it. Taking it

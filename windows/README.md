@@ -109,9 +109,20 @@ Put the id in a group in `packages.psd1` and re-run.
 .\bootstrap.ps1 -Select -WhatIf    # the same menu, and what it would change
 ```
 
-`-Select` opens every package in the manifest as a menu - fzf when it is on
-`PATH` (Tab ticks, type to search), a numbered list before it is. Your current
-pick comes pre-ticked. On Enter, what you ticked is installed and what you
+`-Select` opens every package in the manifest as a menu, a section per group:
+
+```
+   [x] shell                      6/6
+     [■] Microsoft.PowerShell     7.6.1      required
+ >   [x] Starship.Starship        1.24.0
+   [-] cloud                      6/8
+     [ ] stern.stern              -
+```
+
+Up/Down (PgUp/PgDn, Home/End) move; Space ticks a package, or on a section
+ticks all of it - and clears it if it was all ticked. A section shows `[x]`,
+`[-]` or `[ ]` for all, some or none of it; each package shows its installed
+version, or `-`. Your current pick comes pre-ticked. On Enter, what you ticked is installed and what you
 unticked is uninstalled, after one confirmation that lists it; saying no keeps
 everything and saves nothing. Packages in `Required` in `packages.psd1` show
 locked (■) and are always installed - they are what other phases depend on.

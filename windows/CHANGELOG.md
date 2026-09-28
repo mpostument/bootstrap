@@ -25,9 +25,14 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 ### Added
 
 - **`-Select`: choose which packages this machine has.** A menu of every
-  winget package and uv tool in the manifest - fzf when it is on `PATH`, with
-  the current pick pre-ticked through a `load` binding, and a numbered console
-  list on a first run before fzf is installed. Ticked is installed; unticked
+  winget package and uv tool in the manifest, drawn by the script itself: a
+  section per group with its packages beneath, each with a `[x]` or `[ ]` box,
+  the installed version and the current pick pre-ticked. Space on a package
+  ticks it; on a section it ticks all of it - or clears it, when all of it was
+  ticked - and the section shows `[x]`, `[-]` or `[ ]` for all, some or none.
+  Not fzf: fzf marks only ticked lines, with no empty box for the rest, and a
+  whole-section toggle from inside it takes a shell command per keypress. It
+  needs no fzf, so it works on a first run too. Ticked is installed; unticked
   and installed is uninstalled, after one confirmation listing all of it.
   Declining abandons the whole pick rather than saving it without the
   removals, which would leave those packages installed but unwanted, and
@@ -44,7 +49,9 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **New packages are asked about, not assumed.** A manual run asks once per
   package the manifest gained since the last pick and remembers the answer
   either way. An unattended run installs none of them and reports each as
-  `deselected`, so nothing arrives on the machine that nobody chose.
+  `deselected`, so nothing arrives on the machine that nobody chose. A
+  section with nothing ticked counts as switched off: its newcomers are left
+  out without asking.
 - **User-scope packages uninstall from an elevated run.** winget refuses
   (`0x8A15007D`) to remove a package installed per user - most portable CLIs -
   from an administrator process. That one call is rerun un-elevated as the
@@ -62,6 +69,11 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **ILSpy**, added in 1.46.0: dropped before anyone depended on it. Taking it
   out of the manifest stops installs and upgrades; a copy already installed
   stays until `winget uninstall icsharpcode.ILSpy`.
+- **Sysinternals Suite**, added in 1.46.0: winget's manifest pins the hash of
+  `SysinternalsSuite.zip`, which Microsoft replaces in place at the same URL
+  without a new version, so the install fails the hash check - and an
+  elevated winget rightly refuses to skip it - every time the zip moves until
+  the manifest catches up.
 
 ## [1.46.0]
 

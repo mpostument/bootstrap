@@ -20,6 +20,7 @@ STATUS_ONLY=no
 DOCTOR_ONLY=no
 HISTORY_ONLY=no
 HISTORY_LINES=10
+SELECT=no
 
 # Run state. The launchd agent exports BOOTSTRAP_LOG_DIR, so a run started by
 # it knows which log file it is being written to and can say so in --status.
@@ -58,8 +59,8 @@ phase() {
 result() {
   local action="$1" id="$2" detail="${3:-}" colour=""
   case "$action" in
-    installed|upgraded|ok)   colour="$C_GREEN" ;;
-    would-install|would-upgrade) colour="$C_BLUE" ;;
+    installed|upgraded|removed|ok) colour="$C_GREEN" ;;
+    would-install|would-upgrade|would-remove) colour="$C_BLUE" ;;
     failed|broken)           colour="$C_RED" ;;
     missing|held|no-gui)     colour="$C_YELLOW" ;;
     *)                       colour="$C_DIM" ;;
@@ -107,7 +108,7 @@ write_state() {   # write_state <exit-code>
   [[ "$DRY_RUN" == "no" ]] || return 0
 
   finished="$(date +%s)"
-  for action in installed upgraded failed missing skipped current present held no-gui; do
+  for action in installed upgraded removed failed missing skipped deselected current present held no-gui; do
     count="$(action_count "$action")"
     [[ "$count" -gt 0 ]] && counts="${counts}${counts:+ }${action}=${count}"
   done
@@ -315,6 +316,7 @@ cleanup_tmp() {
 # idempotent, so running twice costs nothing.
 on_exit() {
   local rc=$?
+  menu_restore
   cleanup_tmp
   write_state "$rc" || true
   notify_failure "$rc" || true
@@ -322,7 +324,7 @@ on_exit() {
 }
 
 trap on_exit EXIT
-trap 'cleanup_tmp; exit 130' INT
+trap 'menu_restore; cleanup_tmp; exit 130' INT
 trap 'cleanup_tmp; exit 143' TERM
 
 
@@ -447,6 +449,12 @@ Usage: bootstrap.sh [options]
 
   --dry-run          Show what would change, touch nothing.
   --groups a,b       Limit to named groups. Default is every group.
+  --select           Open a menu of every package in the manifest, tick what
+                     this Mac should have, and apply it: install what was
+                     ticked, uninstall what was unticked after one
+                     confirmation. REQUIRED packages show locked. The pick is
+                     saved, and every later run - the launchd agent too -
+                     installs only that.
   --list-groups      Print the groups in the manifest and exit.
   --list-packages    Print every package name in every group and exit - for
                      when you know something is in here somewhere but not
@@ -489,6 +497,7 @@ while [[ $# -gt 0 ]]; do
     --no-gui)       GUI_OVERRIDE=no ;;
     --groups)       shift; ONLY_GROUPS="${1:-}" ;;
     --groups=*)     ONLY_GROUPS="${1#*=}" ;;
+    --select)       SELECT=yes ;;
     --list-groups)  LIST_GROUPS=yes ;;
     --list-packages) LIST_PACKAGES=yes ;;
     --status)       STATUS_ONLY=yes ;;
@@ -586,8 +595,287 @@ emit_tools_function() {   # emit_tools_function [<package> <command> <descriptio
   echo '}'
 }
 
+# Selection - which of the manifest's packages this Mac wants
+#
+# The manifest is the catalog; what this Mac takes from it lives beside
+# last-run, outside the checkout, so a git pull never fights a pick and the
+# launchd agent - which nobody watches - still knows what to install. With no
+# selection file every package is wanted, which is how every run behaved before
+# --select existed. REQUIRED packages are wanted whatever the file says: the
+# menu shows them locked.
+#
+# The file is one "yes <package>" or "no <package>" per line, plain text so it
+# reads without jq. Every line is a package a menu has offered (Known); the yes
+# lines are the pick (Selected). The difference matters for removal: an id with
+# a "no" was unticked, and may be uninstalled; one with no line at all is new
+# to the manifest since, and nobody has decided about it yet.
+#
+# Everything is indexed arrays: bash 3.2 has no associative ones. CAT_* is the
+# catalog, one entry per formula or cask; M_* is the menu's state over it.
+
+SELECTION_FILE="${STATE_DIR}/selection"
+CAT_GROUP=() CAT_ID=() CAT_KIND=()
+SEL_EXISTS=no SEL_SELECTED=() SEL_KNOWN=()
+MENU_ACTIVE=no
+
+in_list() {   # in_list <needle> [items...]
+  local needle="$1" x
+  shift
+  for x in "$@"; do
+    [[ "$x" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+load_catalog() {
+  local g pkg
+  CAT_GROUP=() CAT_ID=() CAT_KIND=()
+  for g in "${PKG_GROUPS[@]}"; do
+    group_array _cat_f "GROUP_${g}_FORMULA"
+    for pkg in ${_cat_f[@]+"${_cat_f[@]}"}; do
+      [[ -z "$pkg" ]] && continue
+      CAT_GROUP+=("$g"); CAT_ID+=("$pkg"); CAT_KIND+=(formula)
+    done
+    group_array _cat_c "GROUP_${g}_CASK"
+    for pkg in ${_cat_c[@]+"${_cat_c[@]}"}; do
+      [[ -z "$pkg" ]] && continue
+      CAT_GROUP+=("$g"); CAT_ID+=("$pkg"); CAT_KIND+=(cask)
+    done
+  done
+  return 0
+}
+
+is_required() {   # is_required <package>
+  in_list "$1" ${REQUIRED[@]+"${REQUIRED[@]}"}
+}
+
+# A line that is neither yes nor no means the file is not ours to trust: every
+# package is wanted, as if there were no file, rather than a garbled file
+# quietly unticking everything.
+read_selection() {
+  local answer id
+  SEL_EXISTS=no SEL_SELECTED=() SEL_KNOWN=()
+  [[ -r "$SELECTION_FILE" ]] || return 0
+  while read -r answer id; do
+    [[ -z "$answer" || "$answer" == \#* ]] && continue
+    if [[ -z "$id" || ( "$answer" != yes && "$answer" != no ) ]]; then
+      printf '  %swarning:%s %s is unreadable; treating every package as selected\n' \
+        "$C_YELLOW" "$C_RESET" "$SELECTION_FILE"
+      SEL_SELECTED=() SEL_KNOWN=()
+      return 0
+    fi
+    SEL_KNOWN+=("$id")
+    [[ "$answer" == yes ]] && SEL_SELECTED+=("$id")
+  done < "$SELECTION_FILE"
+  SEL_EXISTS=yes
+  return 0
+}
+
+save_selection() {
+  local id
+  mkdir -p "$STATE_DIR"
+  {
+    echo '# bootstrap.sh --select: the packages this Mac wants. Delete the file to want all of them again.'
+    for id in ${SEL_KNOWN[@]+"${SEL_KNOWN[@]}"}; do
+      if in_list "$id" ${SEL_SELECTED[@]+"${SEL_SELECTED[@]}"}; then echo "yes $id"; else echo "no $id"; fi
+    done
+  } > "$SELECTION_FILE"
+}
+
+# Not ticked is either unticked in the menu, or new to the manifest since and
+# left out on purpose: a manual run has already asked about new packages by
+# the time the install loop calls this, so one still unknown there belongs to
+# an unattended run, which never installs what nobody chose.
+item_wanted() {   # item_wanted <package>
+  is_required "$1" && return 0
+  [[ "$SEL_EXISTS" == yes ]] || return 0
+  in_list "$1" ${SEL_SELECTED[@]+"${SEL_SELECTED[@]}"}
+}
+
+deselected_reason() {   # deselected_reason <package>
+  in_list "$1" ${SEL_KNOWN[@]+"${SEL_KNOWN[@]}"} || printf 'new in the manifest - the next manual run asks'
+  return 0
+}
+
+# The menu. A header row per group with its packages beneath; Space on a
+# package ticks it, on a header ticks the whole section - or clears it, when
+# all of it was ticked. REQUIRED packages stay ticked whatever is pressed.
+# M_ON[i] is 1 or 0 per catalog entry, M_VER[i] its installed version or ''.
+# ROW_KIND/ROW_REF describe what is on screen: a group name or a catalog index.
+
+menu_build_rows() {
+  local g i any
+  ROW_KIND=() ROW_REF=()
+  for g in "${PKG_GROUPS[@]}"; do
+    any=no
+    for (( i = 0; i < ${#CAT_ID[@]}; i++ )); do
+      [[ "${CAT_GROUP[$i]}" == "$g" ]] && { any=yes; break; }
+    done
+    [[ "$any" == yes ]] || continue
+    ROW_KIND+=(group); ROW_REF+=("$g")
+    for (( i = 0; i < ${#CAT_ID[@]}; i++ )); do
+      [[ "${CAT_GROUP[$i]}" == "$g" ]] || continue
+      ROW_KIND+=(item); ROW_REF+=("$i")
+    done
+  done
+  return 0
+}
+
+menu_toggle() {   # menu_toggle <row>
+  local r="$1" g i all_on=yes
+  if [[ "${ROW_KIND[$r]}" == item ]]; then
+    i="${ROW_REF[$r]}"
+    is_required "${CAT_ID[$i]}" || M_ON[i]=$(( 1 - M_ON[i] ))
+    return 0
+  fi
+  g="${ROW_REF[$r]}"
+  for (( i = 0; i < ${#CAT_ID[@]}; i++ )); do
+    [[ "${CAT_GROUP[$i]}" == "$g" ]] || continue
+    is_required "${CAT_ID[$i]}" && continue
+    [[ "${M_ON[$i]}" == 0 ]] && all_on=no
+  done
+  for (( i = 0; i < ${#CAT_ID[@]}; i++ )); do
+    [[ "${CAT_GROUP[$i]}" == "$g" ]] || continue
+    is_required "${CAT_ID[$i]}" && continue
+    if [[ "$all_on" == yes ]]; then M_ON[i]=0; else M_ON[i]=1; fi
+  done
+  return 0
+}
+
+menu_group_state() {   # menu_group_state <group> - sets MG_BOX, MG_ON, MG_TOTAL
+  local i
+  MG_ON=0 MG_TOTAL=0
+  for (( i = 0; i < ${#CAT_ID[@]}; i++ )); do
+    [[ "${CAT_GROUP[$i]}" == "$1" ]] || continue
+    MG_TOTAL=$(( MG_TOTAL + 1 ))
+    MG_ON=$(( MG_ON + M_ON[i] ))
+  done
+  if [[ "$MG_ON" -eq 0 ]]; then MG_BOX='[ ]'
+  elif [[ "$MG_ON" -eq "$MG_TOTAL" ]]; then MG_BOX='[x]'
+  else MG_BOX='[-]'; fi
+  return 0
+}
+
+# One frame to stdout. M_EL (erase to end of line) and M_REV (reverse video,
+# the cursor row) are escapes on a terminal and empty in a test.
+menu_frame() {   # menu_frame <cursor> <top> <height>
+  local cursor="$1" top="$2" height="$3" r i on=0 rev ptr box colour ver note idcol
+  for (( i = 0; i < ${#CAT_ID[@]}; i++ )); do on=$(( on + M_ON[i] )); done
+  printf '%s Packages - %d of %d ticked%s%s\n' "$C_CYAN" "$on" "${#CAT_ID[@]}" "$C_RESET" "$M_EL"
+  printf '%s Up/Down move  Space tick (on a section: all of it)  Enter apply  q cancel%s%s\n' \
+    "$C_DIM" "$C_RESET" "$M_EL"
+  for (( r = top; r < top + height; r++ )); do
+    if [[ "$r" -ge "${#ROW_KIND[@]}" ]]; then printf '%s\n' "$M_EL"; continue; fi
+    rev='' ptr=' '
+    [[ "$r" -eq "$cursor" ]] && { rev="$M_REV"; ptr='>'; }
+    if [[ "${ROW_KIND[$r]}" == group ]]; then
+      menu_group_state "${ROW_REF[$r]}"
+      case "$MG_BOX" in '[x]') colour="$C_GREEN" ;; '[-]') colour="$C_YELLOW" ;; *) colour="$C_DIM" ;; esac
+      printf '%s %s %s%s%s %s%-27s%s %s%d/%d%s%s%s\n' "$rev" "$ptr" \
+        "$colour" "$MG_BOX" "$C_RESET$rev" "$C_CYAN" "${ROW_REF[$r]}" "$C_RESET$rev" \
+        "$C_DIM" "$MG_ON" "$MG_TOTAL" "$C_RESET" "$M_EL" "$C_RESET"
+    else
+      i="${ROW_REF[$r]}"
+      note=''; [[ "${CAT_KIND[$i]}" == cask ]] && note='cask'
+      if is_required "${CAT_ID[$i]}"; then box='[■]'; colour="$C_YELLOW"; note='required'
+      elif [[ "${M_ON[$i]}" == 1 ]]; then box='[x]'; colour="$C_GREEN"
+      else box='[ ]'; colour="$C_DIM"; fi
+      idcol="$C_DIM"; [[ "${M_ON[$i]}" == 1 ]] && idcol=''
+      ver="${M_VER[$i]:--}"
+      printf '%s %s   %s%s%s %s%-32s%s %s%-16s%s %s%s%s%s\n' "$rev" "$ptr" \
+        "$colour" "$box" "$C_RESET$rev" "$idcol" "${CAT_ID[$i]}" "$C_RESET$rev" \
+        "$([[ "$ver" == - ]] && echo "$C_DIM" || echo "$C_GREEN")" "$ver" "$C_RESET$rev" \
+        "$C_DIM" "$note" "$C_RESET" "$M_EL"
+    fi
+  done
+  printf '%s %d/%d%s%s\n' "$C_DIM" "$(( cursor + 1 ))" "${#ROW_KIND[@]}" "$C_RESET" "$M_EL"
+  return 0
+}
+
+menu_restore() {
+  [[ "$MENU_ACTIVE" == yes ]] || return 0
+  printf '\033[?25h\033[?1049l' > /dev/tty
+  MENU_ACTIVE=no
+  return 0
+}
+
+# Keys come from /dev/tty, one byte at a time. An arrow is ESC [ A; PgUp and
+# PgDn are ESC [ 5 ~ and ESC [ 6 ~. bash 3.2's read -t takes whole seconds
+# only, so a bare Esc costs a second before it counts as cancel - q is instant.
+# Sets MENU_RESULT to ok or cancel; the pick is left in M_ON.
+show_selection_menu() {
+  local cursor=0 top=0 height lines key rest rows="${#ROW_KIND[@]}"
+  M_EL=$'\033[K' M_REV=$'\033[7m'
+  MENU_ACTIVE=yes
+  printf '\033[?1049h\033[?25l\033[2J' > /dev/tty
+  while true; do
+    lines="$(tput lines 2>/dev/null || echo 24)"
+    height=$(( lines - 4 ))
+    [[ "$height" -lt 5 ]] && height=5
+    [[ "$cursor" -lt "$top" ]] && top="$cursor"
+    [[ "$cursor" -ge $(( top + height )) ]] && top=$(( cursor - height + 1 ))
+    { printf '\033[H'; menu_frame "$cursor" "$top" "$height"; } > /dev/tty
+    key=''
+    IFS= read -rsn1 key < /dev/tty || key=q
+    case "$key" in
+      $'\033')
+        rest=''
+        IFS= read -rsn2 -t 1 rest < /dev/tty || true
+        case "$rest" in
+          '[A'|'OA') [[ "$cursor" -gt 0 ]] && cursor=$(( cursor - 1 )) ;;
+          '[B'|'OB') [[ "$cursor" -lt $(( rows - 1 )) ]] && cursor=$(( cursor + 1 )) ;;
+          '[5') IFS= read -rsn1 -t 1 rest < /dev/tty || true
+                cursor=$(( cursor - height )); [[ "$cursor" -lt 0 ]] && cursor=0 ;;
+          '[6') IFS= read -rsn1 -t 1 rest < /dev/tty || true
+                cursor=$(( cursor + height )); [[ "$cursor" -ge "$rows" ]] && cursor=$(( rows - 1 )) ;;
+          '[H'|'OH'|'[1') [[ "$rest" == '[1' ]] && { IFS= read -rsn1 -t 1 rest < /dev/tty || true; }
+                          cursor=0 ;;
+          '[F'|'OF'|'[4') [[ "$rest" == '[4' ]] && { IFS= read -rsn1 -t 1 rest < /dev/tty || true; }
+                          cursor=$(( rows - 1 )) ;;
+          '') MENU_RESULT=cancel; break ;;
+        esac ;;
+      k) [[ "$cursor" -gt 0 ]] && cursor=$(( cursor - 1 )) ;;
+      j) [[ "$cursor" -lt $(( rows - 1 )) ]] && cursor=$(( cursor + 1 )) ;;
+      ' ') menu_toggle "$cursor" ;;
+      '') MENU_RESULT=ok; break ;;
+      q|Q) MENU_RESULT=cancel; break ;;
+    esac
+  done
+  menu_restore
+  return 0
+}
+
+# M_ON from the saved pick, M_VER from what brew says is installed. A tap's
+# formula is listed under its short name, hence ${id##*/}.
+menu_prepare() {
+  local i snap
+  M_ON=() M_VER=()
+  mktemp_tracked snap "${TMPDIR:-/tmp}/bootstrap-menu.XXXXXX"
+  [[ -x "$BREW" ]] && pkg_snapshot "$snap"
+  for (( i = 0; i < ${#CAT_ID[@]}; i++ )); do
+    if item_wanted "${CAT_ID[$i]}"; then M_ON[i]=1; else M_ON[i]=0; fi
+    M_VER[i]="$(awk -v n="${CAT_ID[$i]##*/}" '$1 == n { print $2; exit }' "$snap" 2>/dev/null || true)"
+  done
+  return 0
+}
+
+uninstall_item() {   # uninstall_item <catalog index>
+  local id="${CAT_ID[$1]}" kind="${CAT_KIND[$1]}"
+  if [[ "$DRY_RUN" == yes ]]; then
+    result 'would-remove' "$id" "$kind"
+    return 0
+  fi
+  if "$BREW" uninstall "--$kind" "$id" >"$BREW_LOG" 2>&1; then
+    result 'removed' "$id" "$kind"
+  else
+    result 'failed' "$id" "brew uninstall: $(brew_error "$BREW_LOG")"
+  fi
+  return 0
+}
+
 # Manifest
 
+REQUIRED=()
 [[ -f "$MANIFEST" ]] || die "manifest not found: $MANIFEST"
 # shellcheck source=packages.conf
 source "$MANIFEST"
@@ -596,6 +884,13 @@ for required in PKG_GROUPS MANUAL HELD TOOLS TAPS \
                 ZSH_ENABLED VSCODE_EXTENSIONS \
                 GHOSTTY_ENABLED SCHEDULE_ENABLED HISTORY_SIZE HISTORY_FILE_SIZE; do
   declare -p "$required" >/dev/null 2>&1 || die "manifest is missing \$$required: $MANIFEST"
+done
+
+# REQUIRED is optional, so a manifest written before --select still loads. An
+# id in it that no group lists is a typo that would silently lock nothing.
+load_catalog
+for id in ${REQUIRED[@]+"${REQUIRED[@]}"}; do
+  in_list "$id" "${CAT_ID[@]}" || die "REQUIRED lists $id, which no group has: $MANIFEST"
 done
 
 if [[ "${LIST_GROUPS:-no}" == "yes" ]]; then
@@ -1324,15 +1619,110 @@ snapshot_after() {
   RUN_CHANGED="$(awk '
     NR == FNR { before[$1] = $2; next }
     {
+      after[$1] = 1
       if (!($1 in before)) { printf "+%s %s, ", $1, $2 }
       else if (before[$1] != $2) { printf "%s %s>%s, ", $1, before[$1], $2 }
     }
+    END { for (k in before) if (!(k in after)) printf "-%s, ", k }
   ' "$SNAP_BEFORE" "$snap_after" 2>/dev/null | sed 's/, $//' || true)"
   [[ -n "$RUN_CHANGED" ]] && result 'present' 'versions moved' "$RUN_CHANGED"
   return 0
 }
 
 snapshot_before
+
+# Selection - the menu, and the uninstalls it asks for
+#
+# Declining the removal prompt abandons the whole pick, not just the removals:
+# saving it without them would leave those packages installed but unticked.
+# What is offered for removal follows the machine - unticked, installed, and
+# offered by a menu before - so a removal that failed (brew refuses a formula
+# another one depends on) is offered again next time rather than stranded.
+
+read_selection
+
+if [[ "$SELECT" == yes ]]; then
+  phase 'Selection'
+  [[ "$RUN_INTERACTIVE" == yes && -r /dev/tty ]] \
+    || die '--select needs a terminal: it opens a menu and asks before it uninstalls anything'
+  menu_prepare
+  menu_build_rows
+  show_selection_menu
+
+  if [[ "$MENU_RESULT" != ok ]]; then
+    printf '  %smenu cancelled - nothing changed%s\n' "$C_DIM" "$C_RESET"
+  else
+    to_remove=()
+    for (( i = 0; i < ${#CAT_ID[@]}; i++ )); do
+      [[ "${M_ON[$i]}" == 1 ]] && continue
+      is_required "${CAT_ID[$i]}" && continue
+      [[ -n "${M_VER[$i]}" ]] || continue
+      if [[ "$SEL_EXISTS" == yes ]]; then
+        in_list "${CAT_ID[$i]}" ${SEL_KNOWN[@]+"${SEL_KNOWN[@]}"} || continue
+      fi
+      to_remove+=("$i")
+    done
+
+    apply=yes
+    if [[ "${#to_remove[@]}" -gt 0 && "$DRY_RUN" == no ]]; then
+      printf '\n  %sUnticked, and installed - these will be uninstalled:%s\n' "$C_YELLOW" "$C_RESET"
+      for i in "${to_remove[@]}"; do
+        printf '    %-10s %s %s(%s)%s\n' "${CAT_GROUP[$i]}" "${CAT_ID[$i]}" "$C_DIM" "${CAT_KIND[$i]}" "$C_RESET"
+      done
+      printf '  Uninstall them? [y/N] '
+      answer=''
+      read -r answer < /dev/tty || true
+      [[ "$answer" == y || "$answer" == yes ]] || apply=no
+    fi
+
+    if [[ "$apply" == no ]]; then
+      printf '  %skept everything - the pick was not saved%s\n' "$C_DIM" "$C_RESET"
+    else
+      SEL_SELECTED=() SEL_KNOWN=()
+      for (( i = 0; i < ${#CAT_ID[@]}; i++ )); do
+        SEL_KNOWN+=("${CAT_ID[$i]}")
+        if [[ "${M_ON[$i]}" == 1 ]] || is_required "${CAT_ID[$i]}"; then SEL_SELECTED+=("${CAT_ID[$i]}"); fi
+      done
+      SEL_EXISTS=yes
+      [[ "$DRY_RUN" == no ]] && save_selection
+      for i in ${to_remove[@]+"${to_remove[@]}"}; do uninstall_item "$i"; done
+    fi
+  fi
+fi
+
+# New in the manifest - asked about once, on a manual run
+#
+# Only with a selection file: without one every package is wanted anyway. A
+# "no" is remembered as much as a "yes", which is what stops the question
+# coming back. A section with nothing ticked was switched off whole, so its
+# newcomers are left out without asking. An unattended run asks nothing and
+# records nothing, so the next manual run still asks.
+
+if [[ "$SEL_EXISTS" == yes && "$RUN_INTERACTIVE" == yes && -r /dev/tty ]]; then
+  asked=no
+  for (( i = 0; i < ${#CAT_ID[@]}; i++ )); do
+    id="${CAT_ID[$i]}"
+    in_list "$id" ${SEL_KNOWN[@]+"${SEL_KNOWN[@]}"} && continue
+    is_required "$id" && continue
+    [[ "$asked" == no ]] && phase 'New in the manifest since your last pick'
+    asked=yes
+    group_on=no
+    for (( j = 0; j < ${#CAT_ID[@]}; j++ )); do
+      [[ "${CAT_GROUP[$j]}" == "${CAT_GROUP[$i]}" ]] || continue
+      in_list "${CAT_ID[$j]}" ${SEL_SELECTED[@]+"${SEL_SELECTED[@]}"} && { group_on=yes; break; }
+    done
+    if [[ "$group_on" == no ]]; then
+      result 'deselected' "$id" "group ${CAT_GROUP[$i]} is switched off"
+    else
+      printf '  %s (%s, %s) - install it? [y/N] ' "$id" "${CAT_GROUP[$i]}" "${CAT_KIND[$i]}"
+      answer=''
+      read -r answer < /dev/tty || true
+      [[ "$answer" == y || "$answer" == yes ]] && SEL_SELECTED+=("$id")
+    fi
+    SEL_KNOWN+=("$id")
+  done
+  [[ "$asked" == yes && "$DRY_RUN" == no ]] && save_selection
+fi
 
 install_formula() {
   local pkg="$1"
@@ -1418,12 +1808,14 @@ for group in "${selected[@]}"; do
   eval "formulae=(\"\${GROUP_${group}_FORMULA[@]:-}\")"
   for pkg in "${formulae[@]}"; do
     [[ -z "$pkg" ]] && continue
+    if ! item_wanted "$pkg"; then result 'deselected' "$pkg" "$(deselected_reason "$pkg")"; continue; fi
     install_formula "$pkg"
   done
 
   eval "casks=(\"\${GROUP_${group}_CASK[@]:-}\")"
   for token in "${casks[@]}"; do
     [[ -z "$token" ]] && continue
+    if ! item_wanted "$token"; then result 'deselected' "$token" "$(deselected_reason "$token")"; continue; fi
     install_cask "$token"
   done
 done

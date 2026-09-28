@@ -137,9 +137,8 @@
                 'Bitwarden.Bitwarden'
                 'Bitwarden.CLI'
                 'Microsoft.PowerToys'
-                # Sysinternals through Portmaster below are Windows-only: none of
-                # the six ships a Linux or macOS build the other manifests can use.
-                'Microsoft.Sysinternals.Suite'
+                # UniGetUI through Portmaster below are Windows-only: none of the
+                # five ships a Linux or macOS build the other manifests can use.
                 'Devolutions.UniGetUI'
                 'REALiX.HWiNFO'
                 'CrystalDewWorld.CrystalDiskInfo'

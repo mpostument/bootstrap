@@ -41,6 +41,7 @@ are Homebrew packages here, not separate phases as on Linux.
 
 ```
 --dry-run          Show what would change, touch nothing.
+--select           Tick which packages this Mac has - see below.
 --groups a,b       Limit to named groups. Default is every group.
 --list-groups      Print the groups in the manifest and exit.
 --list-packages    Print every package name in every group and exit.
@@ -74,6 +75,45 @@ what runs afterwards is an ordinary git or kill command.
 | `gs` | browse stashes; Enter applies, ctrl-p pops, ctrl-x drops (not defined where Ghostscript owns `gs`) |
 | `fkill [signal]` | pick some of your own processes and signal them, TERM by default |
 | `cheat` | search the `tools` list, preview its tldr page, put the command on the prompt |
+
+## Choosing packages
+
+```bash
+./bootstrap.sh --select            # tick what this Mac should have
+./bootstrap.sh --select --dry-run  # the same menu, and what it would change
+```
+
+`--select` opens every formula and cask in the manifest as a menu, a section
+per group:
+
+```
+   [x] shell                       14/14
+ >   [■] git                              2.51.0           required
+     [x] starship                         1.24.0
+   [-] cloud                        9/10
+     [ ] stern                            -
+```
+
+Up/Down or j/k move, PgUp/PgDn and Home/End jump; Space ticks a package, or on
+a section ticks all of it - and clears it if it was all ticked. A section shows
+`[x]`, `[-]` or `[ ]` for all, some or none; each package shows its installed
+version, or `-`. Your current pick comes pre-ticked. Enter applies, q cancels
+(Esc does too, a second later - bash 3.2 cannot wait less).
+
+On Enter, what you ticked is installed and what you unticked is uninstalled,
+after one confirmation that lists it; saying no keeps everything and saves
+nothing. `REQUIRED` in `packages.conf` shows locked (■) and is always
+installed. brew will not uninstall a formula another one depends on - that
+shows as failed, and the next `--select` offers it again.
+
+The pick is saved to `~/.local/state/bootstrap-macos/selection`, one
+`yes <package>` or `no <package>` per line, and every later run follows it -
+the launchd agent too. Without that file every package is wanted, as before
+`--select` existed; delete it to go back. A package added to the manifest after
+your pick is asked about once on the next manual run and the answer kept; the
+agent never asks and never installs it. A section with nothing ticked counts as
+switched off, and its newcomers are left out without asking. Only `--select`
+ever uninstalls anything.
 
 ## The manifest
 
