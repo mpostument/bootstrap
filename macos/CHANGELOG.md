@@ -19,6 +19,20 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A release archive is a whole install now.** It used to hold the platform
+  directory alone, without the configs the script deploys from the repo root -
+  starship.toml, the tool themes, mise/, tools/cli-parity.conf - so an install
+  from it could not finish its shell and theme phases. Each archive now
+  unpacks to one bootstrap/ directory laid out as the repo: the platform's own
+  directory and every top-level entry but the other two platforms. It also
+  carries a RELEASE file naming the tag and the repo.
+- **An archive install updates itself** like a checkout: when a newer release
+  is out, a run you are sitting at offers it, downloads that release's
+  tarball, checks it against the published .sha256, unpacks it into a temp
+  directory and copies it over the install - the same directory, so the
+  launchd agent still finds the script. A download that fails or does not
+  match leaves the install as it was. An archive from before this release has
+  no RELEASE file; unpack this one once by hand and it updates from then on.
 - **Update from a run**: when preflight finds a newer release, a run you are
   sitting at asks `Update to vX and rerun? [y/N]`. Yes fetches, moves the
   checkout to the tag - a branch fast-forwards, a detached checkout of a tag

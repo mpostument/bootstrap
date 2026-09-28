@@ -266,24 +266,33 @@ jobs:
           LINUX="bootstrap-linux-v${{ steps.versions.outputs.linux }}"
           MACOS="bootstrap-macos-v${{ steps.versions.outputs.macos }}"
 
-          mkdir -p "$WINDOWS" "$LINUX" "$MACOS"
+          # Each archive is the repo as that platform sees it, under one
+          # unversioned bootstrap/ directory: its own directory, and everything
+          # at the root the scripts read through .. - starship.toml, the tool
+          # configs, mise/, tools/cli-parity.conf. Copied as "every top-level
+          # entry but the other platforms", so a shared directory added later
+          # ships without this step changing. Dot-entries (.git, .github) are
+          # not matched by *. RELEASE names the tag and repo, which is how an
+          # installed archive knows what it is and where to update from; the
+          # directory name carries no version because updates land in place.
+          for platform in windows linux macos; do
+            stage="stage-$platform/bootstrap"
+            mkdir -p "$stage"
+            for entry in *; do
+              case "$entry" in
+                windows|linux|macos|stage-*|_typos.toml|bootstrap-*) continue ;;
+              esac
+              cp -R "$entry" "$stage/"
+            done
+            cp -R "$platform" "$stage/"
+            printf 'tag=%s\nrepo=%s\nplatform=%s\n' \
+              "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY" "$platform" > "$stage/RELEASE"
+          done
+          chmod +x stage-linux/bootstrap/linux/bootstrap.sh stage-macos/bootstrap/macos/bootstrap.sh
 
-          cp windows/bootstrap.ps1 \
-             windows/packages.psd1 \
-             windows/profile.ps1 \
-             windows/merge-terminal-settings.ps1 \
-             windows/README.md \
-             windows/CHANGELOG.md \
-             "$WINDOWS/"
-          cp -r windows/mpv "$WINDOWS/"
-
-          cp linux/bootstrap.sh linux/packages.conf linux/README.md linux/CHANGELOG.md "$LINUX/"
-          cp macos/bootstrap.sh macos/packages.conf macos/README.md macos/CHANGELOG.md "$MACOS/"
-          chmod +x "$LINUX/bootstrap.sh" "$MACOS/bootstrap.sh"
-
-          zip -qr "$WINDOWS.zip" "$WINDOWS"
-          tar -czf "$LINUX.tar.gz" "$LINUX"
-          tar -czf "$MACOS.tar.gz" "$MACOS"
+          (cd stage-windows && zip -qr "../$WINDOWS.zip" bootstrap)
+          tar -czf "$LINUX.tar.gz" -C stage-linux bootstrap
+          tar -czf "$MACOS.tar.gz" -C stage-macos bootstrap
 
           for f in "$WINDOWS.zip" "$LINUX.tar.gz" "$MACOS.tar.gz"; do
             sha256sum "$f" | tee "$f.sha256"

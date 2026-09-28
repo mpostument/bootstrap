@@ -3,6 +3,7 @@
 set -euo pipefail
 
 BOOTSTRAP_VERSION='1.40.0'
+BOOTSTRAP_PLATFORM='linux'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${SCRIPT_DIR}/packages.conf"
@@ -419,22 +420,29 @@ github_latest_tag() {   # github_latest_tag <owner/repo> [tag prefix]
     | grep -m1 -E "^${2}[0-9]+(\.[0-9]+)*\$" || true
 }
 
-# Compares the checkout's own tag against its GitHub origin's latest release -
+# Compares this install's own release tag against its GitHub origin's latest -
 # not BOOTSTRAP_VERSION, which is this script's own number and never lines up
-# with the vYYYY.MM.DD bundle tag. Silent whenever it can't be sure: no git
-# checkout (a release tarball), no GitHub origin (a fork hosted elsewhere), no
-# tags, or no network - this never blocks or fails the run over it.
+# with the vYYYY.MM.DD bundle tag. Two kinds of install carry a tag: a git
+# checkout (git describe, the repo from origin) and a release archive (the
+# RELEASE file the release workflow writes beside this directory). Silent
+# whenever it can't be sure - neither of those, no GitHub repo, no tags, no
+# network - and never blocks or fails the run over it.
 check_bootstrap_update() {
   [[ "$SKIP_UPDATE_CHECK" == yes ]] && return 0
-  git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  local root kind='' origin_url repo_slug='' local_tag='' remote_tag answer=''
+  root="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-  local origin_url repo_slug local_tag remote_tag
-  origin_url="$(git -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null || true)"
-  repo_slug="$(printf '%s' "${origin_url%.git}" | sed -n 's#.*github\.com[:/]\([^/]*/[^/]*\)$#\1#p')"
-  [[ -n "$repo_slug" ]] || return 0
-
-  local_tag="$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null || true)"
-  [[ -n "$local_tag" ]] || return 0
+  if git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    kind=git
+    origin_url="$(git -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null || true)"
+    repo_slug="$(printf '%s' "${origin_url%.git}" | sed -n 's#.*github\.com[:/]\([^/]*/[^/]*\)$#\1#p')"
+    local_tag="$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null || true)"
+  elif [[ -r "$root/RELEASE" ]]; then
+    kind=archive
+    repo_slug="$(sed -n 's/^repo=//p' "$root/RELEASE")"
+    local_tag="$(sed -n 's/^tag=//p' "$root/RELEASE")"
+  fi
+  [[ -n "$kind" && -n "$repo_slug" && -n "$local_tag" ]] || return 0
 
   remote_tag="$(github_latest_tag "$repo_slug")"
   [[ -n "$remote_tag" && "$remote_tag" != "$local_tag" ]] || return 0
@@ -443,22 +451,70 @@ check_bootstrap_update() {
     'update' "$C_YELLOW" "$remote_tag" "$local_tag" "$C_RESET" "$repo_slug" "$remote_tag"
 
   # Offered, never done unasked: only a run someone is sitting at, that is
-  # meant to change things, and not as root - git writing into your checkout as
-  # root would leave files you then cannot change.
+  # meant to change things, and not as root - root writing into your install
+  # would leave files you then cannot change.
   [[ "$RUN_INTERACTIVE" == yes && -r /dev/tty ]] || return 0
   [[ "$DRY_RUN" == no && "$DOCTOR_ONLY" == no && "$(id -u)" -ne 0 ]] || return 0
 
-  local answer=''
   printf '  %-16sUpdate to %s and rerun? [y/N] ' '' "$remote_tag"
   read -r answer < /dev/tty || true
   [[ "$answer" == y || "$answer" == yes ]] || return 0
 
-  if apply_bootstrap_update "$remote_tag"; then
-    printf '  %-16s%supdated to %s - rerunning%s\n\n' '' "$C_GREEN" "$remote_tag" "$C_RESET"
-    cleanup_tmp
-    exec "$SCRIPT_DIR/bootstrap.sh" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"} --skip-update-check
+  if [[ "$kind" == git ]]; then
+    apply_bootstrap_update "$remote_tag" || return 0
+  else
+    apply_archive_update "$remote_tag" "$repo_slug" "$root" || return 0
   fi
-  return 0
+  printf '  %-16s%supdated to %s - rerunning%s\n\n' '' "$C_GREEN" "$remote_tag" "$C_RESET"
+  cleanup_tmp
+  exec "$SCRIPT_DIR/bootstrap.sh" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"} --skip-update-check
+}
+
+sha256_of() {   # sha256_of <file>
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{ print $1 }'
+  else
+    shasum -a 256 "$1" | awk '{ print $1 }'
+  fi
+}
+
+# Replaces a release archive's files with the new release's, in place: the
+# directory keeps its path, so the scheduled run that points into it still
+# finds its script. The archive is checked against the .sha256 published
+# beside it before anything is unpacked, and unpacked into a temp directory
+# first, so a download that fails part way leaves the install as it was.
+# Files the new release no longer ships are left behind, which is harmless:
+# nothing reads them.
+apply_archive_update() {   # apply_archive_update <tag> <owner/repo> <install root>
+  local tag="$1" repo="$2" root="$3" tmp url want got why=''
+  local -a auth=()
+  [[ -n "$GITHUB_AUTH_HEADER" ]] && auth=(-H "$GITHUB_AUTH_HEADER")
+  mktemp_tracked tmp -d "${TMPDIR:-/tmp}/bootstrap-update.XXXXXX"
+
+  url="$(curl -fsSL "${auth[@]}" "https://api.github.com/repos/$repo/releases/tags/$tag" 2>/dev/null \
+    | grep -o '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]*"' \
+    | sed 's/.*"\(https[^"]*\)"$/\1/' \
+    | grep "/bootstrap-${BOOTSTRAP_PLATFORM}-v[^/]*\.tar\.gz$" | head -1 || true)"
+
+  if [[ -z "$url" ]]; then
+    why="no ${BOOTSTRAP_PLATFORM} archive in the $tag release"
+  elif ! curl -fsSL -o "$tmp/release.tar.gz" "$url" || ! curl -fsSL -o "$tmp/release.sha256" "$url.sha256"; then
+    why='download failed'
+  else
+    want="$(awk '{ print $1; exit }' "$tmp/release.sha256")"
+    got="$(sha256_of "$tmp/release.tar.gz")"
+    if [[ -z "$want" || "$want" != "$got" ]]; then
+      why='the download does not match its published checksum'
+    elif ! tar -xzf "$tmp/release.tar.gz" -C "$tmp" 2>/dev/null \
+        || [[ ! -f "$tmp/bootstrap/${BOOTSTRAP_PLATFORM}/bootstrap.sh" ]]; then
+      why='the archive is not laid out as expected'
+    elif ! cp -R "$tmp/bootstrap/." "$root/" 2>/dev/null; then
+      why="could not write into $root"
+    fi
+  fi
+  [[ -z "$why" ]] && return 0
+  printf '  %-16s%snot updated: %s%s\n' '' "$C_YELLOW" "$why" "$C_RESET"
+  return 1
 }
 
 # Moves the checkout to the release tag. Refuses rather than guesses: local

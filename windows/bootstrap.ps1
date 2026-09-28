@@ -878,24 +878,37 @@ function Get-GitHubLatestTag {
     }
 }
 
-# Compares the checkout's own tag against its GitHub origin's latest release -
+# Compares this install's own release tag against its GitHub origin's latest -
 # not $script:BootstrapVersion, which is this script's own number and never
-# lines up with the vYYYY.MM.DD bundle tag. Silent whenever it can't be sure:
-# no git checkout (a release zip), no GitHub origin (a fork hosted elsewhere),
-# no tags, or no network - this never blocks or fails the run over it.
+# lines up with the vYYYY.MM.DD bundle tag. Two kinds of install carry a tag: a
+# git checkout (git describe, the repo from origin) and a release zip (the
+# RELEASE file the release workflow writes beside this directory). Silent
+# whenever it can't be sure - neither of those, no GitHub repo, no tags, no
+# network - and never blocks or fails the run over it.
 function Test-BootstrapUpdate {
     if ($SkipUpdateCheck) { return }
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    $root = Split-Path $script:ToolRoot -Parent
+    $releaseFile = Join-Path $root 'RELEASE'
+    $kind = ''; $repoSlug = ''; $localTag = ''
 
-    git -C $script:ToolRoot rev-parse --is-inside-work-tree *> $null
-    if ($LASTEXITCODE -ne 0) { return }
-
-    $originUrl = (git -C $script:ToolRoot remote get-url origin 2>$null) -replace '\.git$', ''
-    if (-not $originUrl -or $originUrl -notmatch 'github\.com[:/](?<slug>[^/]+/[^/]+)$') { return }
-    $repoSlug = $Matches['slug']
-
-    $localTag = git -C $script:ToolRoot describe --tags --abbrev=0 2>$null
-    if (-not $localTag) { return }
+    $isCheckout = $false
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        git -C $script:ToolRoot rev-parse --is-inside-work-tree *> $null
+        $isCheckout = $LASTEXITCODE -eq 0
+    }
+    if ($isCheckout) {
+        $kind = 'git'
+        $originUrl = (git -C $script:ToolRoot remote get-url origin 2>$null) -replace '\.git$', ''
+        if ($originUrl -match 'github\.com[:/](?<slug>[^/]+/[^/]+)$') { $repoSlug = $Matches['slug'] }
+        $localTag = git -C $script:ToolRoot describe --tags --abbrev=0 2>$null
+    } elseif (Test-Path $releaseFile) {
+        $kind = 'archive'
+        foreach ($line in Get-Content $releaseFile) {
+            if ($line -match '^repo=(.+)$') { $repoSlug = $Matches[1] }
+            if ($line -match '^tag=(.+)$') { $localTag = $Matches[1] }
+        }
+    }
+    if (-not $kind -or -not $repoSlug -or -not $localTag) { return }
 
     $remoteTag = Get-GitHubLatestTag -RepoSlug $repoSlug
     if (-not $remoteTag -or $remoteTag -eq $localTag) { return }
@@ -908,12 +921,65 @@ function Test-BootstrapUpdate {
     if (-not $script:RunInteractive -or $WhatIfPreference -or $Doctor) { return }
     $answer = Read-Host ('                  Update to {0} and rerun? [y/N]' -f $remoteTag)
     if ($answer -notmatch '^(y|yes)$') { return }
-    if (-not (Update-BootstrapCheckout -Tag $remoteTag)) { return }
+    if ($kind -eq 'git') {
+        if (-not (Update-BootstrapCheckout -Tag $remoteTag)) { return }
+    } else {
+        if (-not (Update-BootstrapArchive -Tag $remoteTag -RepoSlug $repoSlug -Root $root)) { return }
+    }
 
     Write-Host ('                  updated to {0} - rerunning' -f $remoteTag) -ForegroundColor Green
     Write-Host ''
     & $script:ScriptSelf @script:BoundParams -SkipUpdateCheck
     exit $LASTEXITCODE
+}
+
+# Replaces a release zip's files with the new release's, in place: the
+# directory keeps its path, so the scheduled task that points into it still
+# finds its script. The zip is checked against the .sha256 published beside it
+# before anything is unpacked, and unpacked into a temp directory first, so a
+# download that fails part way leaves the install as it was. Files the new
+# release no longer ships are left behind, which is harmless: nothing reads
+# them. PowerShell has read this script whole before running it, so replacing
+# the file underneath is safe.
+function Update-BootstrapArchive {
+    param([string]$Tag, [string]$RepoSlug, [string]$Root)
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ('bootstrap-update-{0}' -f [guid]::NewGuid().ToString('N'))
+    $why = ''
+    try {
+        New-Item -ItemType Directory -Path $tmp -Force -WhatIf:$false | Out-Null
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$RepoSlug/releases/tags/$Tag" -TimeoutSec 15
+        $asset = @($release.assets | Where-Object { $_.name -like 'bootstrap-windows-v*.zip' }) | Select-Object -First 1
+        if (-not $asset) {
+            $why = "no windows zip in the $Tag release"
+        } else {
+            $zip = Join-Path $tmp 'release.zip'
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing -TimeoutSec 120
+            $sums = (Invoke-WebRequest -Uri ($asset.browser_download_url + '.sha256') -UseBasicParsing -TimeoutSec 30).Content
+            if ($sums -is [byte[]]) { $sums = [Text.Encoding]::ASCII.GetString($sums) }
+            $want = ("$sums".Trim() -split '\s+')[0]
+            $got = (Get-FileHash -Path $zip -Algorithm SHA256).Hash
+            if (-not $want -or $want -ne $got) {
+                $why = 'the download does not match its published checksum'
+            } else {
+                Expand-Archive -Path $zip -DestinationPath $tmp -Force -WhatIf:$false
+                $unpacked = Join-Path $tmp 'bootstrap'
+                if (-not (Test-Path (Join-Path $unpacked 'windows\bootstrap.ps1'))) {
+                    $why = 'the zip is not laid out as expected'
+                } else {
+                    Copy-Item -Path (Join-Path $unpacked '*') -Destination $Root -Recurse -Force -WhatIf:$false
+                    # A download can carry the mark RemoteSigned refuses to run.
+                    Get-ChildItem $Root -Recurse -File | Unblock-File -WhatIf:$false
+                }
+            }
+        }
+    } catch {
+        $why = $_.Exception.Message
+    } finally {
+        Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue -WhatIf:$false
+    }
+    if (-not $why) { return $true }
+    Write-Host ('                  not updated: {0}' -f $why) -ForegroundColor Yellow
+    return $false
 }
 
 # Moves the checkout to the release tag. Refuses rather than guesses: local
@@ -927,7 +993,8 @@ function Update-BootstrapCheckout {
     $ErrorActionPreference = 'Continue'
     $root = $script:ToolRoot
     $why = ''
-    if (git -C $root status --porcelain 2>$null) {
+    $dirty = git -C $root status --porcelain 2>$null
+    if ($dirty) {
         $why = 'the checkout has local changes - commit or stash them, then git pull'
     } else {
         git -C $root fetch --quiet --tags origin 2>$null

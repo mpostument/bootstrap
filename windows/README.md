@@ -15,11 +15,16 @@ prompt otherwise, and any dismissed prompt is reported as a failure.
 
 ```powershell
 Expand-Archive .\bootstrap-windows-v*.zip -DestinationPath .
-cd .\bootstrap-windows-v*
-Get-ChildItem -Recurse | Unblock-File     # required
+cd .\bootstrap\windows
+Get-ChildItem .. -Recurse | Unblock-File     # required
 .\bootstrap.ps1 -WhatIf
 .\bootstrap.ps1
 ```
+
+The zip unpacks to `bootstrap\`: this directory, and beside it the shared
+configs the script deploys (`starship.toml`, the tool themes, `mise\`) plus a
+`RELEASE` file naming the tag - which is how the install updates itself later.
+Keep it where it is: the daily task runs the script from this path.
 
 Without `Unblock-File`, `RemoteSigned` refuses the downloaded script with "is
 not digitally signed". `powershell.exe -ExecutionPolicy Bypass -File
@@ -304,18 +309,22 @@ All three platforms ship in one GitHub release; the tag names the bundle and
 each platform keeps its own number. This one's version is
 `$script:BootstrapVersion` in `bootstrap.ps1`.
 
-Preflight checks this checkout's own GitHub origin for a newer release tag and
-prints one line if it's behind - separate from `$script:BootstrapVersion`
-above, which is this script's own number. Silent on a release zip, a fork, or
-no network. `-SkipUpdateCheck` opts out.
+Preflight checks for a newer release and prints one line if this install is
+behind - separate from `$script:BootstrapVersion` above, which is this script's own number.
+Two kinds of install know their release: a git checkout (its tag, and its
+GitHub origin) and a release archive (the `RELEASE` file beside the platform
+directory, naming the tag and the repo). Silent on anything else, a fork
+hosted elsewhere, or no network. `-SkipUpdateCheck` opts out.
 
 On a run you are sitting at, it also offers to update: `Update to vX and
-rerun? [y/N]`. Yes moves this checkout to the release - a branch
-fast-forwards to the tag, a checkout of a tag moves to the new one - and runs
-the new script with the same arguments. It refuses instead of guessing when
-the checkout has local changes, or a branch has commits the release does not
-(a machine the repo is being worked on from); then it says so, and updating
-is `git pull` by hand. The daily task, `-WhatIf` and `-Doctor` only print the line.
+rerun? [y/N]`. Yes updates in place and runs the new script with the same
+arguments. A checkout moves to the release - a branch fast-forwards to the
+tag, a checkout of a tag moves to the new one - and refuses instead of
+guessing when there are local changes, or a branch has commits the release
+does not (then updating is `git pull` by hand). An archive install downloads
+the new release's archive, checks it against the published `.sha256`, unpacks
+it into a temp directory and copies it over the install - same directory, so
+the scheduled run that points into it keeps working. The daily task, `-WhatIf` and `-Doctor` only print the line.
 
 ```sh
 # 1. bump the version in whichever platform(s) changed

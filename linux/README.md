@@ -255,15 +255,21 @@ notes in `CHANGELOG.md`. The release workflow refuses to publish if the current
 version has no changelog section, a script fails to parse, or shellcheck
 complains.
 
-Preflight checks this checkout's own GitHub origin for a newer release tag and
-prints one line if it's behind - separate from `BOOTSTRAP_VERSION` above,
-which is this script's own number. Silent on a release tarball, a fork, or no
-network. `--skip-update-check` opts out.
+Preflight checks for a newer release and prints one line if this install is
+behind - separate from `BOOTSTRAP_VERSION` above, which is this script's own number.
+Two kinds of install know their release: a git checkout (its tag, and its
+GitHub origin) and a release archive (the `RELEASE` file beside the platform
+directory, naming the tag and the repo). Silent on anything else, a fork
+hosted elsewhere, or no network. `--skip-update-check` opts out.
 
 On a run you are sitting at, it also offers to update: `Update to vX and
-rerun? [y/N]`. Yes moves this checkout to the release - a branch
-fast-forwards to the tag, a checkout of a tag moves to the new one - and runs
-the new script with the same arguments. It refuses instead of guessing when
-the checkout has local changes, or a branch has commits the release does not
-(a machine the repo is being worked on from); then it says so, and updating
-is `git pull` by hand. The systemd timer, `--dry-run`, `--doctor` and a run as root only print the line - git writing into your checkout as root would leave files you could not change.
+rerun? [y/N]`. Yes updates in place and runs the new script with the same
+arguments. A checkout moves to the release - a branch fast-forwards to the
+tag, a checkout of a tag moves to the new one - and refuses instead of
+guessing when there are local changes, or a branch has commits the release
+does not (then updating is `git pull` by hand). An archive install downloads
+the new release's archive, checks it against the published `.sha256`, unpacks
+it into a temp directory and copies it over the install - same directory, so
+the scheduled run that points into it keeps working. The systemd timer, `--dry-run`, `--doctor` and a run as root only print
+the line - root writing into your install would leave files you could not
+change.
