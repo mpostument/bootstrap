@@ -72,6 +72,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# The parameters as given, for the rerun after an update.
+$script:BoundParams = @{} + $PSBoundParameters
+
 $script:BootstrapVersion = '1.47.0'
 
 if ($ShowVersion) {
@@ -899,6 +902,56 @@ function Test-BootstrapUpdate {
 
     Write-Host ('  update          {0} available (you have {1}) - https://github.com/{2}/releases/tag/{3}' `
             -f $remoteTag, $localTag, $repoSlug, $remoteTag) -ForegroundColor Yellow
+
+    # Offered, never done unasked: only a run someone is sitting at and that is
+    # meant to change things - not the daily task, -WhatIf or -Doctor.
+    if (-not $script:RunInteractive -or $WhatIfPreference -or $Doctor) { return }
+    $answer = Read-Host ('                  Update to {0} and rerun? [y/N]' -f $remoteTag)
+    if ($answer -notmatch '^(y|yes)$') { return }
+    if (-not (Update-BootstrapCheckout -Tag $remoteTag)) { return }
+
+    Write-Host ('                  updated to {0} - rerunning' -f $remoteTag) -ForegroundColor Green
+    Write-Host ''
+    & $script:ScriptSelf @script:BoundParams -SkipUpdateCheck
+    exit $LASTEXITCODE
+}
+
+# Moves the checkout to the release tag. Refuses rather than guesses: local
+# changes, or a branch with commits the release does not have - a machine this
+# repo is being worked on from - are left for git by hand. A detached HEAD (a
+# checkout of a tag) moves to the new tag; a branch fast-forwards to it.
+function Update-BootstrapCheckout {
+    param([string]$Tag)
+    # git reports on stderr, which Windows PowerShell turns into errors that
+    # 'Stop' would throw on; exit codes are what is checked here.
+    $ErrorActionPreference = 'Continue'
+    $root = $script:ToolRoot
+    $why = ''
+    if (git -C $root status --porcelain 2>$null) {
+        $why = 'the checkout has local changes - commit or stash them, then git pull'
+    } else {
+        git -C $root fetch --quiet --tags origin 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            $why = 'git fetch failed'
+        } else {
+            git -C $root symbolic-ref -q HEAD *> $null
+            if ($LASTEXITCODE -ne 0) {
+                git -C $root checkout --quiet $Tag 2>$null
+                if ($LASTEXITCODE -ne 0) { $why = "git checkout $Tag failed" }
+            } else {
+                git -C $root merge-base --is-ancestor HEAD $Tag 2>$null
+                if ($LASTEXITCODE -eq 0) {
+                    git -C $root merge --ff-only --quiet $Tag 2>$null
+                    if ($LASTEXITCODE -ne 0) { $why = "git merge --ff-only $Tag failed" }
+                } else {
+                    $why = "this branch has commits $Tag does not - update it with git by hand"
+                }
+            }
+        }
+    }
+    if (-not $why) { return $true }
+    Write-Host ('                  not updated: {0}' -f $why) -ForegroundColor Yellow
+    return $false
 }
 
 function Test-Elevated {

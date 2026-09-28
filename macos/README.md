@@ -298,3 +298,11 @@ Preflight checks this checkout's own GitHub origin for a newer release tag and
 prints one line if it's behind - separate from `BOOTSTRAP_VERSION` above,
 which is this script's own number. Silent on a release tarball, a fork, or no
 network. `--skip-update-check` opts out.
+
+On a run you are sitting at, it also offers to update: `Update to vX and
+rerun? [y/N]`. Yes moves this checkout to the release - a branch
+fast-forwards to the tag, a checkout of a tag moves to the new one - and runs
+the new script with the same arguments. It refuses instead of guessing when
+the checkout has local changes, or a branch has commits the release does not
+(a machine the repo is being worked on from); then it says so, and updating
+is `git pull` by hand. The launchd agent, `--dry-run` and `--doctor` only print the line.

@@ -379,6 +379,48 @@ check_bootstrap_update() {
 
   printf '  %-16s%s%s available (you have %s)%s - https://github.com/%s/releases/tag/%s\n' \
     'update' "$C_YELLOW" "$remote_tag" "$local_tag" "$C_RESET" "$repo_slug" "$remote_tag"
+
+  # Offered, never done unasked: only a run someone is sitting at, that is
+  # meant to change things, and not as root - git writing into your checkout as
+  # root would leave files you then cannot change.
+  [[ "$RUN_INTERACTIVE" == yes && -r /dev/tty ]] || return 0
+  [[ "$DRY_RUN" == no && "$DOCTOR_ONLY" == no && "$(id -u)" -ne 0 ]] || return 0
+
+  local answer=''
+  printf '  %-16sUpdate to %s and rerun? [y/N] ' '' "$remote_tag"
+  read -r answer < /dev/tty || true
+  [[ "$answer" == y || "$answer" == yes ]] || return 0
+
+  if apply_bootstrap_update "$remote_tag"; then
+    printf '  %-16s%supdated to %s - rerunning%s\n\n' '' "$C_GREEN" "$remote_tag" "$C_RESET"
+    cleanup_tmp
+    exec "$SCRIPT_DIR/bootstrap.sh" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"} --skip-update-check
+  fi
+  return 0
+}
+
+# Moves the checkout to the release tag. Refuses rather than guesses: local
+# changes, or a branch with commits the release does not have - a machine this
+# repo is being worked on from - are left for git by hand. A detached HEAD (a
+# checkout of a tag) moves to the new tag; a branch fast-forwards to it. The
+# rerun is an exec of the new script: bash reads a script as it goes, so the
+# old process must not carry on over a file that just changed underneath it.
+apply_bootstrap_update() {   # apply_bootstrap_update <tag>
+  local tag="$1" why=''
+  if [[ -n "$(git -C "$SCRIPT_DIR" status --porcelain 2>/dev/null)" ]]; then
+    why='the checkout has local changes - commit or stash them, then git pull'
+  elif ! git -C "$SCRIPT_DIR" fetch --quiet --tags origin 2>/dev/null; then
+    why='git fetch failed'
+  elif ! git -C "$SCRIPT_DIR" symbolic-ref -q HEAD >/dev/null 2>&1; then
+    git -C "$SCRIPT_DIR" checkout --quiet "$tag" 2>/dev/null || why="git checkout $tag failed"
+  elif git -C "$SCRIPT_DIR" merge-base --is-ancestor HEAD "$tag" 2>/dev/null; then
+    git -C "$SCRIPT_DIR" merge --ff-only --quiet "$tag" 2>/dev/null || why="git merge --ff-only $tag failed"
+  else
+    why="this branch has commits $tag does not - update it with git by hand"
+  fi
+  [[ -z "$why" ]] && return 0
+  printf '  %-16s%snot updated: %s%s\n' '' "$C_YELLOW" "$why" "$C_RESET"
+  return 1
 }
 
 # Which Mac is this?
@@ -483,6 +525,9 @@ Usage: bootstrap.sh [options]
   -h, --help         This text.
 USAGE
 }
+
+# The arguments as given, for the rerun after an update.
+ORIG_ARGS=("$@")
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

@@ -309,6 +309,14 @@ prints one line if it's behind - separate from `$script:BootstrapVersion`
 above, which is this script's own number. Silent on a release zip, a fork, or
 no network. `-SkipUpdateCheck` opts out.
 
+On a run you are sitting at, it also offers to update: `Update to vX and
+rerun? [y/N]`. Yes moves this checkout to the release - a branch
+fast-forwards to the tag, a checkout of a tag moves to the new one - and runs
+the new script with the same arguments. It refuses instead of guessing when
+the checkout has local changes, or a branch has commits the release does not
+(a machine the repo is being worked on from); then it says so, and updating
+is `git pull` by hand. The daily task, `-WhatIf` and `-Doctor` only print the line.
+
 ```sh
 # 1. bump the version in whichever platform(s) changed
 # 2. add the matching section to that platform's CHANGELOG.md

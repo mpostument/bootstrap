@@ -24,6 +24,13 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 
 ### Added
 
+- **Update from a run**: when preflight finds a newer release, a run you are
+  sitting at asks `Update to vX and rerun? [y/N]`. Yes fetches, moves the
+  checkout to the tag - a branch fast-forwards, a detached checkout of a tag
+  moves to the new one - and reruns the new script with the same arguments and
+  `-SkipUpdateCheck`. Local changes, or a branch with commits the release
+  lacks, and it refuses and says why rather than guessing. The daily task,
+  `-WhatIf` and `-Doctor` only print the line, as before.
 - **`-Select`: choose which packages this machine has.** A menu of every
   winget package and uv tool in the manifest, drawn by the script itself: a
   section per group with its packages beneath, each with a `[x]` or `[ ]` box,

@@ -19,6 +19,15 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Update from a run**: when preflight finds a newer release, a run you are
+  sitting at asks `Update to vX and rerun? [y/N]`. Yes fetches, moves the
+  checkout to the tag - a branch fast-forwards, a detached checkout of a tag
+  moves to the new one - and reruns the new script with the same arguments and
+  `--skip-update-check`. Local changes, or a branch with commits the release
+  lacks, and it refuses and says why rather than guessing. The launchd agent,
+  `--dry-run` and `--doctor` only print the line. The rerun is an `exec`: bash
+  reads a script as it runs, so the old process must not go on over a file
+  that just changed under it.
 - **`--select`: choose which packages this Mac has**, the same design as
   Windows 1.47.0. A menu of every formula and cask in the manifest, drawn by
   the script: a section per group with its packages beneath, each with a
