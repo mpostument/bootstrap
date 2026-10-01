@@ -43,15 +43,16 @@ none. Override with `--gui` or `--no-gui`.
     to, on desktop machines.
 11. **Nerd Font** — Meslo, on desktop machines.
 12. **Claude Code** — Anthropic's script into `~/.local/bin`.
-13. **VS Code extensions** — `VSCODE_EXTENSIONS`, installed with
+13. **Antigravity CLI** — Google's script into `~/.local/bin`.
+14. **VS Code extensions** — `VSCODE_EXTENSIONS`, installed with
     `code --install-extension`; never removes one that isn't listed.
-14. **zsh** — Starship, completion and the `ZSH_PLUGIN_REPOS` checkouts,
+15. **zsh** — Starship, completion and the `ZSH_PLUGIN_REPOS` checkouts,
     plus a managed `~/.zshrc.bootstrap` sourced from your own `.zshrc`.
-15. **Prompt config** — `starship.toml` from the repo root to
+16. **Prompt config** — `starship.toml` from the repo root to
     `~/.config/starship.toml`, the same file all three platforms deploy.
-16. **bat config** — `bat/config` and the Catppuccin Mocha theme from the repo
+17. **bat config** — `bat/config` and the Catppuccin Mocha theme from the repo
     root, the palette starship, ghostty, atuin and delta all render in.
-17. **Schedule** — a systemd system timer that re-runs this script daily.
+18. **Schedule** — a systemd system timer that re-runs this script daily.
 
 ## Options
 
@@ -125,8 +126,9 @@ run, and the result names what would have gone.
 The pick is saved to `/var/lib/bootstrap-linux/selection` - there and not in
 `$HOME`, because the systemd timer runs as root and has to read it - one
 `yes <package>` or `no <package>` per line, written through sudo. Every later
-run follows it, the timer too. Without that file every package is wanted, as
-before `--select` existed; delete it to go back. A package added to the
+run follows it, the timer too. Without that file the first manual run opens
+the menu by itself (the timer and `--dry-run` instead want every package); delete it to
+be asked again. A package added to the
 manifest after your pick is asked about once on the next manual run and the
 answer kept; the timer never asks and never installs it. A section with
 nothing ticked counts as switched off, and its newcomers are left out without

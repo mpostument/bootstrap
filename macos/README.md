@@ -34,8 +34,8 @@ which reports `x86_64` on Apple silicon under Rosetta.
 10. **Schedule** — a launchd agent that re-runs all of the above daily.
     Skip with `--skip-schedule`.
 
-`pyenv`, `pyenv-virtualenv`, `tofuenv`, `nvm`, `dotnet-sdk` and `claude-code`
-are Homebrew packages here, not separate phases as on Linux.
+`pyenv`, `pyenv-virtualenv`, `tofuenv`, `nvm`, `dotnet-sdk`, `claude-code` and
+`antigravity-cli` are Homebrew packages here, not separate phases as on Linux.
 
 ## Options
 
@@ -108,8 +108,9 @@ shows as failed, and the next `--select` offers it again.
 
 The pick is saved to `~/.local/state/bootstrap-macos/selection`, one
 `yes <package>` or `no <package>` per line, and every later run follows it -
-the launchd agent too. Without that file every package is wanted, as before
-`--select` existed; delete it to go back. A package added to the manifest after
+the launchd agent too. Without that file the first manual run opens the
+menu by itself (the agent and `--dry-run` instead want every package); delete it to be
+asked again. A package added to the manifest after
 your pick is asked about once on the next manual run and the answer kept; the
 agent never asks and never installs it. A section with nothing ticked counts as
 switched off, and its newcomers are left out without asking. Only `--select`

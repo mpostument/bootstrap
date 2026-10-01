@@ -68,6 +68,12 @@
                 # platforms share.
                 'jdx.mise'
                 'astral-sh.uv'
+                # Anthropic.Claude below (in apps) is the desktop chat app,
+                # and VsCodeExtensions has the editor extension - this is the
+                # terminal agent itself, a portable winget package landing
+                # claude.exe. Google's Antigravity CLI is the same shape.
+                'Anthropic.ClaudeCode'
+                'Google.AntigravityCLI'
             )
         }
 
@@ -82,8 +88,11 @@
             # same shape as GROUP_infra_UV in linux/packages.conf. None of these
             # has a usable winget package; uv comes from the dev group above.
             # "name" or "name|extra arguments for uv tool install".
+            # ansible and ansible-lint stay off: ansible-core does not run on
+            # Windows natively, and ansible-lint stands on it.
             UvTools     = @(
                 'pre-commit'
+                'yamllint'
             )
         }
 
@@ -111,6 +120,7 @@
                 'FujiApple.Trippy'
                 'orf.gping'
                 'Insecure.Nmap'
+                'ffuf.ffuf'
             )
         }
 

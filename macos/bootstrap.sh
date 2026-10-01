@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.44.0'
+BOOTSTRAP_VERSION='1.45.0'
 BOOTSTRAP_PLATFORM='macos'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -1749,6 +1749,15 @@ snapshot_before
 
 read_selection
 
+# No pick yet: the first manual run opens the menu instead of installing the
+# whole manifest. The timer and --dry-run skip it - nobody is there to answer,
+# and a preview must not ask for something it cannot save.
+FIRST_PICK=no
+if [[ "$SEL_EXISTS" == no && "$SELECT" == no && "$DRY_RUN" == no       && "$RUN_INTERACTIVE" == yes && -r /dev/tty ]]; then
+  FIRST_PICK=yes
+  SELECT=yes
+fi
+
 if [[ "$SELECT" == yes ]]; then
   phase 'Selection'
   [[ "$RUN_INTERACTIVE" == yes && -r /dev/tty ]] \
@@ -1796,6 +1805,15 @@ if [[ "$SELECT" == yes ]]; then
       for i in ${to_remove[@]+"${to_remove[@]}"}; do uninstall_item "$i"; done
     fi
   fi
+fi
+
+# A first pick that was cancelled (Esc) or whose removals were declined saved
+# nothing, and carrying on would install the whole manifest - the very thing the
+# menu was opened to avoid. Stop; the next run asks again.
+if [[ "$FIRST_PICK" == yes && "$SEL_EXISTS" == no ]]; then
+  printf '  %sno pick was saved - nothing installed. Run again to choose.%s
+' "$C_YELLOW" "$C_RESET"
+  exit 0
 fi
 
 # New in the manifest - asked about once, on a manual run

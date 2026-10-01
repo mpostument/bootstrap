@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.41.0'
+BOOTSTRAP_VERSION='1.42.0'
 BOOTSTRAP_PLATFORM='linux'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -1020,7 +1020,7 @@ source "$MANIFEST"
 
 for required in PKG_GROUPS MANUAL HELD TOOLS REPOS RELEASES ZSH_PLUGIN_REPOS \
                 DOTNET_ENABLED ZSH_ENABLED NERD_FONT_ENABLED CLAUDE_CODE_ENABLED \
-                MISE_ENABLED VSCODE_EXTENSIONS \
+                ANTIGRAVITY_CLI_ENABLED MISE_ENABLED VSCODE_EXTENSIONS \
                 AWSCLI_ENABLED GHOSTTY_ENABLED SCHEDULE_ENABLED HISTORY_SIZE HISTORY_FILE_SIZE; do
   declare -p "$required" >/dev/null 2>&1 || die "manifest is missing \$$required: $MANIFEST"
 done
@@ -1986,6 +1986,15 @@ snapshot_before
 
 read_selection
 
+# No pick yet: the first manual run opens the menu instead of installing the
+# whole manifest. The timer and --dry-run skip it - nobody is there to answer,
+# and a preview must not ask for something it cannot save.
+FIRST_PICK=no
+if [[ "$SEL_EXISTS" == no && "$SELECT" == no && "$DRY_RUN" == no       && "$RUN_INTERACTIVE" == yes && -r /dev/tty ]]; then
+  FIRST_PICK=yes
+  SELECT=yes
+fi
+
 if [[ "$SELECT" == yes ]]; then
   phase 'Selection'
   [[ "$RUN_INTERACTIVE" == yes && -r /dev/tty ]] \
@@ -2033,6 +2042,15 @@ if [[ "$SELECT" == yes ]]; then
       for i in ${to_remove[@]+"${to_remove[@]}"}; do uninstall_item "$i"; done
     fi
   fi
+fi
+
+# A first pick that was cancelled (Esc) or whose removals were declined saved
+# nothing, and carrying on would install the whole manifest - the very thing the
+# menu was opened to avoid. Stop; the next run asks again.
+if [[ "$FIRST_PICK" == yes && "$SEL_EXISTS" == no ]]; then
+  printf '  %sno pick was saved - nothing installed. Run again to choose.%s
+' "$C_YELLOW" "$C_RESET"
+  exit 0
 fi
 
 # New in the manifest - asked about once, on a manual run
@@ -2759,6 +2777,37 @@ else
       result 'failed' 'Claude Code' "installer failed: $CLAUDE_CODE_INSTALLER"
     fi
     rm -f "$claude_script"
+  fi
+fi
+
+# Antigravity CLI
+
+if [[ "${ANTIGRAVITY_CLI_ENABLED:-no}" != "yes" ]]; then
+  phase 'Antigravity CLI - disabled in the manifest'
+else
+  phase 'Antigravity CLI'
+  agy_exe=""
+  if command -v agy >/dev/null 2>&1; then
+    agy_exe="$(command -v agy)"
+  elif [[ -x "${HOME}/.local/bin/agy" ]]; then
+    agy_exe="${HOME}/.local/bin/agy"
+  fi
+
+  if [[ -n "$agy_exe" ]]; then
+    agy_version="$("$agy_exe" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    result 'present' 'Antigravity CLI' "${agy_version:-installed} - self-updating, $agy_exe"
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    result 'would-install' 'Antigravity CLI' "$ANTIGRAVITY_CLI_INSTALLER"
+  else
+    mktemp_tracked antigravity_script
+    if curl -fsSL "$ANTIGRAVITY_CLI_INSTALLER" -o "$antigravity_script" 2>/dev/null &&
+       bash "$antigravity_script" >/dev/null 2>&1 &&
+       [[ -x "${HOME}/.local/bin/agy" ]]; then
+      result 'installed' 'Antigravity CLI' "$("${HOME}/.local/bin/agy" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo 'installed')"
+    else
+      result 'failed' 'Antigravity CLI' "installer failed: $ANTIGRAVITY_CLI_INSTALLER"
+    fi
+    rm -f "$antigravity_script"
   fi
 fi
 

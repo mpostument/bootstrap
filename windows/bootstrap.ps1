@@ -75,7 +75,7 @@ $ErrorActionPreference = 'Stop'
 # The parameters as given, for the rerun after an update.
 $script:BoundParams = @{} + $PSBoundParameters
 
-$script:BootstrapVersion = '1.48.0'
+$script:BootstrapVersion = '1.49.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -2106,6 +2106,16 @@ $script:RunRecording = $true
 # would never offer them again.
 
 $selection = Read-Selection
+
+# No pick yet: the first manual run opens the menu instead of installing the
+# whole manifest. Unattended runs (the task) and -WhatIf skip it - nobody is
+# there to answer, and a preview must not ask for something it cannot save.
+$firstPick = $false
+if ($null -eq $selection -and -not $Select -and $script:RunInteractive -and -not $WhatIfPreference) {
+    $firstPick = $true
+    $Select = [switch]$true
+}
+
 if ($Select) {
     Write-Phase 'Selection'
     if (-not $script:RunInteractive) {
@@ -2156,6 +2166,14 @@ if ($Select) {
             foreach ($item in $toRemove) { Uninstall-Item -Item $item }
         }
     }
+}
+
+# A first pick that was cancelled (Esc) or whose removals were declined saved
+# nothing, and carrying on would install the whole manifest - the very thing the
+# menu was opened to avoid. Stop; the next run asks again.
+if ($firstPick -and $null -eq $selection) {
+    Write-Host '  no pick was saved - nothing installed. Run again to choose.' -ForegroundColor Yellow
+    exit 0
 }
 
 # New in the manifest - asked about once, on a manual run

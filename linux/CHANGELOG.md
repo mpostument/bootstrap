@@ -15,6 +15,31 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.42.0]
+
+### Added
+
+- **Antigravity CLI**, Google's agentic terminal tool - installed the same way
+  as Claude Code just above it: a self-updating vendor script into
+  `~/.local/bin`, since Debian has no package for it. Gated by
+  `ANTIGRAVITY_CLI_ENABLED`. macOS gets it from a Homebrew cask and Windows
+  from winget instead, since both have a real package.
+- **ffuf**, the fast web fuzzer, in the network group next to nmap. Straight
+  from apt: Debian 12/13 and Ubuntu 24.04 all carry it. macOS gets it from a
+  Homebrew formula and Windows from winget (`ffuf.ffuf`).
+- **Deno** as a release binary. macOS and Windows already had it; not in
+  either archive, and the gnu build is the only Linux one Deno publishes.
+
+### Changed
+
+- **The first manual run opens the `--select` menu.** With no saved pick, an
+  interactive run no longer installs the whole manifest: it opens the menu
+  first, as if `--select` had been passed. Esc, or declining the removal prompt,
+  saves nothing and stops the run before anything is installed - carrying on
+  would install everything, which is what the menu was opened to avoid.
+  The systemd timer and a dry run skip it, as nobody is there to answer.
+  A machine that already has a pick is unaffected.
+
 ## [1.41.0]
 
 ### Added

@@ -138,7 +138,8 @@ is offered for removal again on the next `-Select`.
 
 The pick is saved to `%LOCALAPPDATA%\windows-bootstrap\selection.json`, outside
 the checkout, and every later run follows it - the daily task too. Without that
-file every package is wanted, as before `-Select` existed; delete it to go back.
+file the first manual run opens the menu by itself (the task and `-WhatIf` instead want
+every package); delete it to be asked again.
 
 A package added to the manifest after your last pick is asked about once, on
 the next manual run (`install it? [y/N]`), and the answer is remembered. The

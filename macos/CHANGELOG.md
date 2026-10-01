@@ -15,6 +15,30 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.45.0]
+
+### Added
+
+- **Antigravity CLI**, Google's agentic terminal tool, in the dev group
+  alongside `claude-code`. The official Homebrew cask, current and
+  auto-updating - unlike `gemini-cli`, which Homebrew has deprecated ahead of
+  disabling it on 2026-12-18.
+- **ffuf**, the fast web fuzzer, in the network group next to nmap - a
+  Homebrew formula.
+- **Deno** (formula), the **Bitwarden desktop app** and **`bw`** (cask and
+  formula), and the **Claude desktop app** (cask) - each already on Windows,
+  and Bitwarden on Linux too.
+
+### Changed
+
+- **The first manual run opens the `--select` menu.** With no saved pick, an
+  interactive run no longer installs the whole manifest: it opens the menu
+  first, as if `--select` had been passed. Esc, or declining the removal prompt,
+  saves nothing and stops the run before anything is installed - carrying on
+  would install everything, which is what the menu was opened to avoid.
+  The launchd agent and a dry run skip it, as nobody is there to answer.
+  A machine that already has a pick is unaffected.
+
 ## [1.44.0]
 
 ### Added

@@ -20,6 +20,32 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.49.0]
+
+### Added
+
+- **Claude Code**, the terminal agent itself, as `Anthropic.ClaudeCode` on
+  winget - a portable package landing `claude.exe`. Only the desktop chat app
+  (`Anthropic.Claude`, in apps) and the VS Code extension were installed on
+  this platform before.
+- **Antigravity CLI**, Google's agentic terminal tool, in the dev group as
+  `Google.AntigravityCLI` on winget - the same shape as Claude Code above.
+- **ffuf**, the fast web fuzzer, in the network group next to nmap, as
+  `ffuf.ffuf` on winget.
+- **`yamllint`** as a `uv tool` in `infra`, which Linux and macOS already had.
+  `ansible-lint` stays off: it stands on ansible-core, which does not run on
+  Windows natively.
+
+### Changed
+
+- **The first manual run opens the `-Select` menu.** With no saved pick, an
+  interactive run no longer installs the whole manifest: it opens the menu
+  first, as if `-Select` had been passed. Esc, or declining the removal prompt,
+  saves nothing and stops the run before anything is installed - carrying on
+  would install everything, which is what the menu was opened to avoid.
+  The scheduled task and `-WhatIf` skip it, as nobody is there to answer.
+  A machine that already has a pick is unaffected.
+
 ## [1.48.0]
 
 ### Added
