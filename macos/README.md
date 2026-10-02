@@ -60,6 +60,8 @@ which reports `x86_64` on Apple silicon under Rosetta.
 --skip-update-check
                    Don't check the GitHub origin for a newer release tag.
 --gui / --no-gui   Whether to install groups that need a desktop. Default --gui.
+--scheduled        What the launchd agent passes: a package new to the manifest
+                   that nobody confirmed is skipped, not installed.
 --version          Print the version and exit.
 ```
 
@@ -115,6 +117,14 @@ your pick is asked about once on the next manual run and the answer kept; the
 agent never asks and never installs it. A section with nothing ticked counts as
 switched off, and its newcomers are left out without asking. Only `--select`
 ever uninstalls anything.
+
+A run with no terminal that is not the agent - Ansible, a CI job, `ssh host
+command` - has nobody to ask and is meant to leave the machine matching the
+manifest, so it installs those newcomers without asking. What you unticked in
+the menu stays out for it too, and it saves nothing, so your next manual run
+still asks about them. The agent tells itself apart by the `--scheduled` flag
+its plist passes; add that flag yourself to get the agent's behaviour from any
+other launcher.
 
 ## The manifest
 

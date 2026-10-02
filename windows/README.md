@@ -146,6 +146,14 @@ the next manual run (`install it? [y/N]`), and the answer is remembered. The
 daily task never asks and never installs it; it reports it as `deselected`.
 Only `-Select` ever uninstalls anything.
 
+A run with no terminal that is not the daily task - Ansible, a CI job, a remote
+shell - has nobody to ask and is meant to leave the machine matching the
+manifest, so it installs those newcomers without asking. What you unticked in
+the menu stays out for it too, and it saves nothing, so your next manual run
+still asks about them. The task tells itself apart by the `-Scheduled` switch
+it is registered with; pass that switch yourself to get the task's behaviour
+from any other launcher.
+
 ## Options
 
 ```powershell
@@ -161,6 +169,7 @@ Only `-Select` ever uninstalls anything.
 .\bootstrap.ps1 -SkipMpv                 # leave %APPDATA%\mpv alone
 .\bootstrap.ps1 -Silent                  # suppress installer UI
 .\bootstrap.ps1 -SkipUpdateCheck         # don't check GitHub for a newer release
+.\bootstrap.ps1 -Scheduled               # what the daily task passes: skip unconfirmed new packages
 .\bootstrap.ps1 -ShowVersion
 ```
 

@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.45.0'
+BOOTSTRAP_VERSION='1.46.0'
 BOOTSTRAP_PLATFORM='macos'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,6 +22,7 @@ DOCTOR_ONLY=no
 HISTORY_ONLY=no
 HISTORY_LINES=10
 SELECT=no
+RUN_SCHEDULED=no
 
 # Run state. The launchd agent exports BOOTSTRAP_LOG_DIR, so a run started by
 # it knows which log file it is being written to and can say so in --status.
@@ -584,6 +585,14 @@ Usage: bootstrap.sh [options]
                      Don't check the GitHub origin for a newer release tag.
   --gui / --no-gui   Whether to install groups that need a desktop. Default is
                      --gui; use --no-gui on a headless build agent.
+  --scheduled        Marks a run started by this script's own launchd agent;
+                     the agent passes it. A scheduled run leaves out what
+                     nobody has confirmed - a package new to the manifest
+                     since the last pick. Any other run without a terminal
+                     (Ansible, a CI job, ssh host command) installs those too:
+                     nobody is there to ask, and that run is the one asked to
+                     make the machine match the manifest. A package unticked
+                     in the menu stays out in both.
   --version          Print the version and exit.
   -h, --help         This text.
 USAGE
@@ -601,6 +610,7 @@ while [[ $# -gt 0 ]]; do
     --skip-schedule) SKIP_SCHEDULE=yes ;;
     --skip-vscode-extensions) SKIP_VSCODE_EXT=yes ;;
     --skip-update-check) SKIP_UPDATE_CHECK=yes ;;
+    --scheduled)    RUN_SCHEDULED=yes ;;
     --gui)          GUI_OVERRIDE=yes ;;
     --no-gui)       GUI_OVERRIDE=no ;;
     --groups)       shift; ONLY_GROUPS="${1:-}" ;;
@@ -790,14 +800,24 @@ save_selection() {
   } > "$SELECTION_FILE"
 }
 
-# Not ticked is either unticked in the menu, or new to the manifest since and
-# left out on purpose: a manual run has already asked about new packages by
-# the time the install loop calls this, so one still unknown there belongs to
-# an unattended run, which never installs what nobody chose.
+# Not ticked is either unticked in the menu (known), or new to the manifest
+# since (not known). A manual run has already asked about new packages by the
+# time the install loop calls this, so one still unknown there belongs to an
+# unattended run, and two kinds of those exist:
+#   - the launchd agent, which never installs what nobody chose; the next
+#     manual run asks.
+#   - Ansible and the like (no terminal, no --scheduled): nobody to ask, and the
+#     run is told to converge the machine, so the newcomer is installed. Nothing
+#     is saved, so the next manual run still asks about it.
+# An unticked package is a decision, and neither kind overrides it.
 item_wanted() {   # item_wanted <package>
   is_required "$1" && return 0
   [[ "$SEL_EXISTS" == yes ]] || return 0
-  in_list "$1" ${SEL_SELECTED[@]+"${SEL_SELECTED[@]}"}
+  in_list "$1" ${SEL_SELECTED[@]+"${SEL_SELECTED[@]}"} && return 0
+  if [[ "$RUN_INTERACTIVE" == no && "$RUN_SCHEDULED" == no ]]; then
+    in_list "$1" ${SEL_KNOWN[@]+"${SEL_KNOWN[@]}"} || return 0
+  fi
+  return 1
 }
 
 deselected_reason() {   # deselected_reason <package>
@@ -3161,7 +3181,7 @@ else
   <array>
     <string>/bin/bash</string>
     <string>-c</string>
-    <string>mkdir -p "\$BOOTSTRAP_LOG_DIR" &amp;&amp; exec /bin/bash "\$BOOTSTRAP_SCRIPT" --skip-update-check --skip-cask-upgrade &gt;&gt; "\$BOOTSTRAP_LOG_DIR/bootstrap-\$(date +%Y-%m-%d).log" 2&gt;&amp;1</string>
+    <string>mkdir -p "\$BOOTSTRAP_LOG_DIR" &amp;&amp; exec /bin/bash "\$BOOTSTRAP_SCRIPT" --skip-update-check --skip-cask-upgrade --scheduled &gt;&gt; "\$BOOTSTRAP_LOG_DIR/bootstrap-\$(date +%Y-%m-%d).log" 2&gt;&amp;1</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>

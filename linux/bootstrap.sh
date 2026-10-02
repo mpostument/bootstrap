@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.42.0'
+BOOTSTRAP_VERSION='1.43.0'
 BOOTSTRAP_PLATFORM='linux'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,6 +23,7 @@ DOCTOR_ONLY=no
 HISTORY_ONLY=no
 HISTORY_LINES=10
 SELECT=no
+RUN_SCHEDULED=no
 
 # Run state.
 #
@@ -632,6 +633,14 @@ Usage: bootstrap.sh [options]
                      Don't check the GitHub origin for a newer release tag.
   --gui / --no-gui   Override desktop detection instead of probing for it.
   --yes              Pass -y to apt. Implied when not attached to a terminal.
+  --scheduled        Marks a run started by this script's own systemd timer;
+                     the timer passes it. A scheduled run leaves out what
+                     nobody has confirmed - a package new to the manifest
+                     since the last pick. Any other run without a terminal
+                     (Ansible, a CI job, ssh host command) installs those too:
+                     nobody is there to ask, and that run is the one asked to
+                     make the machine match the manifest. A package unticked
+                     in the menu stays out in both.
   --version          Print the version and exit.
   -h, --help         This text.
 USAGE
@@ -655,6 +664,7 @@ while [[ $# -gt 0 ]]; do
     --skip-vscode-extensions) SKIP_VSCODE_EXT=yes ;;
     --skip-update-check) SKIP_UPDATE_CHECK=yes ;;
     --yes|-y)        ASSUME_YES=yes ;;
+    --scheduled)     RUN_SCHEDULED=yes; ASSUME_YES=yes ;;
     --gui)           GUI_OVERRIDE=yes ;;
     --no-gui)        GUI_OVERRIDE=no ;;
     --groups)        shift; ONLY_GROUPS="${1:-}" ;;
@@ -791,14 +801,24 @@ save_selection() {
     && run_priv chmod 644 "$SELECTION_FILE"
 }
 
-# Not ticked is either unticked in the menu, or new to the manifest since and
-# left out on purpose: a manual run has already asked about new packages by
-# the time the install loops call this, so one still unknown there belongs to
-# the timer, which never installs what nobody chose.
+# Not ticked is either unticked in the menu (known), or new to the manifest
+# since (not known). A manual run has already asked about new packages by the
+# time the install loops call this, so one still unknown there belongs to an
+# unattended run, and two kinds of those exist:
+#   - the timer, which never installs what nobody chose; the next manual run
+#     asks.
+#   - Ansible and the like (no terminal, no --scheduled): nobody to ask, and the
+#     run is told to converge the machine, so the newcomer is installed. Nothing
+#     is saved, so the next manual run still asks about it.
+# An unticked package is a decision, and neither kind overrides it.
 item_wanted() {   # item_wanted <package>
   is_required "$1" && return 0
   [[ "$SEL_EXISTS" == yes ]] || return 0
-  in_list "$1" ${SEL_SELECTED[@]+"${SEL_SELECTED[@]}"}
+  in_list "$1" ${SEL_SELECTED[@]+"${SEL_SELECTED[@]}"} && return 0
+  if [[ "$RUN_INTERACTIVE" == no && "$RUN_SCHEDULED" == no ]]; then
+    in_list "$1" ${SEL_KNOWN[@]+"${SEL_KNOWN[@]}"} || return 0
+  fi
+  return 1
 }
 
 deselected_reason() {   # deselected_reason <package>
@@ -3914,7 +3934,7 @@ else
     echo '[Service]'
     echo 'Type=oneshot'
     echo "WorkingDirectory=$SCRIPT_DIR"
-    echo "ExecStart=$SCRIPT_DIR/bootstrap.sh --yes"
+    echo "ExecStart=$SCRIPT_DIR/bootstrap.sh --yes --scheduled"
   } > "$NEW_SERVICE"
 
   mktemp_tracked NEW_TIMER

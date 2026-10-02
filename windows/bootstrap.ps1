@@ -37,6 +37,13 @@
     have, and apply it: install what was ticked, uninstall what was unticked
     after one confirmation. Required packages are shown locked. The pick is
     saved and every later run - the daily task too - installs only that.
+.PARAMETER Scheduled
+    Marks a run started by this script's own daily task; the task passes it. A
+    scheduled run leaves out what nobody has confirmed - a package new to the
+    manifest since the last pick. Any other run without a terminal (Ansible, a
+    CI job, a remote shell) installs those too: nobody is there to ask, and
+    that run is the one asked to make the machine match the manifest. A package
+    unticked in the menu stays out in both.
 .PARAMETER ListGroups
     Print the groups and their package counts, then exit.
 .PARAMETER ListPackages
@@ -63,6 +70,7 @@ param(
     [switch]$IncludeUnknown,
     [switch]$Silent,
     [switch]$Select,
+    [switch]$Scheduled,
     [switch]$ListGroups,
     [switch]$ListPackages,
     [switch]$ShowVersion,
@@ -75,7 +83,7 @@ $ErrorActionPreference = 'Stop'
 # The parameters as given, for the rerun after an update.
 $script:BoundParams = @{} + $PSBoundParameters
 
-$script:BootstrapVersion = '1.49.0'
+$script:BootstrapVersion = '1.50.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -117,8 +125,15 @@ $script:Results = New-Object System.Collections.ArrayList
 # back. Interactive is decided by whether stdout is redirected, which is the
 # same test the other two make with [ -t 1 ]: the scheduled task pipes through
 # Tee-Object, so it always reads as unattended.
+#
+# Unattended is not one thing. The task is ours and says so (-Scheduled);
+# Ansible or a CI job is also unattended but cannot be told from the task by
+# looking at the console, so "unattended and not -Scheduled" is how it is
+# recognised. They differ on exactly one point, what to do about a package
+# nobody has decided on - see Test-ItemWanted.
 $script:RunStarted = Get-Date
 $script:RunInteractive = -not [Console]::IsOutputRedirected
+$script:RunScheduled = [bool]$Scheduled
 $script:RunRecording = $false
 $script:RunLog = ''
 $script:NotifyOnFailure = $true
@@ -1742,11 +1757,19 @@ function Test-ItemWanted {
     if ($script:RequiredIds -contains $Id) { return $true }
     if ($null -eq $Selection) { return $true }
     if ($Selection.Selected -contains $Id) { return $true }
-    # Not ticked. Either unticked in the menu, or new to the manifest since and
-    # left out on purpose: a manual run has already asked about new ids by the
+    # Not ticked. Either unticked in the menu (Known), or new to the manifest
+    # since (not Known). A manual run has already asked about new ids by the
     # time this is called (the "New in the manifest" phase), so one still
-    # unknown here belongs to an unattended run, which never installs what
-    # nobody chose - the next manual run asks.
+    # unknown here belongs to an unattended run:
+    #   - the daily task never installs what nobody chose; the next manual run
+    #     asks.
+    #   - Ansible and the like have nobody to ask and are told to converge the
+    #     machine, so the newcomer is installed. Nothing is saved, so the next
+    #     manual run still asks about it.
+    # An unticked id is a decision, and neither kind overrides it.
+    if (-not $script:RunInteractive -and -not $script:RunScheduled -and $Selection.Known -notcontains $Id) {
+        return $true
+    }
     return $false
 }
 
@@ -2850,7 +2873,7 @@ if ($SkipSchedule) {
             -Detail 'no pwsh or powershell.exe on PATH to point the task at'
     } else {
         $logExpr = "(Join-Path '$logDir' ('bootstrap-{0:yyyy-MM-dd}.log' -f (Get-Date)))"
-        $inner = "& '$script:ScriptSelf' -Silent *>&1 | Tee-Object -FilePath $logExpr -Append"
+        $inner = "& '$script:ScriptSelf' -Silent -Scheduled *>&1 | Tee-Object -FilePath $logExpr -Append"
         $taskArgs = '-NoProfile -ExecutionPolicy Bypass -Command "' + $inner + '"'
 
         $action = New-ScheduledTaskAction -Execute $script:PwshForTask -Argument $taskArgs `

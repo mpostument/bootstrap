@@ -20,6 +20,26 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.50.0]
+
+### Added
+
+- **`-Scheduled`**, passed by the daily task, so an unattended run can be told
+  from the task. Until now every run without a terminal was treated as the
+  task and left out any package new to the manifest since the last pick - which
+  is right for the task, and wrong for Ansible or a CI job, whose whole purpose
+  is to make the machine match the manifest.
+
+### Changed
+
+- **A run with no terminal and no `-Scheduled` installs the packages nobody has
+  decided on**, without asking and without saving anything (the next manual
+  run still asks). A package unticked in the menu stays out for every kind of
+  run - that is a decision, not a gap. The daily task behaves as before.
+- The scheduled task's command now carries `-Scheduled`, so the next elevated
+  run reports the task as `upgraded`. Until it does, the old task runs without
+  the switch and reads as automation.
+
 ## [1.49.0]
 
 ### Added

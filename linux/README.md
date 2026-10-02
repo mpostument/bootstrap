@@ -76,6 +76,8 @@ none. Override with `--gui` or `--no-gui`.
                    Don't check the GitHub origin for a newer release tag.
 --gui / --no-gui   Override desktop detection instead of probing for it.
 --yes              Pass -y to apt. Implied when not attached to a terminal.
+--scheduled        What the timer passes: a package new to the manifest that
+                   nobody confirmed is skipped, not installed. Implies --yes.
 --version          Print the version and exit.
 ```
 
@@ -133,6 +135,14 @@ manifest after your pick is asked about once on the next manual run and the
 answer kept; the timer never asks and never installs it. A section with
 nothing ticked counts as switched off, and its newcomers are left out without
 asking. Only `--select` ever uninstalls anything.
+
+A run with no terminal that is not the timer - Ansible, a CI job, `ssh host
+command` - has nobody to ask and is meant to leave the machine matching the
+manifest, so it installs those newcomers without asking. What you unticked in
+the menu stays out for it too, and it saves nothing, so your next manual run
+still asks about them. The timer tells itself apart by the `--scheduled` flag
+its unit passes; add that flag yourself to get the timer's behaviour from any
+other launcher.
 
 ## The manifest
 

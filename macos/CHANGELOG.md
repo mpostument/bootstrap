@@ -15,6 +15,26 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.46.0]
+
+### Added
+
+- **`--scheduled`**, passed by the launchd agent, so an unattended run can be
+  told from the agent. Until now every run without a terminal was treated as
+  the agent and left out any package new to the manifest since the last pick -
+  right for the agent, wrong for Ansible or a CI job, whose whole purpose is to
+  make the machine match the manifest.
+
+### Changed
+
+- **A run with no terminal and no `--scheduled` installs the packages nobody
+  has decided on**, without asking and without saving anything (the next
+  manual run still asks). A package unticked in the menu stays out for every
+  kind of run - that is a decision, not a gap. The agent behaves as before.
+- The agent's plist command now carries `--scheduled`. The next run rewrites
+  the plist and reports it `upgraded`; until then the old agent runs without
+  the flag and reads as automation.
+
 ## [1.45.0]
 
 ### Added
