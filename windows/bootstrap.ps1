@@ -83,7 +83,7 @@ $ErrorActionPreference = 'Stop'
 # The parameters as given, for the rerun after an update.
 $script:BoundParams = @{} + $PSBoundParameters
 
-$script:BootstrapVersion = '1.51.0'
+$script:BootstrapVersion = '1.52.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -101,6 +101,7 @@ $script:TealdeerSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'tealde
 $script:CarapaceSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'carapace'
 $script:K9sSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'k9s'
 $script:LazygitSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'lazygit'
+$script:LazydockerSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'lazydocker'
 $script:YaziSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'yazi'
 $script:EzaSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'eza'
 $script:GlowSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'glow'
@@ -126,8 +127,15 @@ $script:Results = New-Object System.Collections.ArrayList
 # into a log file and exits. Every real run leaves one key=value record behind
 # - the same shape the Linux and macOS scripts write - and -Status reads it
 # back. Interactive is decided by whether stdout is redirected, which is the
-# same test the other two make with [ -t 1 ]: the scheduled task pipes through
-# Tee-Object, so it always reads as unattended.
+# same test the other two make with [ -t 1 ] - except for the task. Its
+# Tee-Object is a PowerShell pipeline, not a redirect of the process, and an
+# Interactive-logon task gets a console of its own, so to the console test the
+# 04:20 run looks attended and would sit on a Read-Host. -Scheduled settles it.
+#
+# A task registered before -Scheduled existed (1.5.0 to 1.49.0) starts the run
+# without it, and Phase 6 only rewrites the task at the end of the run. Its
+# command line still gives it away: pwsh -Command "& '<this script>' -Silent
+# *>&1 | Tee-Object -FilePath ...", which nobody types at a prompt.
 #
 # Unattended is not one thing. The task is ours and says so (-Scheduled);
 # Ansible or a CI job is also unattended but cannot be told from the task by
@@ -135,8 +143,15 @@ $script:Results = New-Object System.Collections.ArrayList
 # recognised. They differ on exactly one point, what to do about a package
 # nobody has decided on - see Test-ItemWanted.
 $script:RunStarted = Get-Date
-$script:RunInteractive = -not [Console]::IsOutputRedirected
 $script:RunScheduled = [bool]$Scheduled
+if (-not $script:RunScheduled) {
+    $cmdLine = [Environment]::CommandLine
+    if ($cmdLine -match 'Tee-Object -FilePath' -and
+        $cmdLine.IndexOf($script:ScriptSelf, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        $script:RunScheduled = $true
+    }
+}
+$script:RunInteractive = -not $script:RunScheduled -and -not [Console]::IsOutputRedirected
 $script:RunRecording = $false
 $script:RunLog = ''
 $script:NotifyOnFailure = $true
@@ -552,7 +567,10 @@ foreach (`$n in 'tools', 'gb', 'gs', 'fkill', 'cheat', 'y') {
 
     try {
         # No -NoProfile on purpose: the profile is the thing under test.
-        $raw = & $script:PwshForTask -NoLogo -NonInteractive -Command $probe 2>$null
+        # -EncodedCommand, because Windows PowerShell and pwsh before 7.3 pass
+        # the probe's embedded double quotes to the child unescaped.
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($probe))
+        $raw = & $script:PwshForTask -NoLogo -NonInteractive -EncodedCommand $encoded 2>$null
     } catch {
         Write-Verbose ('the probe shell failed - {0}' -f $_.Exception.Message)
         return $false
@@ -720,6 +738,18 @@ function Test-DoctorTldrCache {
     }
 }
 
+function Get-LazydockerConfigDir {
+    # Where lazydocker reads config.yml. It has no --print-config-dir, so this
+    # is its own lookup (pkg/config/app_config.go): $env:CONFIG_DIR wins, then
+    # the legacy jesseduffield\lazydocker directory if one exists, then
+    # lazydocker under the config home - XDG_CONFIG_HOME, or %APPDATA%.
+    if ($env:CONFIG_DIR) { return $env:CONFIG_DIR }
+    $configHome = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { $env:APPDATA }
+    $legacy = Join-Path $configHome 'jesseduffield\lazydocker'
+    if (Test-Path -LiteralPath $legacy -PathType Container) { return $legacy }
+    return (Join-Path $configHome 'lazydocker')
+}
+
 function Test-DoctorFile {
     # Config this script deploys by copying: if the copy has drifted, a later
     # run will replace it, so the honest verdict is "differs", not "broken".
@@ -774,6 +804,12 @@ function Test-DoctorThemes {
                 -Source (Join-Path $script:LazygitSource 'config.yml') `
                 -Target (Join-Path $dir.Trim() 'config.yml')
         }
+    }
+
+    if (Get-Command lazydocker -ErrorAction SilentlyContinue) {
+        Test-DoctorFile -Label 'lazydocker config' `
+            -Source (Join-Path $script:LazydockerSource 'config.yml') `
+            -Target (Join-Path (Get-LazydockerConfigDir) 'config.yml')
     }
 
     if (Get-Command yazi -ErrorAction SilentlyContinue) {
@@ -867,6 +903,8 @@ function Test-DoctorSchedule {
         Add-DoctorBroken 'scheduled task' ('{0} does not exist - the daily run has never been registered' -f $Schedule.TaskName)
     } elseif ($task.State -eq 'Disabled') {
         Add-DoctorBroken 'scheduled task' ('{0} exists but is disabled' -f $Schedule.TaskName)
+    } elseif (-not (@($task.Actions).Arguments -match ' -Scheduled ')) {
+        Add-DoctorNote 'scheduled task' ('{0} predates -Scheduled - an elevated run rewrites it' -f $Schedule.TaskName)
     } else {
         Add-DoctorOk 'scheduled task' ('{0} is {1}' -f $Schedule.TaskName, $task.State)
     }
@@ -991,7 +1029,15 @@ function Test-BootstrapUpdate {
 
     Write-Host ('                  updated to {0} - rerunning' -f $remoteTag) -ForegroundColor Green
     Write-Host ''
-    & $script:ScriptSelf @script:BoundParams -SkipUpdateCheck
+    # The rerun sets $LASTEXITCODE only when it fails - a clean run ends
+    # without exit - so it starts from 0. A rerun that throws has already
+    # recorded itself; catching it keeps this run's trap from recording twice.
+    $global:LASTEXITCODE = 0
+    try {
+        & $script:ScriptSelf @script:BoundParams -SkipUpdateCheck
+    } catch {
+        exit 1
+    }
     exit $LASTEXITCODE
 }
 
@@ -1648,7 +1694,7 @@ function Get-RegValue {
 }
 
 function Add-UserPathEntry {
-    param([string]$Directory, [string]$Group, [string]$Label)
+    param([string]$Directory, [string]$Group, [string]$Label, [switch]$Prepend)
 
     $key = 'HKCU:\Environment'
     $raw = ''
@@ -1666,7 +1712,11 @@ function Add-UserPathEntry {
 
     $entries = @($raw -split ';' | Where-Object { $_ })
     $wanted = $Directory.TrimEnd('\')
-    if (@($entries | Where-Object { $_.TrimEnd('\') -eq $wanted }).Count -gt 0) {
+    $present = @($entries | Where-Object {
+            $_.TrimEnd('\') -eq $wanted -or
+            [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') -eq $wanted
+        })
+    if ($present.Count -gt 0) {
         Add-Result -Group $Group -Id $Label -Action 'current' -Detail $Directory
         return
     }
@@ -1675,8 +1725,13 @@ function Add-UserPathEntry {
         return
     }
     try {
-        Set-ItemProperty -Path $key -Name 'Path' -Value (($entries + $Directory) -join ';') -Type $kind
-        $env:Path = $env:Path.TrimEnd(';') + ';' + $Directory
+        if ($Prepend) {
+            Set-ItemProperty -Path $key -Name 'Path' -Value ((@($Directory) + $entries) -join ';') -Type $kind
+            $env:Path = $Directory + ';' + $env:Path
+        } else {
+            Set-ItemProperty -Path $key -Name 'Path' -Value (($entries + $Directory) -join ';') -Type $kind
+            $env:Path = $env:Path.TrimEnd(';') + ';' + $Directory
+        }
         try {
             if (-not ('NativeMethods.WinApi' -as [type])) {
                 Add-Type -Namespace 'NativeMethods' -Name 'WinApi' -MemberDefinition @'
@@ -2073,7 +2128,11 @@ function Invoke-WingetUnelevated {
             $result = (Get-ScheduledTaskInfo -TaskName $name).LastTaskResult
         } while ($result -in @(0x41301, 0x41303) -and (Get-Date) -lt $deadline)
         $output = if (Test-Path $log) { Get-Content $log -Raw } else { '' }
-        return [pscustomobject]@{ ExitCode = [int]$result; Output = "$output".Trim() }
+        # LastTaskResult is a UInt32 and winget fails with HRESULTs such as
+        # 0x8A150011, past [int]::MaxValue - a plain [int] cast throws. Same
+        # bits as a signed int, which is how winget's codes are compared.
+        $code = [BitConverter]::ToInt32([BitConverter]::GetBytes([uint32]$result), 0)
+        return [pscustomobject]@{ ExitCode = $code; Output = "$output".Trim() }
     } finally {
         Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
         Remove-Item $log -ErrorAction SilentlyContinue -WhatIf:$false
@@ -2502,33 +2561,16 @@ if (-not (Get-Command mise -ErrorAction SilentlyContinue)) {
     }
 
     # Shims on the user PATH, for everything that does not run through the
-    # PowerShell profile.
-    $shims = Join-Path $env:LOCALAPPDATA 'mise\shims'
-    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    if (($userPath -split ';') -contains $shims) {
-        Add-Result -Group 'mise' -Id 'shims on PATH' -Action 'current' -Detail $shims
-    } elseif (-not $PSCmdlet.ShouldProcess($shims, 'add to user PATH')) {
-        Add-Result -Group 'mise' -Id 'shims on PATH' -Action 'would-install' -Detail $shims
-    } else {
-        [Environment]::SetEnvironmentVariable('Path', ($shims + ';' + $userPath), 'User')
-        $env:Path = $shims + ';' + $env:Path
-        Add-Result -Group 'mise' -Id 'shims on PATH' -Action 'installed' -Detail $shims
-    }
+    # PowerShell profile. Through Add-UserPathEntry, which keeps the value's
+    # REG_EXPAND_SZ kind and its %VAR% entries unexpanded.
+    Add-UserPathEntry -Directory (Join-Path $env:LOCALAPPDATA 'mise\shims') `
+        -Group 'mise' -Label 'shims on PATH' -Prepend
 
     # GOPATH/bin, where `go install` and the VS Code Go extension put gopls,
     # dlv and staticcheck. Same reasoning as the shims: VS Code and the IDEs
     # read the user PATH, not the PowerShell profile.
-    $goBin = Join-Path $env:USERPROFILE 'go\bin'
-    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    if (($userPath -split ';') -contains $goBin) {
-        Add-Result -Group 'mise' -Id 'GOPATH/bin on PATH' -Action 'current' -Detail $goBin
-    } elseif (-not $PSCmdlet.ShouldProcess($goBin, 'add to user PATH')) {
-        Add-Result -Group 'mise' -Id 'GOPATH/bin on PATH' -Action 'would-install' -Detail $goBin
-    } else {
-        [Environment]::SetEnvironmentVariable('Path', ($userPath + ';' + $goBin), 'User')
-        $env:Path = $env:Path + ';' + $goBin
-        Add-Result -Group 'mise' -Id 'GOPATH/bin on PATH' -Action 'installed' -Detail $goBin
-    }
+    Add-UserPathEntry -Directory (Join-Path $env:USERPROFILE 'go\bin') `
+        -Group 'mise' -Label 'GOPATH/bin on PATH'
 
     # JAVA_HOME, for Gradle, Maven and the IDEs that read it rather than PATH.
     $javaEntry = $entries | Where-Object { $_ -like 'java@*' } | Select-Object -First 1
@@ -2782,6 +2824,16 @@ if ($SkipShell) {
         Add-Result -Group 'shell' -Id 'lazygit config' -Action 'missing' -Detail 'lazygit is not installed'
     }
 
+    # lazydocker's config - the same shape as lazygit's: the theme is gui.theme
+    # in the one config file, so the whole file is the repo's.
+    if (Get-Command lazydocker -ErrorAction SilentlyContinue) {
+        Deploy-ManagedFile -Source (Join-Path $script:LazydockerSource 'config.yml') `
+            -Target (Join-Path (Get-LazydockerConfigDir) 'config.yml') `
+            -Group 'shell' -Label 'lazydocker config' -Marker 'managed by the bootstrap'
+    } else {
+        Add-Result -Group 'shell' -Id 'lazydocker config' -Action 'missing' -Detail 'lazydocker is not installed'
+    }
+
     # yazi's flavor. A flavor is a directory, not a file - flavor.toml and the
     # tmTheme the preview pane highlights code with - so the package is copied
     # piece by piece. theme.toml is not the repo's: it is where your own
@@ -2863,6 +2915,17 @@ if ($SkipShell) {
 `$want = @($moduleList)
 `$floor = [version]'$($shell.PSReadLineMinimum)'
 `$skipUpgrade = `$$($SkipUpgrade.IsPresent)
+# Windows PowerShell ships without the NuGet provider, and the first
+# Find-Module stops to ask for it - a prompt this captured child never shows.
+if (`$PSVersionTable.PSVersion.Major -lt 6) {
+    try {
+        `$nuget = Get-PackageProvider -ListAvailable -Name NuGet -ErrorAction SilentlyContinue |
+            Where-Object { `$_.Version -ge [version]'2.8.5.201' }
+        if (-not `$nuget) {
+            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force | Out-Null
+        }
+    } catch { }
+}
 foreach (`$name in `$want) {
     try {
         `$have = Get-Module -ListAvailable -Name `$name |
@@ -2902,7 +2965,7 @@ foreach (`$name in `$want) {
         try {
             $out = & {
                 $ErrorActionPreference = 'Continue'
-                & $exe.Source -NoProfile -ExecutionPolicy Bypass -File $innerFile 2>&1
+                & $exe.Source -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $innerFile 2>&1
             } | Out-String
         } finally {
             Remove-Item $innerFile -ErrorAction SilentlyContinue -WhatIf:$false
@@ -3043,7 +3106,9 @@ if ($SkipSchedule) {
     } else {
         $logExpr = "(Join-Path '$logDir' ('bootstrap-{0:yyyy-MM-dd}.log' -f (Get-Date)))"
         $inner = "& '$script:ScriptSelf' -Silent -Scheduled *>&1 | Tee-Object -FilePath $logExpr -Append"
-        $taskArgs = '-NoProfile -ExecutionPolicy Bypass -Command "' + $inner + '"'
+        # -NonInteractive: a prompt nobody will answer fails instead of
+        # holding the run until the two-hour limit kills it.
+        $taskArgs = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' + $inner + '"'
 
         $action = New-ScheduledTaskAction -Execute $script:PwshForTask -Argument $taskArgs `
             -WorkingDirectory $script:ToolRoot

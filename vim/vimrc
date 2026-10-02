@@ -40,7 +40,7 @@ if has('clipboard')
   set clipboard^=unnamed,unnamedplus
 endif
 
-" Catppuccin Mocha needs 24-bit colour, which ghostty and tmux both pass
+" Catppuccin Mocha needs 24-bit colour, which ghostty passes
 " through. silent! so a vim without the colours file still starts.
 if has('termguicolors')
   set termguicolors

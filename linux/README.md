@@ -30,7 +30,7 @@ none. Override with `--gui` or `--no-gui`.
 3. **Package groups** — archive and Flathub, GUI groups gated on the check above.
 4. **Upgrades** — one apt transaction plus `flatpak update`, only when outdated.
 5. **Housekeeping** — cached `.deb` downloads past their age, and a report of
-   what `apt autoremove` and `flatpak uninstall --unused` would take.
+   what `apt autoremove` would take.
 6. **Tools** — `TOOLS` git clones under `$HOME`; empty since mise replaced
    pyenv, nvm and tofuenv.
 7. **.NET SDK** — Microsoft's install script into `$HOME/.dotnet`.
@@ -103,7 +103,9 @@ what runs afterwards is an ordinary git or kill command.
 
 `--select` opens every package in the manifest as a menu, a section per group
 - apt packages, flatpaks and uv tools together - and a `releases` section for
-the release binaries, which belong to no group:
+the release binaries, which belong to no group. The packages of the
+third-party repositories (VS Code, Docker, kubectl and the rest under
+`REPOS`) are not in it: they come with their repository.
 
 ```
    [x] shell                        9/9
@@ -295,10 +297,11 @@ has ever installed. `APT_CLEANUP_PRUNE_DAYS` sets the age past which a cached
 download goes; `APT_CLEANUP_ENABLED=no` turns the phase off and `--skip-cleanup`
 skips it for one run.
 
-Nothing is uninstalled. `apt-get autoremove` and `flatpak uninstall --unused`
-are run with `--dry-run` and their findings printed, because both are usually
-right about orphaned packages, old kernels and unused runtimes, and "usually"
-is not good enough to do unattended at 04:20. The journal's size is reported
+Nothing is uninstalled. `apt-get autoremove` is run with `--dry-run` and its
+findings printed, because it is usually right about orphaned packages and old
+kernels, and "usually" is not good enough to do unattended at 04:20.
+`flatpak uninstall --unused` has no such preview - its prompt defaults to yes
+without a terminal - so it is left for you to run by hand. The journal's size is reported
 the same way, with the `journalctl --vacuum-time` command to trim it: the
 journal belongs to the whole system, not to this script.
 

@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.47.0'
+BOOTSTRAP_VERSION='1.48.0'
 BOOTSTRAP_PLATFORM='macos'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -304,6 +304,36 @@ mktemp_tracked() {   # mktemp_tracked <varname> [mktemp args...]
   printf -v "$_var" '%s' "$_t"
 }
 
+# Where a generated config is built before it replaces the real one: beside
+# it, so the mv is atomic - or, in a dry run, which must not write next to
+# the user's files, in TMPDIR. Either way it is then compared with what is
+# deployed, so a dry run says "current" exactly when a real run would.
+stage_template() {   # stage_template <target> -> mktemp template
+  if [[ "$DRY_RUN" == "yes" ]]; then
+    printf '%s/bootstrap-%s.XXXXXX' "${TMPDIR:-/tmp}" "${1##*/}"
+  else
+    printf '%s.XXXXXX' "$1"
+  fi
+}
+
+# Moves a staged config into place and reports it; a dry run only reports.
+commit_staged() {   # commit_staged <staged> <target> <label>
+  local new="$1" dst="$2" label="$3"
+  if [[ -f "$dst" ]] && cmp -s "$new" "$dst"; then
+    rm -f "$new"
+    result 'current' "$label" "$dst"
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    rm -f "$new"
+    if [[ -f "$dst" ]]; then result 'would-upgrade' "$label" "$dst"; else result 'would-install' "$label" "$dst"; fi
+  elif [[ -f "$dst" ]]; then
+    mv "$new" "$dst"
+    result 'upgraded' "$label" "$dst"
+  else
+    mv "$new" "$dst"
+    result 'installed' "$label" "$dst"
+  fi
+}
+
 cleanup_tmp() {
   local _t
   # Guarded expansion: bash 3.2 under set -u calls an empty array unbound.
@@ -413,7 +443,7 @@ check_bootstrap_update() {
   fi
   printf '  %-16s%supdated to %s - rerunning%s\n\n' '' "$C_GREEN" "$remote_tag" "$C_RESET"
   cleanup_tmp
-  exec "$SCRIPT_DIR/bootstrap.sh" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"} --skip-update-check
+  exec /bin/bash "$SCRIPT_DIR/bootstrap.sh" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"} --skip-update-check
 }
 
 sha256_of() {   # sha256_of <file>
@@ -613,7 +643,8 @@ while [[ $# -gt 0 ]]; do
     --scheduled)    RUN_SCHEDULED=yes ;;
     --gui)          GUI_OVERRIDE=yes ;;
     --no-gui)       GUI_OVERRIDE=no ;;
-    --groups)       shift; ONLY_GROUPS="${1:-}" ;;
+    --groups)       [[ $# -ge 2 ]] || die '--groups needs a value (try --list-groups)'
+                    shift; ONLY_GROUPS="$1" ;;
     --groups=*)     ONLY_GROUPS="${1#*=}" ;;
     --select)       SELECT=yes ;;
     --list-groups)  LIST_GROUPS=yes ;;
@@ -828,6 +859,15 @@ item_wanted() {   # item_wanted <package>
   return 1
 }
 
+# Unticked on purpose: in the pick and answered no. A package nobody has been
+# asked about yet is not, so the doctor still expects it.
+item_unticked() {   # item_unticked <package>
+  is_required "$1" && return 1
+  [[ "$SEL_EXISTS" == yes ]] || return 1
+  in_list "$1" ${SEL_KNOWN[@]+"${SEL_KNOWN[@]}"} || return 1
+  ! in_list "$1" ${SEL_SELECTED[@]+"${SEL_SELECTED[@]}"}
+}
+
 deselected_reason() {   # deselected_reason <package>
   in_list "$1" ${SEL_KNOWN[@]+"${SEL_KNOWN[@]}"} || printf 'new in the manifest - the next manual run asks'
   return 0
@@ -982,15 +1022,23 @@ show_selection_menu() {
 }
 
 # M_ON from the saved pick, M_VER from what brew says is installed. A tap's
-# formula is listed under its short name, hence ${id##*/}.
+# formula is listed under its short name, hence ${id##*/}. The snapshot names
+# formulae canonically, so one listed under an alias (python3 is
+# python@3.14, sqlite3 is sqlite) is found through its opt/ link instead,
+# which points at Cellar/<name>/<version> - without that it reads as not
+# installed and unticking it never offers the uninstall.
 menu_prepare() {
-  local i snap
+  local i snap link
   M_ON=() M_VER=()
   mktemp_tracked snap "${TMPDIR:-/tmp}/bootstrap-menu.XXXXXX"
   [[ -x "$BREW" ]] && pkg_snapshot "$snap"
   for (( i = 0; i < ${#CAT_ID[@]}; i++ )); do
     if item_wanted "${CAT_ID[$i]}"; then M_ON[i]=1; else M_ON[i]=0; fi
     M_VER[i]="$(awk -v n="${CAT_ID[$i]##*/}" '$1 == n { print $2; exit }' "$snap" 2>/dev/null || true)"
+    if [[ -z "${M_VER[$i]}" && "${CAT_KIND[$i]}" == formula && -L "${BREW_PREFIX}/opt/${CAT_ID[$i]##*/}" ]]; then
+      link="$(readlink "${BREW_PREFIX}/opt/${CAT_ID[$i]##*/}" || true)"
+      [[ "$link" == */Cellar/*/* ]] && M_VER[i]="${link##*/}"
+    fi
   done
   return 0
 }
@@ -1209,6 +1257,10 @@ doctor_check_tools() {
   for pkg in "${_doctor_pkgs[@]:-}"; do
     [[ -z "$pkg" ]] && continue
     cmd="$(doctor_command_for "$pkg")" || continue
+    if item_unticked "$pkg"; then
+      doctor_note "$cmd" "deselected in the --select pick"
+      continue
+    fi
     path="$(probe_get "resolve:$cmd")"
     want="${BREW_PREFIX}/bin/${cmd}"
     if [[ -z "$path" ]]; then
@@ -1482,6 +1534,20 @@ k9s_paths() {
   [[ -n "$_K9S_CFG" ]]
 }
 
+# tool_has_config <glow|lnav|k9s> - whether the tool has a config directory
+# yet, in any of the places it looks. Each of the three creates one the first
+# time it runs - --help, -h and `k9s info` included - so the doctor and the
+# dry run, which change nothing, ask the tool only once this says yes.
+tool_has_config() {
+  local xdg="${XDG_CONFIG_HOME:-${HOME}/.config}"
+  case "$1" in
+    glow) [[ -d "${HOME}/Library/Preferences/glow" || -d "${xdg}/glow" ]] ;;
+    lnav) [[ -d "${HOME}/.lnav" || -d "${xdg}/lnav" ]] ;;
+    k9s)  [[ -d "${HOME}/Library/Application Support/k9s" || -d "${xdg}/k9s" ]] ;;
+    *)    return 1 ;;
+  esac
+}
+
 doctor_config() {   # doctor_config <label> <repo copy> <deployed path>
   local label="$1" src="$2" dst="$3"
   if [[ ! -r "$dst" ]]; then
@@ -1495,6 +1561,21 @@ doctor_config() {   # doctor_config <label> <repo copy> <deployed path>
   fi
 }
 
+# Where lazydocker reads config.yml. It has no --print-config-dir, so this is
+# its own lookup (pkg/config/app_config.go): $CONFIG_DIR wins, then the legacy
+# jesseduffield/lazydocker directory if one exists, then lazydocker/ under the
+# config home - XDG_CONFIG_HOME, or ~/Library/Application Support.
+lazydocker_config_dir() {
+  local home="${XDG_CONFIG_HOME:-$HOME/Library/Application Support}"
+  if [[ -n "${CONFIG_DIR:-}" ]]; then
+    printf '%s\n' "$CONFIG_DIR"
+  elif [[ -d "${home}/jesseduffield/lazydocker" ]]; then
+    printf '%s\n' "${home}/jesseduffield/lazydocker"
+  else
+    printf '%s\n' "${home}/lazydocker"
+  fi
+}
+
 # The three themes the bootstrap activates rather than owns. The failure worth
 # catching here is a theme file deployed with nothing naming it: every install
 # step says ok, and the colours never change.
@@ -1502,6 +1583,8 @@ doctor_check_themes() {
   local skin lazygit_dir theme flavor yazi_dir
   if ! command -v k9s >/dev/null 2>&1; then
     :
+  elif ! tool_has_config k9s; then
+    doctor_broken 'k9s skin' 'not deployed - k9s has no config directory yet'
   elif ! k9s_paths; then
     doctor_broken 'k9s skin' 'k9s info named no config file'
   else
@@ -1525,6 +1608,11 @@ doctor_check_themes() {
       doctor_config 'lazygit config' "${SCRIPT_DIR}/../lazygit/config.yml" \
                     "${lazygit_dir}/config.yml"
     fi
+  fi
+
+  if command -v lazydocker >/dev/null 2>&1; then
+    doctor_config 'lazydocker config' "${SCRIPT_DIR}/../lazydocker/config.yml" \
+                  "$(lazydocker_config_dir)/config.yml"
   fi
 
   if command -v btop >/dev/null 2>&1; then
@@ -1588,8 +1676,11 @@ doctor_check_more_themes() {
   fi
 
   if command -v glow >/dev/null 2>&1; then
-    glow_cfg="$(glow_config_file)"
-    if [[ -z "$glow_cfg" ]]; then
+    glow_cfg=''
+    tool_has_config glow && glow_cfg="$(glow_config_file)"
+    if ! tool_has_config glow; then
+      doctor_broken 'glow theme' 'not deployed - glow has no config directory yet'
+    elif [[ -z "$glow_cfg" ]]; then
       doctor_broken 'glow style' 'glow --help named no config file'
     else
       doctor_config 'glow theme' "${SCRIPT_DIR}/../glow/catppuccin-mocha.json" \
@@ -1605,8 +1696,11 @@ doctor_check_more_themes() {
   fi
 
   if command -v lnav >/dev/null 2>&1; then
-    lnav_dir="$(lnav_config_dir)"
-    if [[ -z "$lnav_dir" ]]; then
+    lnav_dir=''
+    tool_has_config lnav && lnav_dir="$(lnav_config_dir)"
+    if ! tool_has_config lnav; then
+      doctor_broken 'lnav theme' 'not deployed - lnav has no config directory yet'
+    elif [[ -z "$lnav_dir" ]]; then
       doctor_broken 'lnav theme' 'lnav -h named no config directory'
     else
       doctor_config 'lnav theme' "${SCRIPT_DIR}/../lnav/catppuccin-mocha.json" \
@@ -1817,6 +1911,7 @@ export HOMEBREW_NO_ENV_HINTS=1
 # after the prefix and brew are known, before the index refresh it does not
 # need and the phases it is not going to run.
 if [[ "$DOCTOR_ONLY" == "yes" ]]; then
+  read_selection
   run_doctor
   exit $?
 fi
@@ -2012,7 +2107,7 @@ fi
 # newcomers are left out without asking. An unattended run asks nothing and
 # records nothing, so the next manual run still asks.
 
-if [[ "$SEL_EXISTS" == yes && "$RUN_INTERACTIVE" == yes && -r /dev/tty ]]; then
+if [[ "$SEL_EXISTS" == yes && "$RUN_INTERACTIVE" == yes && "$DRY_RUN" == no && -r /dev/tty ]]; then
   asked=no
   for (( i = 0; i < ${#CAT_ID[@]}; i++ )); do
     id="${CAT_ID[$i]}"
@@ -2084,11 +2179,13 @@ install_cask() {
     return
   fi
 
-  local appname
-  # shellcheck disable=SC2001
-  appname="$(sed 's/.*"artifacts"//' <<< "$json" | grep -o '"[^"]*\.app"' | head -1 | tr -d '"' || true)"
-  if [[ -n "$appname" && -d "/Applications/${appname}" ]]; then
-    result 'present' "$token" "/Applications/${appname} - installed by something else"
+  # Where the cask would put its app: the artifact's "target", an absolute
+  # path. The other .app strings in the JSON are source paths inside the
+  # download (artifacts/osx-arm64/ILSpy.app) or uninstall stanzas.
+  local apppath
+  apppath="$(grep -o '"target": *"/[^"]*\.app"' <<< "$json" | head -1 | sed 's/^"target": *"//; s/"$//' || true)"
+  if [[ -n "$apppath" && -d "$apppath" ]]; then
+    result 'present' "$token" "${apppath} - installed by something else"
     return
   fi
 
@@ -2136,8 +2233,19 @@ done
 
 # Upgrades
 
+# HELD is hands-off in both directions, so it is left out of what counts as
+# outdated: a bare `brew upgrade --cask` would move rider and datagrip under
+# Toolbox's feet. Upgrades name their packages for the same reason.
+held_names() {
+  local entry
+  for entry in "${HELD[@]:-}"; do
+    [[ -n "$entry" ]] && printf '%s\n' "${entry%%:*}"
+  done
+  return 0
+}
+
 brew_outdated() {
-  "$BREW" outdated --quiet "$@" 2>/dev/null || true
+  { "$BREW" outdated --quiet "$@" 2>/dev/null || true; } | grep -vxF -f <(held_names) || true
 }
 
 count_lines() {
@@ -2151,11 +2259,12 @@ else
 
   outdated_formulae="$(brew_outdated --formula)"
   n_formulae="$(count_lines "$outdated_formulae")"
+  # shellcheck disable=SC2086 # $outdated_formulae is one formula per word
   if [[ "$n_formulae" -eq 0 ]]; then
     result 'current' 'brew formulae' 'nothing outdated'
   elif [[ "$DRY_RUN" == "yes" ]]; then
     result 'would-upgrade' 'brew formulae' "$n_formulae outdated: $(tr '\n' ' ' <<< "$outdated_formulae")"
-  elif "$BREW" upgrade --formula >"$BREW_LOG" 2>&1; then
+  elif "$BREW" upgrade --formula $outdated_formulae >"$BREW_LOG" 2>&1; then
     result 'upgraded' 'brew formulae' "$n_formulae package(s)"
   else
     result 'failed' 'brew formulae' "brew upgrade: $(brew_error "$BREW_LOG")"
@@ -2163,13 +2272,14 @@ else
 
   outdated_casks="$(brew_outdated --cask)"
   n_casks="$(count_lines "$outdated_casks")"
+  # shellcheck disable=SC2086 # $outdated_casks is one token per word
   if [[ "$n_casks" -eq 0 ]]; then
     result 'current' 'brew casks' 'nothing outdated'
   elif [[ "$SKIP_CASK_UPGRADE" == "yes" ]]; then
     result 'skipped' 'brew casks' "$n_casks outdated - --skip-cask-upgrade"
   elif [[ "$DRY_RUN" == "yes" ]]; then
     result 'would-upgrade' 'brew casks' "$n_casks outdated: $(tr '\n' ' ' <<< "$outdated_casks")"
-  elif "$BREW" upgrade --cask >"$BREW_LOG" 2>&1; then
+  elif "$BREW" upgrade --cask $outdated_casks >"$BREW_LOG" 2>&1; then
     result 'upgraded' 'brew casks' "$n_casks app(s)"
   else
     result 'failed' 'brew casks' "brew upgrade --cask: $(brew_error "$BREW_LOG")"
@@ -2293,7 +2403,7 @@ if ! command -v mise >/dev/null 2>&1; then
 elif [[ ! -r "$MISE_TOOLS_FILE" ]]; then
   result 'failed' 'mise runtimes' "not found at $MISE_TOOLS_FILE"
 else
-  _mise_have="$(mise ls -g 2>/dev/null | awk '{print $1}')"
+  _mise_have="$(mise ls -g 2>/dev/null | awk '{print $1}' || true)"
   while IFS= read -r _entry || [[ -n "$_entry" ]]; do
     _entry="${_entry%%#*}"
     _entry="$(printf '%s' "$_entry" | tr -d '[:space:]')"
@@ -2349,106 +2459,91 @@ else
 
   ZSHENV="${HOME}/.zshenv"
   ZSHENV_FRAGMENT="${HOME}/.zshenv.bootstrap"
-  if [[ "$DRY_RUN" == "yes" ]]; then
-    result 'would-install' 'zshenv config' "$ZSHENV_FRAGMENT"
+  mktemp_tracked NEW_ZSHENV "$(stage_template "$ZSHENV_FRAGMENT")"
+  chmod 0644 "$NEW_ZSHENV"
+  {
+    echo
+    echo "[ -x \"${BREW_PREFIX}/bin/brew\" ] && eval \"\$(${BREW_PREFIX}/bin/brew shellenv)\""
+  } > "$NEW_ZSHENV"
+  commit_staged "$NEW_ZSHENV" "$ZSHENV_FRAGMENT" 'zshenv config'
+
+  ZSHENV_SOURCE_LINE='[ -f "$HOME/.zshenv.bootstrap" ] && source "$HOME/.zshenv.bootstrap"'
+  if [[ -f "$ZSHENV" ]] && grep -qE '^[^#]*(source|\.)[[:space:]].*\.zshenv\.bootstrap' "$ZSHENV"; then
+    result 'current' 'zshenv hook' "$ZSHENV"
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    result 'would-install' 'zshenv hook' "append to $ZSHENV"
   else
-    mktemp_tracked NEW_ZSHENV "${ZSHENV_FRAGMENT}.XXXXXX"
-    chmod 0644 "$NEW_ZSHENV"
-    {
-      echo
-      echo "[ -x \"${BREW_PREFIX}/bin/brew\" ] && eval \"\$(${BREW_PREFIX}/bin/brew shellenv)\""
-    } > "$NEW_ZSHENV"
-
-    if [[ -f "$ZSHENV_FRAGMENT" ]] && cmp -s "$NEW_ZSHENV" "$ZSHENV_FRAGMENT"; then
-      rm -f "$NEW_ZSHENV"
-      result 'current' 'zshenv config' "$ZSHENV_FRAGMENT"
-    elif [[ -f "$ZSHENV_FRAGMENT" ]]; then
-      mv "$NEW_ZSHENV" "$ZSHENV_FRAGMENT"
-      result 'upgraded' 'zshenv config' "$ZSHENV_FRAGMENT"
-    else
-      mv "$NEW_ZSHENV" "$ZSHENV_FRAGMENT"
-      result 'installed' 'zshenv config' "$ZSHENV_FRAGMENT"
-    fi
-
-    ZSHENV_SOURCE_LINE='[ -f "$HOME/.zshenv.bootstrap" ] && source "$HOME/.zshenv.bootstrap"'
-    if [[ -f "$ZSHENV" ]] && grep -qE '^[^#]*(source|\.)[[:space:]].*\.zshenv\.bootstrap' "$ZSHENV"; then
-      result 'current' 'zshenv hook' "$ZSHENV"
-    else
-      printf '\n%s\n' "$ZSHENV_SOURCE_LINE" >> "$ZSHENV"
-      result 'installed' 'zshenv hook' "appended to $ZSHENV"
-    fi
+    printf '\n%s\n' "$ZSHENV_SOURCE_LINE" >> "$ZSHENV"
+    result 'installed' 'zshenv hook' "appended to $ZSHENV"
   fi
 
   ZSHRC="${HOME}/.zshrc"
   FRAGMENT="${HOME}/.zshrc.bootstrap"
-  if [[ "$DRY_RUN" == "yes" ]]; then
-    result 'would-install' 'zsh config' "$FRAGMENT"
-  else
-    mktemp_tracked NEW_FRAGMENT "${FRAGMENT}.XXXXXX"
-    chmod 0644 "$NEW_FRAGMENT"
-    {
-      echo
-      echo "[ -x \"${BREW_PREFIX}/bin/brew\" ] && eval \"\$(${BREW_PREFIX}/bin/brew shellenv)\""
-      echo
-      echo "fpath+=(\"${BREW_PREFIX}/share/zsh-completions\")"
-      echo
-      # The options oh-my-zsh's lib/ used to set, minus the ones set further
-      # down for history and the ones a theme would have wanted.
-      echo 'setopt EXTENDED_GLOB        # (#q...) qualifiers, used by compinit below'
-      echo 'setopt AUTO_CD              # a bare directory name means cd'
-      echo 'setopt AUTO_PUSHD           # every cd pushes onto the stack'
-      echo 'setopt PUSHD_IGNORE_DUPS'
-      echo 'setopt PUSHD_MINUS          # cd -1 is the previous directory'
-      echo 'setopt ALWAYS_TO_END        # completion leaves the cursor after the word'
-      echo 'setopt COMPLETE_IN_WORD     # complete from the cursor, not the word end'
-      echo 'setopt AUTO_MENU            # a second Tab opens the menu'
-      echo 'setopt INTERACTIVE_COMMENTS # a # starts a comment on the command line'
-      echo 'setopt LONG_LIST_JOBS'
-      echo 'setopt MULTIOS              # echo >file1 >file2'
-      echo 'unsetopt MENU_COMPLETE      # Tab never picks an entry for you'
-      echo 'unsetopt FLOW_CONTROL       # ^S and ^Q stay usable keys'
-      echo 'bindkey -e                  # emacs keymap, whatever $EDITOR says'
-      echo
-      # compinit is the slow half of shell startup. The full security-checked
-      # run happens once a day and the cached one covers the rest; the fpath
-      # permissions it would warn about are fixed by the phase above.
-      echo 'autoload -Uz compinit'
-      echo '_zcompdump="$HOME/.zcompdump"'
-      echo '_zcompdump_fresh=( ${_zcompdump}(#qN.mh-24) )'
-      echo 'if (( $#_zcompdump_fresh )); then'
-      echo '  compinit -C -d "$_zcompdump"'
-      echo 'else'
-      echo '  compinit -d "$_zcompdump"'
-      echo 'fi'
-      echo 'unset _zcompdump _zcompdump_fresh'
-      echo
-      echo "WORDCHARS=''                # ^W and Alt-B stop at every punctuation mark"
-      echo "zstyle ':completion:*' matcher-list 'm:{[:lower:][:upper:]-_}={[:upper:][:lower:]_-}' 'r:|=*' 'l:|=* r:|=*'"
-      echo "zstyle ':completion:*' special-dirs true"
-      echo "zstyle ':completion:*' group-name ''"
-      echo "zstyle ':completion:*:descriptions' format '%F{yellow}%d%f'"
-      echo '[ -d "$HOME/.cache/zsh" ] || mkdir -p "$HOME/.cache/zsh"'
-      echo "zstyle ':completion:*' use-cache yes"
-      echo 'zstyle '"'"':completion:*'"'"' cache-path "$HOME/.cache/zsh"'
-      echo
-      # Catppuccin Mocha, the palette starship.toml, ghostty and atuin use.
-      # fzf-tab shells out to fzf, so it inherits these too. A heredoc, not
-      # echo lines: the value is written with backslash-newline continuations,
-      # and those are literal characters inside the single quotes echo needs.
-      cat <<'FZF_OPTS'
+  mktemp_tracked NEW_FRAGMENT "$(stage_template "$FRAGMENT")"
+  chmod 0644 "$NEW_FRAGMENT"
+  {
+    echo
+    echo "[ -x \"${BREW_PREFIX}/bin/brew\" ] && eval \"\$(${BREW_PREFIX}/bin/brew shellenv)\""
+    echo
+    echo "fpath+=(\"${BREW_PREFIX}/share/zsh-completions\")"
+    echo
+    # The options oh-my-zsh's lib/ used to set, minus the ones set further
+    # down for history and the ones a theme would have wanted.
+    echo 'setopt EXTENDED_GLOB        # (#q...) qualifiers, used by compinit below'
+    echo 'setopt AUTO_CD              # a bare directory name means cd'
+    echo 'setopt AUTO_PUSHD           # every cd pushes onto the stack'
+    echo 'setopt PUSHD_IGNORE_DUPS'
+    echo 'setopt PUSHD_MINUS          # cd -1 is the previous directory'
+    echo 'setopt ALWAYS_TO_END        # completion leaves the cursor after the word'
+    echo 'setopt COMPLETE_IN_WORD     # complete from the cursor, not the word end'
+    echo 'setopt AUTO_MENU            # a second Tab opens the menu'
+    echo 'setopt INTERACTIVE_COMMENTS # a # starts a comment on the command line'
+    echo 'setopt LONG_LIST_JOBS'
+    echo 'setopt MULTIOS              # echo >file1 >file2'
+    echo 'unsetopt MENU_COMPLETE      # Tab never picks an entry for you'
+    echo 'unsetopt FLOW_CONTROL       # ^S and ^Q stay usable keys'
+    echo 'bindkey -e                  # emacs keymap, whatever $EDITOR says'
+    echo
+    # compinit is the slow half of shell startup. The full security-checked
+    # run happens once a day and the cached one covers the rest; the fpath
+    # permissions it would warn about are fixed by the phase above.
+    echo 'autoload -Uz compinit'
+    echo '_zcompdump="$HOME/.zcompdump"'
+    echo '_zcompdump_fresh=( ${_zcompdump}(#qN.mh-24) )'
+    echo 'if (( $#_zcompdump_fresh )); then'
+    echo '  compinit -C -d "$_zcompdump"'
+    echo 'else'
+    echo '  compinit -d "$_zcompdump"'
+    echo 'fi'
+    echo 'unset _zcompdump _zcompdump_fresh'
+    echo
+    echo "WORDCHARS=''                # ^W and Alt-B stop at every punctuation mark"
+    echo "zstyle ':completion:*' matcher-list 'm:{[:lower:][:upper:]-_}={[:upper:][:lower:]_-}' 'r:|=*' 'l:|=* r:|=*'"
+    echo "zstyle ':completion:*' special-dirs true"
+    echo "zstyle ':completion:*' group-name ''"
+    echo "zstyle ':completion:*:descriptions' format '%F{yellow}%d%f'"
+    echo '[ -d "$HOME/.cache/zsh" ] || mkdir -p "$HOME/.cache/zsh"'
+    echo "zstyle ':completion:*' use-cache yes"
+    echo 'zstyle '"'"':completion:*'"'"' cache-path "$HOME/.cache/zsh"'
+    echo
+    # Catppuccin Mocha, the palette starship.toml, ghostty and atuin use.
+    # fzf-tab shells out to fzf, so it inherits these too. A heredoc, not
+    # echo lines: the value is written with backslash-newline continuations,
+    # and those are literal characters inside the single quotes echo needs.
+    cat <<'FZF_OPTS'
 export FZF_DEFAULT_OPTS="\
   --color=bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8 \
   --color=fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc \
   --color=marker:#b4befe,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8 \
   --color=selected-bg:#45475a,border:#6c7086,label:#cdd6f4"
 FZF_OPTS
-      echo
-      # fzf's file source and previews. fd rather than fzf's own walker: it
-      # honours .gitignore, so Ctrl-T inside a repo does not wade through
-      # node_modules or build output. --hidden keeps .env and .github
-      # findable; .git itself is only noise. Ctrl-T previews a file in bat,
-      # Alt-C a directory as an eza tree.
-      cat <<'FZF_FILES'
+    echo
+    # fzf's file source and previews. fd rather than fzf's own walker: it
+    # honours .gitignore, so Ctrl-T inside a repo does not wade through
+    # node_modules or build output. --hidden keeps .env and .github
+    # findable; .git itself is only noise. Ctrl-T previews a file in bat,
+    # Alt-C a directory as an eza tree.
+    cat <<'FZF_FILES'
 if command -v fd >/dev/null; then
   export FZF_DEFAULT_COMMAND="fd --type f --hidden --follow --exclude .git"
   export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
@@ -2457,227 +2552,227 @@ fi
 command -v bat >/dev/null && export FZF_CTRL_T_OPTS="--preview 'bat --color=always --style=numbers --line-range=:300 {}' --preview-window=right,60%,border-left"
 command -v eza >/dev/null && export FZF_ALT_C_OPTS="--preview 'eza --tree --level=2 --color=always --icons=auto {} | head -200'"
 FZF_FILES
-      echo
-      # What the omz fzf plugin did: Ctrl-R, Ctrl-T, Alt-C and fzf's own
-      # completion. Before atuin further down, which takes Ctrl-R back.
-      echo 'command -v fzf >/dev/null && source <(fzf --zsh)'
-      echo
-      echo 'eval "$(starship init zsh)"'
-      echo "[ -r \"${BREW_PREFIX}/share/fzf-tab/fzf-tab.zsh\" ] && source \"${BREW_PREFIX}/share/fzf-tab/fzf-tab.zsh\""
-      echo "[ -r \"${BREW_PREFIX}/share/zsh-autosuggestions/zsh-autosuggestions.zsh\" ] && source \"${BREW_PREFIX}/share/zsh-autosuggestions/zsh-autosuggestions.zsh\""
-      # The theme first: the plugin only fills in the styles still unset.
-      echo '[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/zsh-syntax-highlighting/catppuccin_mocha.zsh" ] && source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh-syntax-highlighting/catppuccin_mocha.zsh"'
-      echo "[ -r \"${BREW_PREFIX}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh\" ] && source \"${BREW_PREFIX}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh\""
-      echo "[ -r \"${BREW_PREFIX}/share/zsh-history-substring-search/zsh-history-substring-search.zsh\" ] && source \"${BREW_PREFIX}/share/zsh-history-substring-search/zsh-history-substring-search.zsh\""
-      echo
-      echo 'zmodload zsh/terminfo 2>/dev/null'
-      echo 'if (( $+widgets[history-substring-search-up] )); then'
-      echo "  bindkey '^[[A' history-substring-search-up"
-      echo "  bindkey '^[[B' history-substring-search-down"
-      echo '  [ -n "${terminfo[kcuu1]}" ] && bindkey "${terminfo[kcuu1]}" history-substring-search-up'
-      echo '  [ -n "${terminfo[kcud1]}" ] && bindkey "${terminfo[kcud1]}" history-substring-search-down'
-      echo "  bindkey -M vicmd 'k' history-substring-search-up"
-      echo "  bindkey -M vicmd 'j' history-substring-search-down"
-      echo 'fi'
-      echo
-      # Home/End/Delete/PageUp/PageDown and word motion: from terminfo where
-      # the terminal reports them, from the usual escapes where it does not.
-      echo '[ -n "${terminfo[khome]}" ] && bindkey "${terminfo[khome]}" beginning-of-line'
-      echo '[ -n "${terminfo[kend]}"   ] && bindkey "${terminfo[kend]}"   end-of-line'
-      echo '[ -n "${terminfo[kdch1]}" ] && bindkey "${terminfo[kdch1]}" delete-char'
-      echo '[ -n "${terminfo[kpp]}"   ] && bindkey "${terminfo[kpp]}"   up-line-or-history'
-      echo '[ -n "${terminfo[knp]}"   ] && bindkey "${terminfo[knp]}"   down-line-or-history'
-      echo '[ -n "${terminfo[kcbt]}"  ] && bindkey "${terminfo[kcbt]}"  reverse-menu-complete'
-      echo "bindkey '^[[H' beginning-of-line"
-      echo "bindkey '^[[F' end-of-line"
-      echo "bindkey '^[[3~' delete-char"
-      echo "bindkey '^[[1;5C' forward-word"
-      echo "bindkey '^[[1;5D' backward-word"
-      echo "bindkey '^[[3;5~' kill-word"
-      echo "bindkey ' ' magic-space     # !! expands as you type the space"
-      echo 'autoload -Uz edit-command-line'
-      echo 'zle -N edit-command-line'
-      echo "bindkey '^X^E' edit-command-line  # the line so far, in \$EDITOR"
-      echo
-      echo 'STARSHIP_FULL_PROMPT="$PROMPT"'
-      echo 'STARSHIP_FULL_RPROMPT="$RPROMPT"'
-      echo 'TRANSIENT_PROMPT="${PROMPT// prompt / prompt --profile transient }"'
-      echo 'TRANSIENT_RPROMPT="${PROMPT// prompt / prompt --profile rtransient }"'
-      echo 'STARSHIP_CTX_GROUP=""'
-      echo 'STARSHIP_TRANSIENT=0'
-      echo 'autoload -Uz add-zle-hook-widget'
-      echo 'autoload -Uz add-zsh-hook'
-      echo 'starship-restore-prompt() {'
-      echo '  PROMPT="$STARSHIP_FULL_PROMPT"'
-      echo '  RPROMPT="$STARSHIP_FULL_RPROMPT"'
-      echo '  STARSHIP_CTX_GROUP=""'
-      echo '  STARSHIP_TRANSIENT=0'
-      echo '}'
-      echo 'add-zsh-hook precmd starship-restore-prompt'
-      echo 'transient-prompt() {'
-      echo '  STARSHIP_TRANSIENT=1'
-      echo '  PROMPT="$TRANSIENT_PROMPT"'
-      echo '  RPROMPT="$TRANSIENT_RPROMPT"'
-      echo '  zle .reset-prompt'
-      echo '}'
-      echo 'zle -N transient-prompt'
-      echo 'add-zle-hook-widget zle-line-finish transient-prompt'
-      echo
-      echo 'starship-context-prompt() {'
-      echo '  (( STARSHIP_TRANSIENT )) && return'
-      echo '  local -a words'
-      echo '  words=( ${(z)BUFFER} )'
-      echo '  while (( $#words )) && [[ ${words[1]} == *=* || ${words[1]:t} == (sudo|doas|command|env|time|nice|nohup|watch) ]]; do'
-      echo '    shift words'
-      echo '  done'
-      echo '  local group=""'
-      echo '  case ${words[1]:t} in'
-      echo '    (kubectl|kubectl-*|kubecolor|k|kubectx|kubens|kustomize|k9s|stern|helm|helmfile|flux|argocd|velero|skaffold|kubeseal)'
-      echo '      group=kube ;;'
-      echo '    (aws|aws-vault|awslocal|eksctl|sam|copilot|yawsso|saml2aws|granted|assume)'
-      echo '      group=aws ;;'
-      echo '    (az|azd|azcopy|func)'
-      echo '      group=azure ;;'
-      echo '    (gcloud|gsutil|bq|firebase|gke-gcloud-auth-plugin)'
-      echo '      group=gcloud ;;'
-      echo '    (terraform|tofu|terragrunt|tflint|terraform-docs|infracost|tfenv|tfswitch)'
-      echo '      group=terraform ;;'
-      echo '    (dotnet|dotnet-*|msbuild|nuget)'
-      echo '      group=dotnet ;;'
-      echo '  esac'
-      echo '  [[ "$group" == "$STARSHIP_CTX_GROUP" ]] && return'
-      echo '  STARSHIP_CTX_GROUP="$group"'
-      echo '  if [[ -n "$group" ]]; then'
-      echo '    RPROMPT="${STARSHIP_FULL_PROMPT// prompt / prompt --profile ctx_$group }"'
-      echo '  else'
-      echo '    RPROMPT="$STARSHIP_FULL_RPROMPT"'
-      echo '  fi'
-      echo '  zle .reset-prompt'
-      echo '}'
-      echo 'zle -N starship-context-prompt'
-      echo 'add-zle-hook-widget zle-line-pre-redraw starship-context-prompt'
-      echo
-      # What omz's termsupport.zsh did: the directory in the tab title, the
-      # command while one is running.
-      printf '%s\n' 'zsh-title() { print -Pn "\e]2;$1\a" }'
-      echo "zsh-title-precmd()  { zsh-title '%~' }"
-      echo 'zsh-title-preexec() { zsh-title "${1%% *} - %~" }'
-      echo 'add-zsh-hook precmd zsh-title-precmd'
-      echo 'add-zsh-hook preexec zsh-title-preexec'
-      echo
-      echo 'zstyle '"'"':completion:*'"'"' list-colors "${(s.:.)LS_COLORS}"'
-      # The menuselect keymap only exists once complist is loaded; oh-my-zsh
-      # used to load it, and without it the bindkey below is an error.
-      echo 'zmodload zsh/complist'
-      echo "bindkey -M menuselect '^[[Z' reverse-menu-complete"
-      echo 'if command -v fzf >/dev/null; then'
-      echo "  zstyle ':completion:*' menu no"
-      echo "  zstyle ':completion:*:*:*:*:*' menu no"
-      echo "  zstyle ':fzf-tab:*' fzf-flags --height=60% --layout=reverse --border --cycle"
-      echo "  zstyle ':fzf-tab:*' switch-group ',' '.'"
-      # carapace hands zsh the bare file name to display and the full path as
-      # the value, without a compadd prefix. fzf-tab then finds no prefix to
-      # strip and seeds the fzf query with the whole typed word, so
-      # `cat scripts/aws/<Tab>` searches for "scripts/aws/" among names like
-      # "import.py" and shows 0/14 with an empty list. Seed the query from the
-      # candidates' common prefix instead, which is the right answer with or
-      # without carapace.
-      echo "  zstyle ':fzf-tab:*' query-string prefix"
-      echo '  # git checkout offers refs in a meaningful order already; sorting'
-      echo "  # them alphabetically buries the branch you just left."
-      echo "  zstyle ':completion:*:git-checkout:*' sort false"
-      echo "  zstyle ':fzf-tab:complete:cd:*'         fzf-preview 'eza -1 --color=always -- \"\$realpath\" 2>/dev/null || ls -1 \"\$realpath\"'"
-      echo "  zstyle ':fzf-tab:complete:__zoxide_z:*' fzf-preview 'eza -1 --color=always -- \"\$realpath\" 2>/dev/null || ls -1 \"\$realpath\"'"
-      echo '  # Bound only if the widget exists, so a failed fzf-tab install'
-      echo '  # leaves Tab doing the normal thing rather than nothing.'
-      echo '  if (( $+functions[fzf-tab-complete] )); then'
-      echo "    bindkey -M emacs '^I' fzf-tab-complete"
-      echo "    bindkey -M viins '^I' fzf-tab-complete"
-      echo '  fi'
-      echo 'else'
-      echo "  bindkey '^I' menu-select"
-      echo 'fi'
-      echo
-      echo 'HISTFILE="$HOME/.zsh_history"'
-      printf 'HISTSIZE=%s\n' "$HISTORY_SIZE"
-      printf 'SAVEHIST=%s\n' "$HISTORY_FILE_SIZE"
-      echo 'setopt APPEND_HISTORY        # add to the file, never replace it'
-      echo 'setopt INC_APPEND_HISTORY    # write as you go, not at exit - a'
-      echo '                             # crashed or killed shell loses nothing'
-      echo 'setopt SHARE_HISTORY         # every open terminal sees the others'
-      echo 'setopt EXTENDED_HISTORY      # timestamp and duration per entry'
-      echo 'setopt HIST_IGNORE_ALL_DUPS  # keep only the newest of a repeat'
-      echo 'setopt HIST_REDUCE_BLANKS'
-      echo 'setopt HIST_VERIFY           # expand !! for review, do not just run it'
-      echo 'setopt HIST_IGNORE_SPACE     # a leading space keeps it out of history'
-      echo
-      echo "alias ..='cd ..'"
-      echo "alias ...='cd ../..'"
-      echo "alias ....='cd ../../..'"
-      echo "alias -- -='cd -'"
-      echo
-      echo 'command -v bat    >/dev/null && alias cat="bat --paging=never"'
-      # man pages in bat's theme. col -bx strips the overstrike backspaces
-      # groff emits for bold and underline, which bat would render literally.
-      echo 'command -v bat    >/dev/null && export MANPAGER="sh -c '"'"'col -bx | bat -l man -p'"'"'" MANROFFOPT="-c"'
-      echo 'command -v eza    >/dev/null && alias ls="eza --icons=auto --group-directories-first"'
-      echo 'command -v rg     >/dev/null && alias grep="rg"'
-      echo 'command -v fd     >/dev/null && alias find="fd"'
-      echo 'command -v dust   >/dev/null && alias du="dust"'
-      echo 'command -v duf    >/dev/null && alias df="duf"'
-      # doggo answers the same questions as dig and prints them as a table.
-      echo 'command -v doggo  >/dev/null && alias dig="doggo"'
-      # xh is curl for JSON APIs; xhs is xh --https, a symlink upstream.
-      echo 'command -v xh     >/dev/null && alias http="xh"'
-      echo 'command -v xh     >/dev/null && alias https="xh --https"'
-      echo 'command -v lazygit >/dev/null && alias lg="lazygit"'
-      echo 'command -v lazydocker >/dev/null && alias lzd="lazydocker"'
-      # sd deliberately gets no `sed` alias: its pattern and replacement syntax
-      # is not sed's, so anything pasted from a script would quietly do
-      # something else. It is called as sd.
-      echo 'command -v zoxide >/dev/null && eval "$(zoxide init zsh)"'
-      # Last binding wins, so atuin goes after fzf/fzf-tab to take Ctrl+R.
-      # --disable-up-arrow keeps Up on history-substring-search, bound above.
-      echo 'command -v atuin  >/dev/null && eval "$(atuin init zsh --disable-up-arrow)"'
-      # carapace completes the CLIs zsh has nothing for. git is excluded: zsh's
-      # own _git is better, and the git-checkout zstyle above is written for it.
-      echo 'if command -v carapace >/dev/null; then'
-      echo "  export CARAPACE_EXCLUDES='git'"
-      echo '  eval "$(carapace _carapace zsh)"'
-      echo 'fi'
-      # uv's zsh completion is ~570 KB, so it loads on the first Tab after `uv`
-      # rather than in every new shell: the stub swaps itself for the real _uv.
-      echo 'if command -v uv >/dev/null; then'
-      echo '  _uv_lazy() { unfunction _uv_lazy; eval "$(uv generate-shell-completion zsh)"; _uv "$@"; }'
-      echo '  compdef _uv_lazy uv'
-      echo 'fi'
-      echo 'command -v kubectl >/dev/null && alias k="kubectl"'
-      # kubecolor hands every argument to kubectl and only adds colour, so the
-      # alias is invisible otherwise. After carapace, whose kubectl completer
-      # compdef then copies.
-      echo 'if command -v kubecolor >/dev/null; then'
-      echo '  alias kubectl="kubecolor"'
-      echo '  (( $+_comps[kubectl] )) && compdef kubecolor=kubectl'
-      echo 'fi'
-      # macOS is the one platform where trippy traces without root.
-      echo 'command -v trip >/dev/null && alias trip="trip -u"'
-      echo
-      load_parity_table
-      group_array _form "GROUP_cli_FORMULA"
-      group_array _cask "GROUP_cli_CASK"
-      _tools_rows=()
-      for pkg in "${_form[@]:-}" "${_cask[@]:-}"; do
-        [[ -z "$pkg" ]] && continue
-        _cmd='' _desc=''
-        if parity_row "$pkg"; then _cmd="$_row_cmd" _desc="$_row_desc"; fi
-        _tools_rows+=("$pkg" "$_cmd" "$_desc")
-      done
-      # An empty array under set -u is an error in bash 3.2, hence the :-; the
-      # one empty word that yields is fewer than a triple and is skipped.
-      emit_tools_function "${_tools_rows[@]:-}"
-      unset _form _cask _cmd _desc _tools_rows
-      echo
-      cat <<'WORKFLOW'
+    echo
+    # What the omz fzf plugin did: Ctrl-R, Ctrl-T, Alt-C and fzf's own
+    # completion. Before atuin further down, which takes Ctrl-R back.
+    echo 'command -v fzf >/dev/null && source <(fzf --zsh)'
+    echo
+    echo 'eval "$(starship init zsh)"'
+    echo "[ -r \"${BREW_PREFIX}/share/fzf-tab/fzf-tab.zsh\" ] && source \"${BREW_PREFIX}/share/fzf-tab/fzf-tab.zsh\""
+    echo "[ -r \"${BREW_PREFIX}/share/zsh-autosuggestions/zsh-autosuggestions.zsh\" ] && source \"${BREW_PREFIX}/share/zsh-autosuggestions/zsh-autosuggestions.zsh\""
+    # The theme first: the plugin only fills in the styles still unset.
+    echo '[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/zsh-syntax-highlighting/catppuccin_mocha.zsh" ] && source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh-syntax-highlighting/catppuccin_mocha.zsh"'
+    echo "[ -r \"${BREW_PREFIX}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh\" ] && source \"${BREW_PREFIX}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh\""
+    echo "[ -r \"${BREW_PREFIX}/share/zsh-history-substring-search/zsh-history-substring-search.zsh\" ] && source \"${BREW_PREFIX}/share/zsh-history-substring-search/zsh-history-substring-search.zsh\""
+    echo
+    echo 'zmodload zsh/terminfo 2>/dev/null'
+    echo 'if (( $+widgets[history-substring-search-up] )); then'
+    echo "  bindkey '^[[A' history-substring-search-up"
+    echo "  bindkey '^[[B' history-substring-search-down"
+    echo '  [ -n "${terminfo[kcuu1]}" ] && bindkey "${terminfo[kcuu1]}" history-substring-search-up'
+    echo '  [ -n "${terminfo[kcud1]}" ] && bindkey "${terminfo[kcud1]}" history-substring-search-down'
+    echo "  bindkey -M vicmd 'k' history-substring-search-up"
+    echo "  bindkey -M vicmd 'j' history-substring-search-down"
+    echo 'fi'
+    echo
+    # Home/End/Delete/PageUp/PageDown and word motion: from terminfo where
+    # the terminal reports them, from the usual escapes where it does not.
+    echo '[ -n "${terminfo[khome]}" ] && bindkey "${terminfo[khome]}" beginning-of-line'
+    echo '[ -n "${terminfo[kend]}"   ] && bindkey "${terminfo[kend]}"   end-of-line'
+    echo '[ -n "${terminfo[kdch1]}" ] && bindkey "${terminfo[kdch1]}" delete-char'
+    echo '[ -n "${terminfo[kpp]}"   ] && bindkey "${terminfo[kpp]}"   up-line-or-history'
+    echo '[ -n "${terminfo[knp]}"   ] && bindkey "${terminfo[knp]}"   down-line-or-history'
+    echo '[ -n "${terminfo[kcbt]}"  ] && bindkey "${terminfo[kcbt]}"  reverse-menu-complete'
+    echo "bindkey '^[[H' beginning-of-line"
+    echo "bindkey '^[[F' end-of-line"
+    echo "bindkey '^[[3~' delete-char"
+    echo "bindkey '^[[1;5C' forward-word"
+    echo "bindkey '^[[1;5D' backward-word"
+    echo "bindkey '^[[3;5~' kill-word"
+    echo "bindkey ' ' magic-space     # !! expands as you type the space"
+    echo 'autoload -Uz edit-command-line'
+    echo 'zle -N edit-command-line'
+    echo "bindkey '^X^E' edit-command-line  # the line so far, in \$EDITOR"
+    echo
+    echo 'STARSHIP_FULL_PROMPT="$PROMPT"'
+    echo 'STARSHIP_FULL_RPROMPT="$RPROMPT"'
+    echo 'TRANSIENT_PROMPT="${PROMPT// prompt / prompt --profile transient }"'
+    echo 'TRANSIENT_RPROMPT="${PROMPT// prompt / prompt --profile rtransient }"'
+    echo 'STARSHIP_CTX_GROUP=""'
+    echo 'STARSHIP_TRANSIENT=0'
+    echo 'autoload -Uz add-zle-hook-widget'
+    echo 'autoload -Uz add-zsh-hook'
+    echo 'starship-restore-prompt() {'
+    echo '  PROMPT="$STARSHIP_FULL_PROMPT"'
+    echo '  RPROMPT="$STARSHIP_FULL_RPROMPT"'
+    echo '  STARSHIP_CTX_GROUP=""'
+    echo '  STARSHIP_TRANSIENT=0'
+    echo '}'
+    echo 'add-zsh-hook precmd starship-restore-prompt'
+    echo 'transient-prompt() {'
+    echo '  STARSHIP_TRANSIENT=1'
+    echo '  PROMPT="$TRANSIENT_PROMPT"'
+    echo '  RPROMPT="$TRANSIENT_RPROMPT"'
+    echo '  zle .reset-prompt'
+    echo '}'
+    echo 'zle -N transient-prompt'
+    echo 'add-zle-hook-widget zle-line-finish transient-prompt'
+    echo
+    echo 'starship-context-prompt() {'
+    echo '  (( STARSHIP_TRANSIENT )) && return'
+    echo '  local -a words'
+    echo '  words=( ${(z)BUFFER} )'
+    echo '  while (( $#words )) && [[ ${words[1]} == *=* || ${words[1]:t} == (sudo|doas|command|env|time|nice|nohup|watch) ]]; do'
+    echo '    shift words'
+    echo '  done'
+    echo '  local group=""'
+    echo '  case ${words[1]:t} in'
+    echo '    (kubectl|kubectl-*|kubecolor|k|kubectx|kubens|kustomize|k9s|stern|helm|helmfile|flux|argocd|velero|skaffold|kubeseal)'
+    echo '      group=kube ;;'
+    echo '    (aws|aws-vault|awslocal|eksctl|sam|copilot|yawsso|saml2aws|granted|assume)'
+    echo '      group=aws ;;'
+    echo '    (az|azd|azcopy|func)'
+    echo '      group=azure ;;'
+    echo '    (gcloud|gsutil|bq|firebase|gke-gcloud-auth-plugin)'
+    echo '      group=gcloud ;;'
+    echo '    (terraform|tofu|terragrunt|tflint|terraform-docs|infracost|tfenv|tfswitch)'
+    echo '      group=terraform ;;'
+    echo '    (dotnet|dotnet-*|msbuild|nuget)'
+    echo '      group=dotnet ;;'
+    echo '  esac'
+    echo '  [[ "$group" == "$STARSHIP_CTX_GROUP" ]] && return'
+    echo '  STARSHIP_CTX_GROUP="$group"'
+    echo '  if [[ -n "$group" ]]; then'
+    echo '    RPROMPT="${STARSHIP_FULL_PROMPT// prompt / prompt --profile ctx_$group }"'
+    echo '  else'
+    echo '    RPROMPT="$STARSHIP_FULL_RPROMPT"'
+    echo '  fi'
+    echo '  zle .reset-prompt'
+    echo '}'
+    echo 'zle -N starship-context-prompt'
+    echo 'add-zle-hook-widget zle-line-pre-redraw starship-context-prompt'
+    echo
+    # What omz's termsupport.zsh did: the directory in the tab title, the
+    # command while one is running.
+    printf '%s\n' 'zsh-title() { print -Pn "\e]2;$1\a" }'
+    echo "zsh-title-precmd()  { zsh-title '%~' }"
+    echo 'zsh-title-preexec() { zsh-title "${1%% *} - %~" }'
+    echo 'add-zsh-hook precmd zsh-title-precmd'
+    echo 'add-zsh-hook preexec zsh-title-preexec'
+    echo
+    echo 'zstyle '"'"':completion:*'"'"' list-colors "${(s.:.)LS_COLORS}"'
+    # The menuselect keymap only exists once complist is loaded; oh-my-zsh
+    # used to load it, and without it the bindkey below is an error.
+    echo 'zmodload zsh/complist'
+    echo "bindkey -M menuselect '^[[Z' reverse-menu-complete"
+    echo 'if command -v fzf >/dev/null; then'
+    echo "  zstyle ':completion:*' menu no"
+    echo "  zstyle ':completion:*:*:*:*:*' menu no"
+    echo "  zstyle ':fzf-tab:*' fzf-flags --height=60% --layout=reverse --border --cycle"
+    echo "  zstyle ':fzf-tab:*' switch-group ',' '.'"
+    # carapace hands zsh the bare file name to display and the full path as
+    # the value, without a compadd prefix. fzf-tab then finds no prefix to
+    # strip and seeds the fzf query with the whole typed word, so
+    # `cat scripts/aws/<Tab>` searches for "scripts/aws/" among names like
+    # "import.py" and shows 0/14 with an empty list. Seed the query from the
+    # candidates' common prefix instead, which is the right answer with or
+    # without carapace.
+    echo "  zstyle ':fzf-tab:*' query-string prefix"
+    echo '  # git checkout offers refs in a meaningful order already; sorting'
+    echo "  # them alphabetically buries the branch you just left."
+    echo "  zstyle ':completion:*:git-checkout:*' sort false"
+    echo "  zstyle ':fzf-tab:complete:cd:*'         fzf-preview 'eza -1 --color=always -- \"\$realpath\" 2>/dev/null || ls -1 \"\$realpath\"'"
+    echo "  zstyle ':fzf-tab:complete:__zoxide_z:*' fzf-preview 'eza -1 --color=always -- \"\$realpath\" 2>/dev/null || ls -1 \"\$realpath\"'"
+    echo '  # Bound only if the widget exists, so a failed fzf-tab install'
+    echo '  # leaves Tab doing the normal thing rather than nothing.'
+    echo '  if (( $+functions[fzf-tab-complete] )); then'
+    echo "    bindkey -M emacs '^I' fzf-tab-complete"
+    echo "    bindkey -M viins '^I' fzf-tab-complete"
+    echo '  fi'
+    echo 'else'
+    echo "  bindkey '^I' menu-select"
+    echo 'fi'
+    echo
+    echo 'HISTFILE="$HOME/.zsh_history"'
+    printf 'HISTSIZE=%s\n' "$HISTORY_SIZE"
+    printf 'SAVEHIST=%s\n' "$HISTORY_FILE_SIZE"
+    echo 'setopt APPEND_HISTORY        # add to the file, never replace it'
+    echo 'setopt INC_APPEND_HISTORY    # write as you go, not at exit - a'
+    echo '                             # crashed or killed shell loses nothing'
+    echo 'setopt SHARE_HISTORY         # every open terminal sees the others'
+    echo 'setopt EXTENDED_HISTORY      # timestamp and duration per entry'
+    echo 'setopt HIST_IGNORE_ALL_DUPS  # keep only the newest of a repeat'
+    echo 'setopt HIST_REDUCE_BLANKS'
+    echo 'setopt HIST_VERIFY           # expand !! for review, do not just run it'
+    echo 'setopt HIST_IGNORE_SPACE     # a leading space keeps it out of history'
+    echo
+    echo "alias ..='cd ..'"
+    echo "alias ...='cd ../..'"
+    echo "alias ....='cd ../../..'"
+    echo "alias -- -='cd -'"
+    echo
+    echo 'command -v bat    >/dev/null && alias cat="bat --paging=never"'
+    # man pages in bat's theme. col -bx strips the overstrike backspaces
+    # groff emits for bold and underline, which bat would render literally.
+    echo 'command -v bat    >/dev/null && export MANPAGER="sh -c '"'"'col -bx | bat -l man -p'"'"'" MANROFFOPT="-c"'
+    echo 'command -v eza    >/dev/null && alias ls="eza --icons=auto --group-directories-first"'
+    echo 'command -v rg     >/dev/null && alias grep="rg"'
+    echo 'command -v fd     >/dev/null && alias find="fd"'
+    echo 'command -v dust   >/dev/null && alias du="dust"'
+    echo 'command -v duf    >/dev/null && alias df="duf"'
+    # doggo answers the same questions as dig and prints them as a table.
+    echo 'command -v doggo  >/dev/null && alias dig="doggo"'
+    # xh is curl for JSON APIs; xhs is xh --https, a symlink upstream.
+    echo 'command -v xh     >/dev/null && alias http="xh"'
+    echo 'command -v xh     >/dev/null && alias https="xh --https"'
+    echo 'command -v lazygit >/dev/null && alias lg="lazygit"'
+    echo 'command -v lazydocker >/dev/null && alias lzd="lazydocker"'
+    # sd deliberately gets no `sed` alias: its pattern and replacement syntax
+    # is not sed's, so anything pasted from a script would quietly do
+    # something else. It is called as sd.
+    echo 'command -v zoxide >/dev/null && eval "$(zoxide init zsh)"'
+    # Last binding wins, so atuin goes after fzf/fzf-tab to take Ctrl+R.
+    # --disable-up-arrow keeps Up on history-substring-search, bound above.
+    echo 'command -v atuin  >/dev/null && eval "$(atuin init zsh --disable-up-arrow)"'
+    # carapace completes the CLIs zsh has nothing for. git is excluded: zsh's
+    # own _git is better, and the git-checkout zstyle above is written for it.
+    echo 'if command -v carapace >/dev/null; then'
+    echo "  export CARAPACE_EXCLUDES='git'"
+    echo '  eval "$(carapace _carapace zsh)"'
+    echo 'fi'
+    # uv's zsh completion is ~570 KB, so it loads on the first Tab after `uv`
+    # rather than in every new shell: the stub swaps itself for the real _uv.
+    echo 'if command -v uv >/dev/null; then'
+    echo '  _uv_lazy() { unfunction _uv_lazy; eval "$(uv generate-shell-completion zsh)"; _uv "$@"; }'
+    echo '  compdef _uv_lazy uv'
+    echo 'fi'
+    echo 'command -v kubectl >/dev/null && alias k="kubectl"'
+    # kubecolor hands every argument to kubectl and only adds colour, so the
+    # alias is invisible otherwise. After carapace, whose kubectl completer
+    # compdef then copies.
+    echo 'if command -v kubecolor >/dev/null; then'
+    echo '  alias kubectl="kubecolor"'
+    echo '  (( $+_comps[kubectl] )) && compdef kubecolor=kubectl'
+    echo 'fi'
+    # macOS is the one platform where trippy traces without root.
+    echo 'command -v trip >/dev/null && alias trip="trip -u"'
+    echo
+    load_parity_table
+    group_array _form "GROUP_cli_FORMULA"
+    group_array _cask "GROUP_cli_CASK"
+    _tools_rows=()
+    for pkg in "${_form[@]:-}" "${_cask[@]:-}"; do
+      [[ -z "$pkg" ]] && continue
+      _cmd='' _desc=''
+      if parity_row "$pkg"; then _cmd="$_row_cmd" _desc="$_row_desc"; fi
+      _tools_rows+=("$pkg" "$_cmd" "$_desc")
+    done
+    # An empty array under set -u is an error in bash 3.2, hence the :-; the
+    # one empty word that yields is fewer than a triple and is skipped.
+    emit_tools_function "${_tools_rows[@]:-}"
+    unset _form _cask _cmd _desc _tools_rows
+    echo
+    cat <<'WORKFLOW'
 # Workflow pickers: fzf over git branches, stashes, processes and the tools
 # list. Each one only picks; what runs afterwards is an ordinary git or kill
 # command, printed or in the history, so nothing happens that you cannot read.
@@ -2772,48 +2867,39 @@ if (( $+commands[yazi] )); then
   }
 fi
 WORKFLOW
-      echo
-      echo 'command -v gmake  >/dev/null && alias make="gmake"'
-      echo
-      echo '[ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH"'
-      echo
-      # mise activate below covers interactive shells, PATH and JAVA_HOME
-      # included. The shims directory covers what never sources this file:
-      # a non-interactive `ssh host command`, a cron job, a Makefile an IDE
-      # runs. Activation takes precedence where both apply.
-      # `go install` and the VS Code Go extension drop gopls, dlv and
-      # staticcheck in GOPATH/bin, which is ~/go/bin unless GOPATH says
-      # otherwise. Nothing else puts it on PATH.
-      echo '[ -d "$HOME/go/bin" ] && export PATH="$HOME/go/bin:$PATH"'
-      echo
-      echo '_mise_shims="${XDG_DATA_HOME:-$HOME/.local/share}/mise/shims"'
-      echo '[ -d "$_mise_shims" ] && export PATH="$PATH:$_mise_shims"'
-      echo 'unset _mise_shims'
-      echo
-      echo 'command -v mise >/dev/null && eval "$(mise activate zsh)"'
-      # mise has no carapace completer; its own script is small and asks mise itself.
-      echo 'command -v mise >/dev/null && eval "$(mise completion zsh)"'
-    } > "$NEW_FRAGMENT"
+    echo
+    echo 'command -v gmake  >/dev/null && alias make="gmake"'
+    echo
+    echo '[ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH"'
+    echo
+    # mise activate below covers interactive shells, PATH and JAVA_HOME
+    # included. The shims directory covers what never sources this file:
+    # a non-interactive `ssh host command`, a cron job, a Makefile an IDE
+    # runs. Activation takes precedence where both apply.
+    # `go install` and the VS Code Go extension drop gopls, dlv and
+    # staticcheck in GOPATH/bin, which is ~/go/bin unless GOPATH says
+    # otherwise. Nothing else puts it on PATH.
+    echo '[ -d "$HOME/go/bin" ] && export PATH="$HOME/go/bin:$PATH"'
+    echo
+    echo '_mise_shims="${XDG_DATA_HOME:-$HOME/.local/share}/mise/shims"'
+    echo '[ -d "$_mise_shims" ] && export PATH="$PATH:$_mise_shims"'
+    echo 'unset _mise_shims'
+    echo
+    echo 'command -v mise >/dev/null && eval "$(mise activate zsh)"'
+    # mise has no carapace completer; its own script is small and asks mise itself.
+    echo 'command -v mise >/dev/null && eval "$(mise completion zsh)"'
+  } > "$NEW_FRAGMENT"
 
-    if [[ -f "$FRAGMENT" ]] && cmp -s "$NEW_FRAGMENT" "$FRAGMENT"; then
-      rm -f "$NEW_FRAGMENT"
-      result 'current' 'zsh config' "$FRAGMENT"
-    elif [[ -f "$FRAGMENT" ]]; then
-      mv "$NEW_FRAGMENT" "$FRAGMENT"
-      result 'upgraded' 'zsh config' "$FRAGMENT"
-    else
-      mv "$NEW_FRAGMENT" "$FRAGMENT"
-      result 'installed' 'zsh config' "$FRAGMENT"
-    fi
+  commit_staged "$NEW_FRAGMENT" "$FRAGMENT" 'zsh config'
 
-    SOURCE_LINE='[ -f "$HOME/.zshrc.bootstrap" ] && source "$HOME/.zshrc.bootstrap"'
-    if [[ -f "$ZSHRC" ]] && grep -qF '.zshrc.bootstrap' "$ZSHRC"; then
-      result 'current' 'zshrc hook' "$ZSHRC"
-    else
-      printf '\n%s\n' "$SOURCE_LINE" >> "$ZSHRC"
-      result 'installed' 'zshrc hook' "appended to $ZSHRC"
-    fi
-
+  SOURCE_LINE='[ -f "$HOME/.zshrc.bootstrap" ] && source "$HOME/.zshrc.bootstrap"'
+  if [[ -f "$ZSHRC" ]] && grep -qF '.zshrc.bootstrap' "$ZSHRC"; then
+    result 'current' 'zshrc hook' "$ZSHRC"
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    result 'would-install' 'zshrc hook' "append to $ZSHRC"
+  else
+    printf '\n%s\n' "$SOURCE_LINE" >> "$ZSHRC"
+    result 'installed' 'zshrc hook' "appended to $ZSHRC"
   fi
 fi
 
@@ -2858,13 +2944,17 @@ else
   phase 'Prompt config'
   STARSHIP_TOML_DIR="${HOME}/.config"
   STARSHIP_TOML_TARGET="${STARSHIP_TOML_DIR}/starship.toml"
-  if [[ "$DRY_RUN" == "yes" ]]; then
-    result 'would-install' 'starship.toml' "$STARSHIP_TOML_TARGET"
+  if [[ -f "$STARSHIP_TOML_TARGET" ]] && cmp -s "$STARSHIP_TOML_SOURCE" "$STARSHIP_TOML_TARGET"; then
+    result 'current' 'starship.toml' "$STARSHIP_TOML_TARGET"
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    if [[ -f "$STARSHIP_TOML_TARGET" ]]; then
+      result 'would-upgrade' 'starship.toml' "$STARSHIP_TOML_TARGET"
+    else
+      result 'would-install' 'starship.toml' "$STARSHIP_TOML_TARGET"
+    fi
   else
     mkdir -p "$STARSHIP_TOML_DIR"
-    if [[ -f "$STARSHIP_TOML_TARGET" ]] && cmp -s "$STARSHIP_TOML_SOURCE" "$STARSHIP_TOML_TARGET"; then
-      result 'current' 'starship.toml' "$STARSHIP_TOML_TARGET"
-    elif [[ -f "$STARSHIP_TOML_TARGET" ]]; then
+    if [[ -f "$STARSHIP_TOML_TARGET" ]]; then
       cp "$STARSHIP_TOML_SOURCE" "$STARSHIP_TOML_TARGET"
       chmod 0644 "$STARSHIP_TOML_TARGET"
       result 'upgraded' 'starship.toml' "$STARSHIP_TOML_TARGET"
@@ -2881,10 +2971,14 @@ deploy_config() {   # deploy_config <source> <target> <label>
   local src="$1" dst="$2" label="$3"
   if [[ ! -r "$src" ]]; then
     result 'failed' "$label" "not found at $src"
-  elif [[ "$DRY_RUN" == "yes" ]]; then
-    result 'would-install' "$label" "$dst"
   elif [[ -f "$dst" ]] && cmp -s "$src" "$dst"; then
     result 'current' "$label" "$dst"
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    if [[ -f "$dst" ]]; then
+      result 'would-upgrade' "$label" "$dst"
+    else
+      result 'would-install' "$label" "$dst"
+    fi
   else
     local had=no
     [[ -f "$dst" ]] && had=yes
@@ -3090,6 +3184,8 @@ K9S_SOURCE="${SCRIPT_DIR}/../k9s"
 phase 'k9s skin'
 if ! command -v k9s >/dev/null 2>&1; then
   result 'missing' 'k9s skin' 'k9s is not installed'
+elif [[ "$DRY_RUN" == "yes" ]] && ! tool_has_config k9s; then
+  result 'would-install' 'k9s skin' 'catppuccin-mocha.yaml in the skins directory k9s info names'
 elif ! k9s_paths; then
   result 'failed' 'k9s skin' 'k9s info named no config file'
 else
@@ -3113,6 +3209,16 @@ else
   else
     deploy_owned_config "${LAZYGIT_SOURCE}/config.yml" "${_lazygit_dir}/config.yml" 'lazygit config'
   fi
+fi
+
+# lazydocker config - the same shape as lazygit's: the theme is gui.theme in
+# the one config file, so the whole file is the repo's.
+phase 'lazydocker config'
+if ! command -v lazydocker >/dev/null 2>&1; then
+  result 'missing' 'lazydocker config' 'lazydocker is not installed'
+else
+  deploy_owned_config "${SCRIPT_DIR}/../lazydocker/config.yml" \
+                      "$(lazydocker_config_dir)/config.yml" 'lazydocker config'
 fi
 
 # btop theme. There is no btop on Windows - btop4win is a separate port, and
@@ -3348,48 +3454,35 @@ else
   GHOSTTY_DIR="${HOME}/.config/ghostty"
   GHOSTTY_CONF="${GHOSTTY_DIR}/config"
 
-  if [[ "$DRY_RUN" == "yes" ]]; then
-    result 'would-install' 'ghostty config' "$GHOSTTY_CONF"
-  else
-    mkdir -p "$GHOSTTY_DIR"
-    mktemp_tracked NEW_GHOSTTY "${GHOSTTY_CONF}.XXXXXX"
-    chmod 0644 "$NEW_GHOSTTY"
-    {
-      echo
-      echo "scrollback-limit = ${GHOSTTY_SCROLLBACK_BYTES}"
-      echo
-      echo "theme = ${GHOSTTY_THEME}"
-      echo
-      [[ -n "${GHOSTTY_FONT_FAMILY:-}" ]] && echo "font-family = ${GHOSTTY_FONT_FAMILY}"
-      echo "font-size = ${GHOSTTY_FONT_SIZE}"
-      echo
-      echo "macos-option-as-alt = ${GHOSTTY_MACOS_OPTION_AS_ALT}"
-      echo
-      echo "window-save-state = ${GHOSTTY_WINDOW_SAVE_STATE}"
-      echo
-      echo "copy-on-select = ${GHOSTTY_COPY_ON_SELECT}"
-      echo
-      echo "quit-after-last-window-closed = ${GHOSTTY_QUIT_AFTER_LAST_WINDOW}"
-      echo
-      echo "shell-integration-features = ${GHOSTTY_SHELL_INTEGRATION_FEATURES}"
-      echo
-      [[ -n "${GHOSTTY_QUICK_TERMINAL_KEYBIND:-}" ]] && echo "keybind = ${GHOSTTY_QUICK_TERMINAL_KEYBIND}"
-      echo
-      echo "window-padding-x = ${GHOSTTY_WINDOW_PADDING_X}"
-      echo "window-padding-y = ${GHOSTTY_WINDOW_PADDING_Y}"
-    } > "$NEW_GHOSTTY"
+  [[ "$DRY_RUN" == "yes" ]] || mkdir -p "$GHOSTTY_DIR"
+  mktemp_tracked NEW_GHOSTTY "$(stage_template "$GHOSTTY_CONF")"
+  chmod 0644 "$NEW_GHOSTTY"
+  {
+    echo
+    echo "scrollback-limit = ${GHOSTTY_SCROLLBACK_BYTES}"
+    echo
+    echo "theme = ${GHOSTTY_THEME}"
+    echo
+    [[ -n "${GHOSTTY_FONT_FAMILY:-}" ]] && echo "font-family = ${GHOSTTY_FONT_FAMILY}"
+    echo "font-size = ${GHOSTTY_FONT_SIZE}"
+    echo
+    echo "macos-option-as-alt = ${GHOSTTY_MACOS_OPTION_AS_ALT}"
+    echo
+    echo "window-save-state = ${GHOSTTY_WINDOW_SAVE_STATE}"
+    echo
+    echo "copy-on-select = ${GHOSTTY_COPY_ON_SELECT}"
+    echo
+    echo "quit-after-last-window-closed = ${GHOSTTY_QUIT_AFTER_LAST_WINDOW}"
+    echo
+    echo "shell-integration-features = ${GHOSTTY_SHELL_INTEGRATION_FEATURES}"
+    echo
+    [[ -n "${GHOSTTY_QUICK_TERMINAL_KEYBIND:-}" ]] && echo "keybind = ${GHOSTTY_QUICK_TERMINAL_KEYBIND}"
+    echo
+    echo "window-padding-x = ${GHOSTTY_WINDOW_PADDING_X}"
+    echo "window-padding-y = ${GHOSTTY_WINDOW_PADDING_Y}"
+  } > "$NEW_GHOSTTY"
 
-    if [[ -f "$GHOSTTY_CONF" ]] && cmp -s "$NEW_GHOSTTY" "$GHOSTTY_CONF"; then
-      rm -f "$NEW_GHOSTTY"
-      result 'current' 'ghostty config' "$GHOSTTY_CONF"
-    elif [[ -f "$GHOSTTY_CONF" ]]; then
-      mv "$NEW_GHOSTTY" "$GHOSTTY_CONF"
-      result 'upgraded' 'ghostty config' "$GHOSTTY_CONF"
-    else
-      mv "$NEW_GHOSTTY" "$GHOSTTY_CONF"
-      result 'installed' 'ghostty config' "$GHOSTTY_CONF"
-    fi
-  fi
+  commit_staged "$NEW_GHOSTTY" "$GHOSTTY_CONF" 'ghostty config'
 fi
 
 # Schedule
@@ -3510,6 +3603,12 @@ PLIST
       sched_action='would-install'
       [[ -f "$PLIST" ]] && sched_action='would-upgrade'
       result "$sched_action" "$SCHEDULE_LABEL" "daily at $SCHEDULE_TIME"
+    elif [[ "$RUN_SCHEDULED" == "yes" ]]; then
+      # This run is the agent. Reloading it means a bootout, and launchd
+      # answers a bootout with SIGTERM to the job - this script - before the
+      # bootstrap on the next line runs, leaving no agent at all. The plist is
+      # left as it is too, so the next manual run still sees the difference.
+      result 'skipped' "$SCHEDULE_LABEL" 'agent is out of date - a manual run reloads it (a run started by the agent cannot)'
     else
       sched_action='installed'
       [[ -f "$PLIST" ]] && sched_action='upgraded'

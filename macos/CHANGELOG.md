@@ -15,6 +15,58 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.48.0]
+
+### Added
+
+- **Catppuccin Mocha for lazydocker**, from `lazydocker/config.yml` at the repo
+  root - the colours lazygit already uses. As with lazygit, the theme lives in
+  the one config file, so the whole file is the repo's and the first
+  replacement of yours is kept as `config.yml.bak`. lazydocker has no
+  `--print-config-dir`; the path follows its own lookup (`$CONFIG_DIR`, then
+  `~/Library/Application Support/jesseduffield/lazydocker` if it exists, then
+  `~/Library/Application Support/lazydocker`). `--doctor` checks it.
+
+### Changed
+
+- **mpv comes from the homebrew-core formula.** Homebrew disabled the
+  `stolendata-mpv` cask on 2026-09-01 (it fails the Gatekeeper check), so a new
+  Mac could no longer install it. Remove the old cask with
+  `brew uninstall --cask stolendata-mpv`.
+
+### Removed
+
+- **tmux**, which was installed but never used or configured. An installed
+  tmux is left alone; remove it by hand if you like.
+
+### Fixed
+
+- **The nightly run could unload its own agent.** When the plist on disk
+  differed from the one it would write - after a `git pull` or a manifest
+  change - the run started by launchd did `launchctl bootout` on itself, was
+  killed by the SIGTERM, and never reached the `bootstrap` that reloads it: no
+  agent at all until a manual run. A run started by the agent now leaves the
+  agent alone and says it is out of date.
+- **HELD casks are no longer upgraded.** A bare `brew upgrade --cask` moved
+  rider and datagrip under Toolbox's feet; upgrades now name what they upgrade,
+  minus HELD.
+- **An app installed by something else is recognised again.** The check read
+  the first `.app` string in brew's multi-line JSON - a path inside the
+  download such as `artifacts/osx-arm64/ILSpy.app` - instead of the cask's
+  install target, so the install then failed with "already an App at".
+- **`--select` sees formulae listed under an alias** (`python3`, `sqlite3`)
+  as installed, so unticking one offers its removal.
+- **A broken mise config no longer ends the run silently** at the mise phase.
+- **A dry run reports a config that is already identical as current**, the
+  generated zsh, zshenv and Ghostty files included, and no longer asks about
+  packages new to the manifest.
+- **`--doctor` changes nothing and follows the `--select` pick**: glow, lnav
+  and k9s are no longer run (each creates a config on first run) when they
+  have none yet, and a package you unticked is noted as deselected rather than
+  reported broken.
+- `--groups` without a value says so instead of exiting 1 silently, and the
+  rerun after an update no longer needs the script's exec bit.
+
 ## [1.47.0]
 
 ### Added

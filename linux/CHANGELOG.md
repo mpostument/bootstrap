@@ -15,6 +15,58 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.45.0]
+
+### Added
+
+- **Catppuccin Mocha for lazydocker**, from `lazydocker/config.yml` at the repo
+  root - the colours lazygit already uses. As with lazygit, the theme lives in
+  the one config file, so the whole file is the repo's and the first
+  replacement of yours is kept as `config.yml.bak`. lazydocker has no
+  `--print-config-dir`; the path follows its own lookup (`$CONFIG_DIR`, then
+  `~/.config/jesseduffield/lazydocker` if it exists, then
+  `~/.config/lazydocker`). `--doctor` checks it.
+
+### Removed
+
+- **tmux**, which was installed but never used or configured. An installed
+  tmux is left alone; remove it by hand if you like.
+
+### Fixed
+
+- **The timer died on its first line every night**, with `HOME: unbound
+  variable` in the journal and nothing recorded. A system unit without `User=`
+  gets no `HOME`, and the script read it under `set -u` before the `EXIT` trap
+  existed, so `--status` kept showing the last manual run. `HOME` now falls
+  back to the account's passwd entry. `--doctor` also reports a failed last
+  run of the service, not only whether the timer is active.
+- **Flathub is added when it is missing.** Debian and Ubuntu ship flatpak with
+  no remotes, so every flatpak failed with "No remote refs found for
+  'flathub'" until someone added it by hand.
+- **A changed conffile no longer stops apt.** dpkg's question went to
+  `/dev/null`: an interactive run hung on it, and the timer failed with the
+  package left half-configured. apt now keeps the local copy
+  (`--force-confdef --force-confold`) and runs with
+  `DEBIAN_FRONTEND=noninteractive`.
+- **Ubuntu and Debian derivatives** (Mint, Pop!_OS, LMDE) use their base's
+  `UBUNTU_CODENAME` or `ID_LIKE` for the vendor repos; Docker's and Azure CLI's
+  URLs were 404s under the derivative's own ID.
+- **`--doctor` changes nothing and follows the `--select` pick**: it no longer
+  refreshes the apt index through sudo, and a package you unticked is noted as
+  deselected rather than reported broken.
+- **`--select` no longer offers packages that are already removed**: dpkg's
+  `rc` rows (removed, config files left) read as installed.
+- **A Meslo Nerd Font installed system-wide is found**: `fc-list | grep -q`
+  failed under `pipefail` when grep stopped early.
+- **A release whose binary reports an older number** (sd v1.1.0 says 1.0.0) is
+  no longer downloaded again on every run.
+- **A broken mise config no longer ends the run silently**, `--groups` without
+  a value says so, a dry run no longer asks about packages new to the
+  manifest, an untracked file no longer blocks the update, and a dry run
+  reports a config that is already identical as current.
+- README: `flatpak uninstall --unused` is not previewed, and the repository
+  packages are not in the `--select` menu - it said otherwise for both.
+
 ## [1.44.0]
 
 ### Added

@@ -21,18 +21,24 @@ try {
 # ListView by default: the full dropdown of matches. F2 flips to InlineView
 # (a single greyed suggestion on the current line, like zsh/bash autosuggestions)
 # on demand.
-Set-PSReadLineOption -PredictionViewStyle ListView
+#
+# PSReadLine 2.0, the one Windows PowerShell ships, has no prediction view,
+# InlinePrediction colour or SwitchPredictionView; until bootstrap installs a
+# newer one, each of those would error at every shell start.
+$psrlPredicts = [bool](Get-Module PSReadLine | Where-Object { $_.Version -ge [version]'2.2.0' })
+if ($psrlPredicts) { Set-PSReadLineOption -PredictionViewStyle ListView }
 Set-PSReadLineOption -EditMode Windows
 Set-PSReadLineOption -BellStyle None
 Set-PSReadLineOption -HistoryNoDuplicates
 Set-PSReadLineOption -HistorySearchCursorMovesToEnd
 Set-PSReadLineOption -MaximumHistoryCount 1000000
-Set-PSReadLineOption -Colors @{ InlinePrediction = '#5A5A5A' }
+if ($psrlPredicts) { Set-PSReadLineOption -Colors @{ InlinePrediction = '#5A5A5A' } }
 
 Set-PSReadLineKeyHandler -Key UpArrow -Function HistorySearchBackward
 Set-PSReadLineKeyHandler -Key DownArrow -Function HistorySearchForward
 # F2: flip to InlineView on demand.
-Set-PSReadLineKeyHandler -Key F2 -Function SwitchPredictionView
+if ($psrlPredicts) { Set-PSReadLineKeyHandler -Key F2 -Function SwitchPredictionView }
+Remove-Variable psrlPredicts
 Set-PSReadLineKeyHandler -Key Tab -Function MenuComplete
 Set-PSReadLineKeyHandler -Key Ctrl+RightArrow -Function ForwardWord
 Set-PSReadLineKeyHandler -Key Ctrl+LeftArrow -Function BackwardWord

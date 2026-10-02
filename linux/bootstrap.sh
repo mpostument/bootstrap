@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.44.0'
+BOOTSTRAP_VERSION='1.45.0'
 BOOTSTRAP_PLATFORM='linux'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -42,9 +42,17 @@ RUN_RECORDING=no
 # after the upgrades.
 RUN_CHANGED=''
 SNAP_BEFORE=''
+# A system unit without User= gets no HOME - systemd sets it only alongside a
+# user, and bash only for a login shell - so under set -u the timer died on
+# the next line, before the EXIT trap that records a run existed.
+if [[ -z "${HOME:-}" ]]; then
+  HOME="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6)"
+  export HOME="${HOME:-/root}"
+fi
 STATE_SYSTEM="/var/lib/bootstrap-linux/last-run"
 STATE_USER="${XDG_STATE_HOME:-${HOME}/.local/state}/bootstrap-linux/last-run"
 FAILED_IDS=()
+RELEASE_SAME_BUILD="${XDG_STATE_HOME:-${HOME}/.local/state}/bootstrap-linux/release-same-build"
 
 # Output
 
@@ -535,7 +543,7 @@ apply_archive_update() {   # apply_archive_update <tag> <owner/repo> <install ro
 # old process must not carry on over a file that just changed underneath it.
 apply_bootstrap_update() {   # apply_bootstrap_update <tag>
   local tag="$1" why=''
-  if [[ -n "$(git -C "$SCRIPT_DIR" status --porcelain 2>/dev/null)" ]]; then
+  if [[ -n "$(git -C "$SCRIPT_DIR" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
     why='the checkout has local changes - commit or stash them, then git pull'
   elif ! git -C "$SCRIPT_DIR" fetch --quiet --tags origin 2>/dev/null; then
     why='git fetch failed'
@@ -667,7 +675,8 @@ while [[ $# -gt 0 ]]; do
     --scheduled)     RUN_SCHEDULED=yes; ASSUME_YES=yes ;;
     --gui)           GUI_OVERRIDE=yes ;;
     --no-gui)        GUI_OVERRIDE=no ;;
-    --groups)        shift; ONLY_GROUPS="${1:-}" ;;
+    --groups)        [[ $# -ge 2 ]] || die '--groups needs a value (try --list-groups)'
+                     shift; ONLY_GROUPS="$1" ;;
     --groups=*)      ONLY_GROUPS="${1#*=}" ;;
     --list-groups)   LIST_GROUPS=yes ;;
     --list-packages) LIST_PACKAGES=yes ;;
@@ -819,6 +828,15 @@ item_wanted() {   # item_wanted <package>
     in_list "$1" ${SEL_KNOWN[@]+"${SEL_KNOWN[@]}"} || return 0
   fi
   return 1
+}
+
+# Unticked on purpose: in the pick and answered no. A package nobody has been
+# asked about yet is not, so the doctor still expects it.
+item_unticked() {   # item_unticked <package>
+  is_required "$1" && return 1
+  [[ "$SEL_EXISTS" == yes ]] || return 1
+  in_list "$1" ${SEL_KNOWN[@]+"${SEL_KNOWN[@]}"} || return 1
+  ! in_list "$1" ${SEL_SELECTED[@]+"${SEL_SELECTED[@]}"}
 }
 
 deselected_reason() {   # deselected_reason <package>
@@ -1014,7 +1032,7 @@ uninstall_item() {   # uninstall_item <catalog index>
       extra="$(apt-get -s remove "$id" 2>/dev/null | awk -v n="$id" '/^Remv / && $2 != n { printf "%s ", $2 }' || true)"
       if [[ -n "$extra" ]]; then
         ok=no why="apt would also remove: ${extra% }"
-      elif ! run_priv apt-get remove -y -qq "$id" >/dev/null 2>&1; then
+      elif ! run_priv env DEBIAN_FRONTEND=noninteractive apt-get remove -y -qq "$id" >/dev/null 2>&1; then
         ok=no why='apt-get remove failed'
       fi ;;
     flatpak)
@@ -1199,7 +1217,7 @@ emit_tools_function() {   # emit_tools_function [<package> <command> <descriptio
 DOCTOR_OK=0
 DOCTOR_BROKEN=0
 DOCTOR_PROBE_OUT=''
-declare -A DOCTOR_CMD=() DOCTOR_ORIGIN=()
+declare -A DOCTOR_CMD=() DOCTOR_ORIGIN=() DOCTOR_PKG=()
 
 doctor_ok()     { DOCTOR_OK=$((DOCTOR_OK + 1)); result 'ok' "$1" "${2:-}"; }
 doctor_broken() { DOCTOR_BROKEN=$((DOCTOR_BROKEN + 1)); result 'broken' "$1" "${2:-}"; }
@@ -1235,8 +1253,10 @@ doctor_load_tools() {
     DOCTOR_CMD["$can"]="$cmd"
     if [[ "$lx" == '@releases' ]]; then
       DOCTOR_ORIGIN["$can"]='release'
+      DOCTOR_PKG["$can"]="${can//-/_}"
     else
       DOCTOR_ORIGIN["$can"]='apt'
+      DOCTOR_PKG["$can"]="$lx"
     fi
   done < "$SCRIPT_DIR/../tools/cli-parity.conf"
   return 0
@@ -1290,6 +1310,10 @@ doctor_check_tools() {
   bindir="${RELEASE_BIN_DIR:-$HOME/.local/bin}"
   for can in $(printf '%s\n' "${!DOCTOR_CMD[@]}" | sort); do
     cmd="${DOCTOR_CMD[$can]}"
+    if item_unticked "${DOCTOR_PKG[$can]}"; then
+      doctor_note "$cmd" "deselected in the --select pick"
+      continue
+    fi
     path="$(probe_get "resolve:$cmd")"
     if [[ "${DOCTOR_ORIGIN[$can]}" == 'release' ]]; then
       want="${bindir}/${cmd}"
@@ -1609,6 +1633,21 @@ doctor_config() {   # doctor_config <label> <repo copy> <deployed path>
   fi
 }
 
+# Where lazydocker reads config.yml. It has no --print-config-dir, so this is
+# its own lookup (pkg/config/app_config.go): $CONFIG_DIR wins, then the legacy
+# jesseduffield/lazydocker directory if one exists, then lazydocker/ under the
+# config home - XDG_CONFIG_HOME, or ~/.config.
+lazydocker_config_dir() {
+  local home="${XDG_CONFIG_HOME:-$HOME/.config}"
+  if [[ -n "${CONFIG_DIR:-}" ]]; then
+    printf '%s\n' "$CONFIG_DIR"
+  elif [[ -d "${home}/jesseduffield/lazydocker" ]]; then
+    printf '%s\n' "${home}/jesseduffield/lazydocker"
+  else
+    printf '%s\n' "${home}/lazydocker"
+  fi
+}
+
 # The three themes the bootstrap activates rather than owns. The failure worth
 # catching here is a theme file deployed with nothing naming it: every install
 # step says ok, and the colours never change.
@@ -1639,6 +1678,11 @@ doctor_check_themes() {
       doctor_config 'lazygit config' "${SCRIPT_DIR}/../lazygit/config.yml" \
                     "${lazygit_dir}/config.yml"
     fi
+  fi
+
+  if command -v lazydocker >/dev/null 2>&1; then
+    doctor_config 'lazydocker config' "${SCRIPT_DIR}/../lazydocker/config.yml" \
+                  "$(lazydocker_config_dir)/config.yml"
   fi
 
   if command -v btop >/dev/null 2>&1; then
@@ -1750,13 +1794,17 @@ doctor_check_configs() {
   doctor_config 'starship.toml' "${SCRIPT_DIR}/../starship.toml" "${HOME}/.config/starship.toml"
   doctor_config 'atuin config' "${SCRIPT_DIR}/../atuin/config.toml" "${HOME}/.config/atuin/config.toml"
 
-  if bat_cfg="$(bat --config-dir 2>/dev/null)" && [[ -n "$bat_cfg" ]]; then
+  if item_unticked bat; then
+    doctor_note 'bat config' 'bat is deselected in the --select pick'
+  elif bat_cfg="$(bat --config-dir 2>/dev/null)" && [[ -n "$bat_cfg" ]]; then
     doctor_config 'bat config' "${SCRIPT_DIR}/../bat/config" "${bat_cfg}/config"
   else
     doctor_broken 'bat config' 'bat is not installed, so nothing reads the theme'
   fi
 
-  if command -v tldr >/dev/null 2>&1; then
+  if item_unticked tealdeer; then
+    doctor_note 'tealdeer config' 'tealdeer is deselected in the --select pick'
+  elif command -v tldr >/dev/null 2>&1; then
     doctor_config 'tealdeer config' "${SCRIPT_DIR}/../tealdeer/config.toml" \
                   "${XDG_CONFIG_HOME:-$HOME/.config}/tealdeer/config.toml"
   else
@@ -1781,6 +1829,10 @@ doctor_check_schedule() {
     doctor_broken 'systemd timer' "no ${unit}.timer - the daily run has never been installed"
   elif systemctl is-active --quiet "${unit}.timer" 2>/dev/null; then
     doctor_ok 'systemd timer' "${unit}.timer is active"
+    # An active timer says nothing about whether the run it starts works.
+    if systemctl is-failed --quiet "${unit}.service" 2>/dev/null; then
+      doctor_broken 'last timer run' "${unit}.service failed - journalctl -u ${unit}"
+    fi
   else
     doctor_broken 'systemd timer' "${unit}.timer exists but is not active"
   fi
@@ -1837,7 +1889,10 @@ run_doctor() {
 # `set -e` and a pipeline, is exactly what a non-zero exit here would do.
 pkg_snapshot() {   # pkg_snapshot <file>
   {
-    dpkg-query -W -f '${Package} ${Version}\n' 2>/dev/null || true
+    # Installed only: -W also lists what was removed with its config files
+    # left (status rc), and the menu then offered to remove it again.
+    dpkg-query -W -f '${db:Status-Abbrev} ${Package} ${Version}\n' 2>/dev/null \
+      | awk '$1 == "ii" { print $2, $3 }' || true
     if command -v flatpak >/dev/null 2>&1; then
       flatpak list --columns=application,version 2>/dev/null || true
     fi
@@ -1925,10 +1980,15 @@ fi
 
 [[ "$DRY_RUN" == "yes" ]] && printf '  %-16s%s%s%s\n' 'mode' "$C_BLUE" 'dry run - nothing will change' "$C_RESET"
 
-APT_OPTS=()
+# A changed conffile makes dpkg ask, and with the output in /dev/null that
+# question is invisible: an interactive run hangs on it, and one without a
+# terminal (the timer) fails and leaves the package half-configured. Keep the
+# local copy - the answer an admin who edited it would give - and let debconf
+# take its defaults rather than open a dialog.
+APT_OPTS=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 [[ "$ASSUME_YES" == "yes" ]] && APT_OPTS+=(-y)
 
-if [[ "$DRY_RUN" == "no" ]]; then
+if [[ "$DRY_RUN" == "no" && "$DOCTOR_ONLY" == "no" ]]; then
   printf '  %-16s' 'apt index'
   if run_priv apt-get update -qq >/dev/null 2>&1; then
     printf '%supdated%s\n' "$C_DIM" "$C_RESET"
@@ -1945,6 +2005,7 @@ for entry in "${HELD[@]:-}"; do
 done
 
 if [[ "$DOCTOR_ONLY" == "yes" ]]; then
+  read_selection
   run_doctor
   exit $?
 fi
@@ -1983,12 +2044,15 @@ install_apt() {
     result 'would-install' "$pkg"
     return
   fi
-  if run_priv apt-get install "${APT_OPTS[@]}" -qq "$pkg" >/dev/null 2>&1; then
+  if run_priv env DEBIAN_FRONTEND=noninteractive apt-get install "${APT_OPTS[@]}" -qq "$pkg" >/dev/null 2>&1; then
     result 'installed' "$pkg" "$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null || true)"
   else
     result 'failed' "$pkg" 'apt-get install failed'
   fi
 }
+
+FLATHUB_CHECKED=no
+FLATHUB_REPO_URL='https://dl.flathub.org/repo/flathub.flatpakrepo'
 
 install_flatpak() {
   local ref="$1"
@@ -2003,6 +2067,21 @@ install_flatpak() {
       result 'current' "$ref"
     fi
     return
+  fi
+  # Debian and Ubuntu ship flatpak with no remotes at all, so every install
+  # below failed with "No remote refs found for 'flathub'" until somebody
+  # added it by hand. Added once per run, before the first install needs it.
+  if [[ "$FLATHUB_CHECKED" == no ]]; then
+    FLATHUB_CHECKED=yes
+    if ! flatpak remotes --columns=name 2>/dev/null | grep -qx flathub; then
+      if [[ "$DRY_RUN" == "yes" ]]; then
+        result 'would-install' 'flathub remote' "$FLATHUB_REPO_URL"
+      elif run_priv flatpak remote-add --if-not-exists flathub "$FLATHUB_REPO_URL" >/dev/null 2>&1; then
+        result 'installed' 'flathub remote' "$FLATHUB_REPO_URL"
+      else
+        result 'failed' 'flathub remote' "flatpak remote-add $FLATHUB_REPO_URL"
+      fi
+    fi
   fi
   # Flathub builds some apps for x86_64 only - Blender, Zoom, Bruno - and on
   # arm64 their install failed like a real error. Missing on this arch but
@@ -2192,7 +2271,7 @@ fi
 # newcomers are left out without asking. The timer asks nothing and records
 # nothing, so the next manual run still asks.
 
-if [[ "$SEL_EXISTS" == yes && "$RUN_INTERACTIVE" == yes && -r /dev/tty ]]; then
+if [[ "$SEL_EXISTS" == yes && "$RUN_INTERACTIVE" == yes && "$DRY_RUN" == no && -r /dev/tty ]]; then
   asked=no
   for (( i = 0; i < ${#CAT_ID[@]}; i++ )); do
     id="${CAT_ID[$i]}"
@@ -2229,6 +2308,22 @@ esac
 OS_ID="$(. /etc/os-release 2>/dev/null && echo "${ID:-debian}")"
 OS_CODENAME="$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-stable}")"
 OS_VERSION_ID="$(. /etc/os-release 2>/dev/null && echo "${VERSION_ID:-}")"
+# A derivative (Mint, Pop!_OS, elementary) has an ID of its own, and the
+# vendors' repos only know ubuntu and debian - download.docker.com/linux/
+# linuxmint is a 404. Its base is in UBUNTU_CODENAME, or ID_LIKE. Its own
+# VERSION_ID says nothing about that base, so it is dropped.
+if [[ "$OS_ID" != ubuntu && "$OS_ID" != debian ]]; then
+  _base_codename="$(. /etc/os-release 2>/dev/null && echo "${UBUNTU_CODENAME:-}")"
+  _like="$(. /etc/os-release 2>/dev/null && echo " ${ID_LIKE:-} ")"
+  if [[ -n "$_base_codename" ]]; then
+    OS_ID=ubuntu OS_CODENAME="$_base_codename" OS_VERSION_ID=''
+  elif [[ "$_like" == *" debian "* ]]; then
+    _base_codename="$(. /etc/os-release 2>/dev/null && echo "${DEBIAN_CODENAME:-}")"
+    OS_ID=debian OS_VERSION_ID=''
+    [[ -n "$_base_codename" ]] && OS_CODENAME="$_base_codename"
+  fi
+  unset _base_codename _like
+fi
 
 # --skip-repos is for a host where something else already owns these
 # repositories. Two definitions of one repo with different Signed-By keyrings
@@ -2335,7 +2430,7 @@ else
   pending="$(apt_pending_count)"
   if [[ "$pending" -eq 0 ]]; then
     result 'current' 'apt packages' 'nothing pending'
-  elif run_priv apt-get upgrade "${APT_OPTS[@]}" -qq >/dev/null 2>&1; then
+  elif run_priv env DEBIAN_FRONTEND=noninteractive apt-get upgrade "${APT_OPTS[@]}" -qq >/dev/null 2>&1; then
     result 'upgraded' 'apt packages' "$pending package(s)"
   else
     result 'failed' 'apt packages' 'apt-get upgrade failed'
@@ -2614,6 +2709,12 @@ install_release() {
     result 'current' "$name" "$have"
     return
   fi
+  # A release whose binary reports another number (sd v1.1.0 says 1.0.0) was
+  # downloaded again every run; once fetched and found the same, it is noted.
+  if [[ -n "$have" && -r "$RELEASE_SAME_BUILD" ]] && grep -qxF "$name $tag $have" "$RELEASE_SAME_BUILD"; then
+    result 'current' "$name" "$have (release $tag carries the same build)"
+    return
+  fi
 
   if [[ "$DRY_RUN" == "yes" ]]; then
     if [[ -n "$have" ]]; then
@@ -2653,6 +2754,9 @@ install_release() {
       result 'installed' "$name" "${now:-$want}"
     elif [[ "$now" == "$have" ]]; then
       result 'current' "$name" "$have (release $tag carries the same build)"
+      mkdir -p "$(dirname "$RELEASE_SAME_BUILD")"
+      { grep -v "^${name} " "$RELEASE_SAME_BUILD" 2>/dev/null || true; echo "$name $tag $have"; } \
+        > "$RELEASE_SAME_BUILD.tmp" && mv "$RELEASE_SAME_BUILD.tmp" "$RELEASE_SAME_BUILD"
     else
       result 'upgraded' "$name" "$have -> ${now:-$want}"
     fi
@@ -2742,7 +2846,7 @@ if [[ "${GHOSTTY_ENABLED:-no}" == "yes" && -n "${GHOSTTY_DEB_REPO:-}" ]]; then
   ghostty_have="$(dpkg-query -W -f='${db:Status-Abbrev}|${Version}' ghostty 2>/dev/null || true)"
   if [[ "$ghostty_have" == ii* ]]; then ghostty_have="${ghostty_have#*|}"; else ghostty_have=""; fi
   case "$OS_ID" in
-    ubuntu) ghostty_suffix="${DPKG_ARCH}_${OS_VERSION_ID}" ;;
+    ubuntu) ghostty_suffix="${OS_VERSION_ID:+${DPKG_ARCH}_${OS_VERSION_ID}}" ;;
     debian) ghostty_suffix="${DPKG_ARCH}_${OS_CODENAME}" ;;
     *)      ghostty_suffix="" ;;
   esac
@@ -2779,7 +2883,7 @@ if [[ "${GHOSTTY_ENABLED:-no}" == "yes" && -n "${GHOSTTY_DEB_REPO:-}" ]]; then
       chmod 0755 "$ghostty_tmp"
       if curl -fsSL -o "$ghostty_tmp/ghostty.deb" "$ghostty_url" \
          && chmod 0644 "$ghostty_tmp/ghostty.deb" \
-         && run_priv apt-get install "${APT_OPTS[@]}" -qq "$ghostty_tmp/ghostty.deb" >/dev/null 2>&1; then
+         && run_priv env DEBIAN_FRONTEND=noninteractive apt-get install "${APT_OPTS[@]}" -qq "$ghostty_tmp/ghostty.deb" >/dev/null 2>&1; then
         if [[ -n "$ghostty_have" ]]; then
           result 'upgraded' 'ghostty' "$ghostty_have -> $ghostty_want"
         else
@@ -2850,7 +2954,9 @@ else
 
   font_present=no
   if command -v fc-list >/dev/null 2>&1; then
-    fc-list 2>/dev/null | grep -qi 'MesloLG.*Nerd Font' && font_present=yes
+    # Not a pipe into grep -q: grep stops at the first match, fc-list dies of
+    # SIGPIPE, and under pipefail a font that is there reads as absent.
+    grep -qi 'MesloLG.*Nerd Font' < <(fc-list 2>/dev/null) && font_present=yes
   fi
   if [[ "$font_present" == "no" && -d "$NERD_FONT_DIR" ]]; then
     compgen -G "${NERD_FONT_DIR}/${NERD_FONT_MATCH}*" >/dev/null && font_present=yes
@@ -3030,7 +3136,7 @@ if ! command -v mise >/dev/null 2>&1; then
 elif [[ ! -r "$MISE_TOOLS_FILE" ]]; then
   result 'failed' 'mise runtimes' "not found at $MISE_TOOLS_FILE"
 else
-  _mise_have="$(mise ls -g 2>/dev/null | awk '{print $1}')"
+  _mise_have="$(mise ls -g 2>/dev/null | awk '{print $1}' || true)"
   while IFS= read -r _entry || [[ -n "$_entry" ]]; do
     _entry="${_entry%%#*}"
     _entry="$(printf '%s' "$_entry" | tr -d '[:space:]')"
@@ -3616,13 +3722,17 @@ else
   phase 'Prompt config'
   STARSHIP_TOML_DIR="${HOME}/.config"
   STARSHIP_TOML_TARGET="${STARSHIP_TOML_DIR}/starship.toml"
-  if [[ "$DRY_RUN" == "yes" ]]; then
-    result 'would-install' 'starship.toml' "$STARSHIP_TOML_TARGET"
+  if [[ -f "$STARSHIP_TOML_TARGET" ]] && cmp -s "$STARSHIP_TOML_SOURCE" "$STARSHIP_TOML_TARGET"; then
+    result 'current' 'starship.toml' "$STARSHIP_TOML_TARGET"
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    if [[ -f "$STARSHIP_TOML_TARGET" ]]; then
+      result 'would-upgrade' 'starship.toml' "$STARSHIP_TOML_TARGET"
+    else
+      result 'would-install' 'starship.toml' "$STARSHIP_TOML_TARGET"
+    fi
   else
     mkdir -p "$STARSHIP_TOML_DIR"
-    if [[ -f "$STARSHIP_TOML_TARGET" ]] && cmp -s "$STARSHIP_TOML_SOURCE" "$STARSHIP_TOML_TARGET"; then
-      result 'current' 'starship.toml' "$STARSHIP_TOML_TARGET"
-    elif [[ -f "$STARSHIP_TOML_TARGET" ]]; then
+    if [[ -f "$STARSHIP_TOML_TARGET" ]]; then
       cp "$STARSHIP_TOML_SOURCE" "$STARSHIP_TOML_TARGET"
       chmod 0644 "$STARSHIP_TOML_TARGET"
       result 'upgraded' 'starship.toml' "$STARSHIP_TOML_TARGET"
@@ -3639,10 +3749,14 @@ deploy_config() {   # deploy_config <source> <target> <label>
   local src="$1" dst="$2" label="$3"
   if [[ ! -r "$src" ]]; then
     result 'failed' "$label" "not found at $src"
-  elif [[ "$DRY_RUN" == "yes" ]]; then
-    result 'would-install' "$label" "$dst"
   elif [[ -f "$dst" ]] && cmp -s "$src" "$dst"; then
     result 'current' "$label" "$dst"
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    if [[ -f "$dst" ]]; then
+      result 'would-upgrade' "$label" "$dst"
+    else
+      result 'would-install' "$label" "$dst"
+    fi
   else
     local had=no
     [[ -f "$dst" ]] && had=yes
@@ -3870,6 +3984,16 @@ else
   else
     deploy_owned_config "${LAZYGIT_SOURCE}/config.yml" "${_lazygit_dir}/config.yml" 'lazygit config'
   fi
+fi
+
+# lazydocker config - the same shape as lazygit's: the theme is gui.theme in
+# the one config file, so the whole file is the repo's.
+phase 'lazydocker config'
+if ! command -v lazydocker >/dev/null 2>&1; then
+  result 'missing' 'lazydocker config' 'lazydocker is not installed'
+else
+  deploy_owned_config "${SCRIPT_DIR}/../lazydocker/config.yml" \
+                      "$(lazydocker_config_dir)/config.yml" 'lazydocker config'
 fi
 
 # btop theme. There is no btop on Windows - btop4win is a separate port, and
@@ -4161,7 +4285,7 @@ else
   mktemp_tracked NEW_SERVICE
   {
     echo '[Unit]'
-    echo "Description=Runs $SCRIPT_DIR/bootstrap.sh unattended, taking package and script updates"
+    echo "Description=Runs $SCRIPT_DIR/bootstrap.sh unattended, taking package updates"
     echo
     echo '[Service]'
     echo 'Type=oneshot'

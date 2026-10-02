@@ -20,6 +20,44 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.52.0]
+
+### Added
+
+- **Catppuccin Mocha for lazydocker**, from `lazydocker/config.yml` at the repo
+  root - the colours lazygit already uses. As with lazygit, the theme lives in
+  the one config file, so the whole file is the repo's and the first
+  replacement of yours is kept as `config.yml.bak`. lazydocker has no
+  `--print-config-dir`; the path follows its own lookup (`$env:CONFIG_DIR`,
+  then `%APPDATA%\jesseduffield\lazydocker` if it exists, then
+  `%APPDATA%\lazydocker`). `-Doctor` checks it.
+
+### Fixed
+
+- **The daily task read as attended**, so it could sit on a prompt at 04:20
+  until the two-hour limit killed it: the update offer, the first-pick menu, or
+  a package new to the manifest. Its `Tee-Object` is a PowerShell pipeline, not
+  a redirect, and an Interactive-logon task has a console of its own. The task
+  is now unattended because it says `-Scheduled`, and it runs with
+  `-NonInteractive`, so a stray prompt fails instead of waiting. Failure
+  notifications and the run record's `*` mark work for it for the same reason.
+- **A task registered before `-Scheduled`** is recognised by its command line,
+  so its first run after an update no longer installs packages nobody
+  confirmed. `-Doctor` notes such a task.
+- **An un-elevated uninstall that failed aborted `-Select`**: winget's HRESULT
+  exit codes overflowed an `[int]` cast.
+- **`-Doctor`'s probe under Windows PowerShell and pwsh before 7.3** goes
+  through `-EncodedCommand`; its embedded quotes were stripped on the way to
+  the child.
+- **The mise phase kept `%VAR%` entries in the user PATH**: it read the value
+  expanded and wrote it back as a plain string.
+- **Windows PowerShell's module step no longer waits on an invisible NuGet
+  prompt**: the provider is installed first, and the child runs
+  `-NonInteractive`.
+- **The profile no longer errors on PSReadLine 2.0**, the one Windows
+  PowerShell ships: the prediction view, its colour and F2 need 2.2.
+- **The rerun after an update** returns its own exit code and is recorded once.
+
 ## [1.51.0]
 
 ### Added

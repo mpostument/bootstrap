@@ -350,7 +350,9 @@ DRIVER
   {
     echo 'set -euo pipefail'
     cat <<'FAKE_DPKG'
-dpkg-query() { printf 'libc6 2.41-1\nzsh 5.9-1\n'; }
+# Status-Abbrev first, as the snapshot asks: cron was removed with its
+# config files left (rc), and must not read as installed.
+dpkg-query() { printf 'ii  libc6 2.41-1\nrc  cron 3.0pl1-162\nii  zsh 5.9-1\n'; }
 FAKE_DPKG
     extract_func "${ROOT}/linux/bootstrap.sh" pkg_snapshot
     cat <<'DRIVER'
@@ -360,7 +362,7 @@ DRIVER
   } > "$TMP/snap-linux.sh"
   is 'linux: a machine with no flatpak is survivable' 'survived rc=0' \
      "$(PATH="$TMP/empty:$PATH" bash "$TMP/snap-linux.sh" "$TMP/snap-linux.out" 2>/dev/null)"
-  is 'linux: and dpkg is still recorded' 'libc6 2.41-1 zsh 5.9-1' \
+  is 'linux: and dpkg is still recorded, removed packages left out' 'libc6 2.41-1 zsh 5.9-1' \
      "$(tr '\n' ' ' < "$TMP/snap-linux.out" | sed 's/ $//')"
 fi
 
@@ -398,7 +400,7 @@ DRIVER
   # The Linux loader has to drop the two rows that name no binary of their own.
   {
     printf 'SCRIPT_DIR=%s\n' "${ROOT}/linux"
-    printf 'declare -A DOCTOR_CMD=() DOCTOR_ORIGIN=()\n'
+    printf 'declare -A DOCTOR_CMD=() DOCTOR_ORIGIN=() DOCTOR_PKG=()\n'
     extract_func "${ROOT}/linux/bootstrap.sh" doctor_load_tools
     cat <<'DRIVER'
 doctor_load_tools
@@ -408,8 +410,8 @@ DRIVER
 
   is 'a release binary is expected in ~/.local/bin' 'bat=bat/release' \
      "$(bash "$TMP/cmdmap-linux.sh" bat)"
-  is 'an apt package is expected in /usr/bin' 'tmux=tmux/apt' \
-     "$(bash "$TMP/cmdmap-linux.sh" tmux)"
+  is 'an apt package is expected in /usr/bin' 'tree=tree/apt' \
+     "$(bash "$TMP/cmdmap-linux.sh" tree)"
   is 'cifs-utils names no binary of its own' 'cifs-utils=none/none' \
      "$(bash "$TMP/cmdmap-linux.sh" cifs-utils)"
   is 'nor does exfatprogs' 'exfatprogs=none/none' \
@@ -878,7 +880,7 @@ fi
 # driven here, with the real functions and scratch files.
 
 if section 'theme activation'; then
-  for f in k9s/skins/catppuccin-mocha.yaml lazygit/config.yml btop/themes/catppuccin_mocha.theme; do
+  for f in k9s/skins/catppuccin-mocha.yaml lazygit/config.yml lazydocker/config.yml btop/themes/catppuccin_mocha.theme; do
     [[ -s "${ROOT}/$f" ]] && ok "$f is in the repo" || bad "$f is in the repo" 'a non-empty file' 'missing or empty'
   done
 
@@ -981,10 +983,11 @@ if section 'theme activation'; then
                     || ok '--dry-run writes no config.yaml'
   fi
 
-  # The skin and the lazygit config have to parse, or k9s and lazygit reject
-  # them at startup and the colours silently stay default.
+  # The skin and the lazygit and lazydocker configs have to parse, or k9s,
+  # lazygit and lazydocker reject them at startup and the colours silently stay
+  # default.
   if command -v yq >/dev/null 2>&1; then
-    for f in k9s/skins/catppuccin-mocha.yaml lazygit/config.yml; do
+    for f in k9s/skins/catppuccin-mocha.yaml lazygit/config.yml lazydocker/config.yml; do
       if yq -e '.' "${ROOT}/$f" >/dev/null 2>&1; then ok "$f is valid YAML"
       else bad "$f is valid YAML" 'parses' "$(yq '.' "${ROOT}/$f" 2>&1 | head -1)"; fi
     done

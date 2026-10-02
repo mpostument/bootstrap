@@ -218,8 +218,10 @@ event log otherwise, and `msg.exe` last — Home editions have none of the first
 two. An interactive run is never notified; it printed the failures in red.
 
 Interactive is decided by whether stdout is redirected, the same test the Linux
-and macOS scripts make with `[ -t 1 ]`. The scheduled task pipes through
-`Tee-Object`, so it always reads as unattended.
+and macOS scripts make with `[ -t 1 ]` - except for the scheduled task, which
+says so with `-Scheduled`. Its `Tee-Object` is a PowerShell pipeline, not a
+redirect, so to the console test alone the task looks attended. A task
+registered before `-Scheduled` existed is recognised by its command line.
 
 ## Is it actually in effect?
 

@@ -1,0 +1,20 @@
+# config.yml - lazydocker's config, managed by the bootstrap on every platform.
+#
+# Like lazygit's, lazydocker's colours live in the one config file, under
+# gui.theme, so this whole file is the repo's: a run replaces a copy that has
+# drifted from it, and the first replacement is kept as config.yml.bak.
+# Settings of your own belong here, in the repo, where all three machines get
+# them. Anything not set here keeps lazydocker's default.
+#
+# The palette is Catppuccin Mocha, the same colours lazygit/config.yml uses.
+gui:
+  theme:
+    activeBorderColor:
+      - '#89b4fa'
+      - bold
+    inactiveBorderColor:
+      - '#a6adc8'
+    selectedLineBgColor:
+      - '#313244'
+    optionsTextColor:
+      - '#89b4fa'
