@@ -141,8 +141,9 @@ command` - has nobody to ask and is meant to leave the machine matching the
 manifest, so it installs those newcomers without asking. What you unticked in
 the menu stays out for it too, and it saves nothing, so your next manual run
 still asks about them. The timer tells itself apart by the `--scheduled` flag
-its unit passes; add that flag yourself to get the timer's behaviour from any
-other launcher.
+its unit passes, or - for a unit written before that flag existed - by running
+in the unit's own cgroup; add the flag yourself to get the timer's behaviour
+from any other launcher.
 
 ## The manifest
 

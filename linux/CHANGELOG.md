@@ -15,6 +15,33 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.44.0]
+
+### Added
+
+- **Catppuccin Mocha for eza, glow, lnav, vim and zsh-syntax-highlighting**,
+  from the folders of the same names at the repo root. eza's `theme.yml` and
+  vim's `vimrc` and colour scheme are the repo's (a file of yours already in
+  their place is kept as `.bak`); glow and lnav get the theme file, and their
+  style key is set only while it is unset; the syntax-highlighting styles are
+  sourced just before the plugin. A `~/.vimrc` of yours still wins. `--doctor`
+  checks each one, the highlighting by the style in effect in a login shell.
+- **OrcaSlicer in `creative`, Chrome and Steam in `apps`**, from Flathub, which
+  macOS and Windows already install. Steam is x86_64-only there and reports
+  missing on arm64.
+
+### Changed
+
+- **A unit from before `--scheduled` is recognised anyway**: a run systemd
+  started inside the bootstrap service's own cgroup counts as the timer. 1.43.0
+  let the first run after an update read as automation, and that run installed
+  packages new to the manifest that nobody had confirmed.
+
+### Removed
+
+- **GIMP and Inkscape** from `creative`, and the **`shellcheck`** release
+  binary. Already installed copies are left alone.
+
 ## [1.43.0]
 
 ### Added

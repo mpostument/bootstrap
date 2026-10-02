@@ -1,0 +1,48 @@
+" vimrc - vim's config, managed by the bootstrap on macOS and Linux. There is
+" no vim on Windows: cli-parity.conf says why.
+"
+" Deployed to ~/.vim/vimrc, which vim reads only when there is no ~/.vimrc.
+" A ~/.vimrc of yours therefore wins, and the bootstrap leaves it alone - add
+" `source ~/.vim/vimrc` to it to take this file as a base.
+"
+" Short on purpose: sensible defaults, the Catppuccin Mocha colours starship,
+" ghostty, bat and the rest already use, and nothing that needs a plugin.
+
+" vim's own defaults.vim - syntax, filetype detection, incsearch, mouse, and
+" the cursor put back where you left the file. A user vimrc stops vim loading
+" it, so it is loaded here by hand.
+unlet! skip_defaults_vim
+source $VIMRUNTIME/defaults.vim
+
+set number
+set hidden
+set ignorecase smartcase
+set hlsearch
+set expandtab shiftwidth=4 softtabstop=4
+set splitright splitbelow
+set updatetime=300
+set belloff=all
+
+" Undo that survives closing the file. The directory is created here because
+" vim will not create it itself, and writes no undo file without it.
+if has('persistent_undo')
+  let s:undo = expand('~/.vim/undo')
+  if !isdirectory(s:undo)
+    call mkdir(s:undo, 'p', 0700)
+  endif
+  let &undodir = s:undo
+  set undofile
+endif
+
+" The system clipboard for y and p, where this vim was built with one. The
+" Debian `vim` package is built without it; `vim-gtk3` has it.
+if has('clipboard')
+  set clipboard^=unnamed,unnamedplus
+endif
+
+" Catppuccin Mocha needs 24-bit colour, which ghostty and tmux both pass
+" through. silent! so a vim without the colours file still starts.
+if has('termguicolors')
+  set termguicolors
+endif
+silent! colorscheme catppuccin_mocha

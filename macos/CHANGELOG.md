@@ -15,6 +15,42 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.47.0]
+
+### Added
+
+- **Catppuccin Mocha for eza, glow, lnav, vim and zsh-syntax-highlighting**,
+  from the folders of the same names at the repo root. eza's `theme.yml` and
+  vim's `vimrc` and colour scheme are the repo's (a file of yours already in
+  their place is kept as `.bak`); glow and lnav get the theme file, and their
+  style key is set only while it is unset; the syntax-highlighting styles are
+  sourced just before the plugin. A `~/.vimrc` of yours still wins. `--doctor`
+  checks each one, the highlighting by the style in effect in a login shell.
+- **A `creative` group**, the counterpart of the one on Linux and Windows:
+  Blender, Unity Hub, Clip Studio Paint, Flameshot, OBS, OrcaSlicer and
+  Creality Print. 1.x left it out on purpose; the manifests are now meant to
+  carry the same software wherever a package exists.
+- **Chrome, Telegram, Zoom, mpv, qBittorrent and Steam in `apps`**, which
+  Windows and Linux already install. Zoom and mpv return after 1.4.0 dropped
+  them.
+- **`--select` keeps an unticked formula that something installed still
+  needs**, instead of failing on brew's "Refusing to uninstall". It is listed
+  apart before the confirmation, with who needs it, and marked as a dependency
+  (`brew tab --no-installed-on-request`), so `brew autoremove` takes it once
+  nothing does. Unticking both ends - `deno` and `yt-dlp` - removes the
+  dependent first, so both go.
+
+### Changed
+
+- **An agent plist from before `--scheduled` is recognised anyway**: a run with
+  no terminal whose parent is launchd counts as the agent. 1.46.0 let the first
+  run after an update read as automation, and that run installed packages new
+  to the manifest that nobody had confirmed. `--doctor` notes such a plist.
+
+### Removed
+
+- **`shellcheck`** from `dev`.
+
 ## [1.46.0]
 
 ### Added

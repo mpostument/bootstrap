@@ -20,6 +20,16 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.51.0]
+
+### Added
+
+- **Catppuccin Mocha for eza, glow and lnav**, from the folders of the same
+  names at the repo root, as on Linux and macOS. eza's `theme.yml` is the
+  repo's (a file of yours already there is kept as `.bak`); glow and lnav get
+  the theme file, and their style key is set only while it is unset. There is
+  no vim or zsh here, so their themes are not deployed.
+
 ## [1.50.0]
 
 ### Added

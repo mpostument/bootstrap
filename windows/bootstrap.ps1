@@ -83,7 +83,7 @@ $ErrorActionPreference = 'Stop'
 # The parameters as given, for the rerun after an update.
 $script:BoundParams = @{} + $PSBoundParameters
 
-$script:BootstrapVersion = '1.50.0'
+$script:BootstrapVersion = '1.51.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -102,6 +102,9 @@ $script:CarapaceSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'carapa
 $script:K9sSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'k9s'
 $script:LazygitSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'lazygit'
 $script:YaziSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'yazi'
+$script:EzaSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'eza'
+$script:GlowSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'glow'
+$script:LnavSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'lnav'
 $script:MergeScript = Join-Path $script:ToolRoot 'merge-terminal-settings.ps1'
 $script:MpvSource = Join-Path $script:ToolRoot 'mpv'
 
@@ -792,6 +795,50 @@ function Test-DoctorThemes {
             Add-DoctorNote 'yazi dark flavor' ("{0} - yours, not the repo's" -f $flavor)
         }
     }
+
+    if (Get-Command eza -ErrorAction SilentlyContinue) {
+        Test-DoctorFile -Label 'eza theme' -Source (Join-Path $script:EzaSource 'theme.yml') -Target (Get-EzaThemeFile)
+    }
+
+    if (Get-Command glow -ErrorAction SilentlyContinue) {
+        $glowCfg = Get-GlowConfigFile
+        if (-not $glowCfg) {
+            Add-DoctorBroken 'glow style' 'glow --help named no config file'
+        } else {
+            $glowTheme = Join-Path (Split-Path $glowCfg -Parent) 'catppuccin-mocha.json'
+            Test-DoctorFile -Label 'glow theme' -Source (Join-Path $script:GlowSource 'catppuccin-mocha.json') -Target $glowTheme
+            $style = ''
+            if ((Test-Path -LiteralPath $glowCfg) -and (Get-Command yq -ErrorAction SilentlyContinue)) {
+                $style = (& yq '.style' $glowCfg 2>$null | Select-Object -First 1)
+                if ($null -eq $style -or $style -eq 'null') { $style = '' }
+            }
+            if ($style -eq $glowTheme) {
+                Add-DoctorOk 'glow style' 'catppuccin-mocha.json'
+            } elseif (-not $style -or $style -eq 'auto') {
+                Add-DoctorBroken 'glow style' ('unset in {0} - nothing tells glow to use the theme' -f $glowCfg)
+            } else {
+                Add-DoctorNote 'glow style' ("{0} - yours, not the repo's" -f $style)
+            }
+        }
+    }
+
+    if (Get-Command lnav -ErrorAction SilentlyContinue) {
+        $lnavDir = Get-LnavConfigDir
+        if (-not $lnavDir) {
+            Add-DoctorBroken 'lnav theme' 'lnav -h named no config directory'
+        } else {
+            Test-DoctorFile -Label 'lnav theme' -Source (Join-Path $script:LnavSource 'catppuccin-mocha.json') `
+                -Target (Join-Path $lnavDir 'configs\installed\catppuccin-mocha.json')
+            $theme = Get-LnavTheme
+            if ($theme -eq 'catppuccin-mocha') {
+                Add-DoctorOk 'lnav /ui/theme' 'catppuccin-mocha'
+            } elseif (-not $theme -or $theme -eq 'default') {
+                Add-DoctorBroken 'lnav /ui/theme' 'default - nothing tells lnav to use the theme'
+            } else {
+                Add-DoctorNote 'lnav /ui/theme' ("{0} - yours, not the repo's" -f $theme)
+            }
+        }
+    }
 }
 
 function Test-DoctorConfig {
@@ -1286,11 +1333,15 @@ function Set-YamlKey {
     # The value goes in through strenv rather than a quoted yq expression:
     # PowerShell before 7.3 mangles embedded quotes on their way to a native
     # command, and ConvertTo-NativeArgument is not defined this early.
+    #
+    # -Default is a value that counts as unset: glow writes style "auto" into
+    # the glow.yml it creates, and nobody chose that.
     param(
         [string]$File,
         [string]$Key,
         [string]$Value,
-        [string]$Label
+        [string]$Label,
+        [string]$Default = ''
     )
     if (-not (Get-Command yq -ErrorAction SilentlyContinue)) {
         Add-Result -Group 'shell' -Id $Label -Action 'missing' -Detail 'yq is not installed, so nothing can set the key'
@@ -1301,6 +1352,7 @@ function Set-YamlKey {
         $have = (& yq $Key $File 2>$null | Select-Object -First 1)
         if ($null -eq $have -or $have -eq 'null') { $have = '' }
     }
+    if ($Default -and $have -eq $Default) { $have = '' }
     if ($have -eq $Value) {
         Add-Result -Group 'shell' -Id $Label -Action 'current' -Detail $Value
         return
@@ -1333,6 +1385,77 @@ function Get-YaziConfigHome {
     # Not the XDG path the zsh platforms use - on Windows yazi does not read it.
     if ($env:YAZI_CONFIG_HOME) { return $env:YAZI_CONFIG_HOME }
     return (Join-Path $env:APPDATA 'yazi\config')
+}
+
+function Get-EzaThemeFile {
+    # eza has no key naming a theme: it reads theme.yml whenever the file is
+    # there. EZA_CONFIG_DIR wins, otherwise Rust's config dir, which on Windows
+    # is %APPDATA%.
+    if ($env:EZA_CONFIG_DIR) { return (Join-Path $env:EZA_CONFIG_DIR 'theme.yml') }
+    return (Join-Path $env:APPDATA 'eza\theme.yml')
+}
+
+function Get-GlowConfigFile {
+    # The glow.yml glow reads, as glow names it in the default of its --config
+    # flag. glow names the file only once it exists, and any run creates the
+    # default one - style "auto" and nothing of anybody's - so a first call
+    # that names nothing is followed by a second.
+    foreach ($attempt in 1, 2) {
+        $line = @(& glow --help 2>$null) | Where-Object { $_ -match '--config string.*\(default (.+)\)\s*$' } |
+            Select-Object -First 1
+        if ($line -and $line -match '\(default (.+)\)\s*$') { return $matches[1].Trim() }
+    }
+    return ''
+}
+
+function Get-LnavConfigDir {
+    # Where lnav keeps its config, from lnav -h: the line after the one that
+    # introduces it, behind a folder glyph.
+    $lines = @(& lnav -h 2>&1 | ForEach-Object { "$_" })
+    for ($i = 0; $i -lt $lines.Count - 1; $i++) {
+        if ($lines[$i] -match 'format files are stored in') {
+            return ($lines[$i + 1] -replace '^[^A-Za-z\\/]*', '').Trim()
+        }
+    }
+    return ''
+}
+
+function Get-LnavTheme {
+    # The theme lnav is using, "default" when nobody chose one. Asked of lnav
+    # rather than read from its config.json, which lnav writes itself.
+    $line = @(& lnav -nN -c ':config /ui/theme' 2>$null) | Where-Object { $_ -match '^/ui/theme = "(.*)"' } |
+        Select-Object -First 1
+    if ($line -and $line -match '^/ui/theme = "(.*)"') { return $matches[1] }
+    return ''
+}
+
+function Set-LnavTheme {
+    # The same rule as Set-YamlKey, with lnav as the writer: `:config` saves
+    # its own config.json. "default" is lnav's built-in and counts as unset.
+    # lnav exits 0 even when it rejects a theme, so the result is read back.
+    param([string]$Value)
+    $have = Get-LnavTheme
+    if ($have -eq $Value) {
+        Add-Result -Group 'shell' -Id 'lnav /ui/theme' -Action 'current' -Detail $Value
+        return
+    }
+    if ($have -and $have -ne 'default') {
+        Add-Result -Group 'shell' -Id 'lnav /ui/theme' -Action 'skipped' `
+            -Detail ("yours is {0} - run lnav -nN -c ':config /ui/theme {1}' to switch" -f $have, $Value)
+        return
+    }
+    if (-not $PSCmdlet.ShouldProcess('lnav', "set /ui/theme to $Value")) {
+        Add-Result -Group 'shell' -Id 'lnav /ui/theme' -Action 'would-install' -Detail $Value
+        return
+    }
+    & lnav -nN -c ":config /ui/theme $Value" *> $null
+    $have = Get-LnavTheme
+    if ($have -eq $Value) {
+        Add-Result -Group 'shell' -Id 'lnav /ui/theme' -Action 'installed' -Detail $Value
+    } else {
+        Add-Result -Group 'shell' -Id 'lnav /ui/theme' -Action 'failed' `
+            -Detail ('lnav did not take {0} - still {1}' -f $Value, $(if ($have) { $have } else { 'unset' }))
+    }
 }
 
 function Get-YaziFlavor {
@@ -2675,6 +2798,52 @@ if ($SkipShell) {
         Set-YaziFlavor -File (Join-Path $yaziHome 'theme.toml') -Value 'catppuccin-mocha' -Label 'yazi dark flavor'
     } else {
         Add-Result -Group 'shell' -Id 'yazi flavor' -Action 'missing' -Detail 'yazi is not installed'
+    }
+
+    # eza's theme. There is no key that names it, so theme.yml is the repo's,
+    # as lazygit's config.yml is, and the usual .bak keeps what was there.
+    if (Get-Command eza -ErrorAction SilentlyContinue) {
+        Deploy-ManagedFile -Source (Join-Path $script:EzaSource 'theme.yml') -Target (Get-EzaThemeFile) `
+            -Group 'shell' -Label 'eza theme' -Marker 'managed by the bootstrap'
+    } else {
+        Add-Result -Group 'shell' -Id 'eza theme' -Action 'missing' -Detail 'eza is not installed'
+    }
+
+    # glow's theme and lnav's. The JSON is the repo's; the key naming it is
+    # not, and is set only when unset. -WhatIf asks neither tool anything: any
+    # glow or lnav run, --help included, writes its default config first.
+    if (-not (Get-Command glow -ErrorAction SilentlyContinue)) {
+        Add-Result -Group 'shell' -Id 'glow theme' -Action 'missing' -Detail 'glow is not installed'
+    } elseif ($WhatIfPreference) {
+        Add-Result -Group 'shell' -Id 'glow theme' -Action 'would-install' `
+            -Detail 'catppuccin-mocha.json beside glow.yml, and style set if unset'
+    } else {
+        $glowCfg = Get-GlowConfigFile
+        if (-not $glowCfg) {
+            Add-Result -Group 'shell' -Id 'glow theme' -Action 'failed' -Detail 'glow --help named no config file'
+        } else {
+            $glowTheme = Join-Path (Split-Path $glowCfg -Parent) 'catppuccin-mocha.json'
+            Deploy-ManagedFile -Source (Join-Path $script:GlowSource 'catppuccin-mocha.json') -Target $glowTheme `
+                -Group 'shell' -Label 'glow theme' -Marker 'managed by the bootstrap'
+            Set-YamlKey -File $glowCfg -Key '.style' -Value $glowTheme -Label 'glow style' -Default 'auto'
+        }
+    }
+
+    if (-not (Get-Command lnav -ErrorAction SilentlyContinue)) {
+        Add-Result -Group 'shell' -Id 'lnav theme' -Action 'missing' -Detail 'lnav is not installed'
+    } elseif ($WhatIfPreference) {
+        Add-Result -Group 'shell' -Id 'lnav theme' -Action 'would-install' `
+            -Detail 'catppuccin-mocha.json in configs\installed, and /ui/theme set if default'
+    } else {
+        $lnavDir = Get-LnavConfigDir
+        if (-not $lnavDir) {
+            Add-Result -Group 'shell' -Id 'lnav theme' -Action 'failed' -Detail 'lnav -h named no config directory'
+        } else {
+            Deploy-ManagedFile -Source (Join-Path $script:LnavSource 'catppuccin-mocha.json') `
+                -Target (Join-Path $lnavDir 'configs\installed\catppuccin-mocha.json') `
+                -Group 'shell' -Label 'lnav theme' -Marker 'managed by the bootstrap'
+            Set-LnavTheme -Value 'catppuccin-mocha'
+        }
     }
 
     $editions = @(

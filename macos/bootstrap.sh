@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.46.0'
+BOOTSTRAP_VERSION='1.47.0'
 BOOTSTRAP_PLATFORM='macos'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -62,9 +62,9 @@ result() {
   local action="$1" id="$2" detail="${3:-}" colour=""
   case "$action" in
     installed|upgraded|removed|ok) colour="$C_GREEN" ;;
-    would-install|would-upgrade|would-remove) colour="$C_BLUE" ;;
+    would-install|would-upgrade|would-remove|would-keep) colour="$C_BLUE" ;;
     failed|broken)           colour="$C_RED" ;;
-    missing|held|no-gui)     colour="$C_YELLOW" ;;
+    missing|held|no-gui|kept) colour="$C_YELLOW" ;;
     *)                       colour="$C_DIM" ;;
   esac
   printf '  %s%-14s%s%-42s %s%s%s\n' \
@@ -110,7 +110,7 @@ write_state() {   # write_state <exit-code>
   [[ "$DRY_RUN" == "no" ]] || return 0
 
   finished="$(date +%s)"
-  for action in installed upgraded removed failed missing skipped deselected current present held no-gui; do
+  for action in installed upgraded removed kept failed missing skipped deselected current present held no-gui; do
     count="$(action_count "$action")"
     [[ "$count" -gt 0 ]] && counts="${counts}${counts:+ }${action}=${count}"
   done
@@ -629,6 +629,14 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+# An agent written before --scheduled existed still starts the run, and the
+# plist is only rewritten at the end of it - so that first run would install
+# what nobody confirmed. launchd is the parent of whatever the agent execs; a
+# terminal, ssh or Ansible never is.
+if [[ "$RUN_SCHEDULED" == no && "$RUN_INTERACTIVE" == no && "$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ')" == 1 ]]; then
+  RUN_SCHEDULED=yes
+fi
+
 if [[ "$STATUS_ONLY" == "yes" ]]; then
   print_status
   exit "$STATUS_RC"
@@ -1001,6 +1009,48 @@ uninstall_item() {   # uninstall_item <catalog index>
   return 0
 }
 
+# split_removals - the unticked formulae in to_remove that another installed
+# package still needs go to to_keep, with who needs them in KEEP_WHY: brew
+# refuses to uninstall those. One needed only by something else being removed
+# stays, moved after it, so it goes once nothing needs it.
+split_removals() {
+  local i dep outside needed names=() first=() last=()
+  for i in "${to_remove[@]}"; do names+=("${CAT_ID[$i]##*/}"); done
+  to_keep=() KEEP_WHY=()
+  for i in "${to_remove[@]}"; do
+    if [[ "${CAT_KIND[$i]}" != formula ]]; then first+=("$i"); continue; fi
+    outside='' needed=no
+    while IFS= read -r dep; do
+      [[ -n "$dep" ]] || continue
+      needed=yes
+      in_list "$dep" "${names[@]}" || outside+="${outside:+, }${dep}"
+    done < <("$BREW" uses --installed "${CAT_ID[$i]}" 2>/dev/null || true)
+    if [[ -n "$outside" ]]; then
+      to_keep+=("$i") KEEP_WHY+=("$outside")
+    elif [[ "$needed" == yes ]]; then
+      last+=("$i")
+    else
+      first+=("$i")
+    fi
+  done
+  to_remove=(${first[@]+"${first[@]}"} ${last[@]+"${last[@]}"})
+}
+
+# keep_item - an unticked formula another package needs: marked as a
+# dependency rather than uninstalled, so brew autoremove takes it once nothing
+# needs it any more.
+keep_item() {   # keep_item <catalog index> <who needs it>
+  local id="${CAT_ID[$1]}"
+  if [[ "$DRY_RUN" == yes ]]; then
+    result 'would-keep' "$id" "needed by $2"
+  elif "$BREW" tab --no-installed-on-request --formula "$id" >"$BREW_LOG" 2>&1; then
+    result 'kept' "$id" "needed by $2 - now a dependency, for brew autoremove"
+  else
+    result 'kept' "$id" "needed by $2"
+  fi
+  return 0
+}
+
 # Manifest
 
 REQUIRED=()
@@ -1143,6 +1193,7 @@ print -r -- "bind:up=$(bindkey '^[[A' 2>/dev/null | head -1)"
 print -r -- "alias:cat=${aliases[cat]:-}"
 print -r -- "alias:ls=${aliases[ls]:-}"
 print -r -- "alias:make=${aliases[make]:-}"
+print -r -- "hl:comment=${ZSH_HIGHLIGHT_STYLES[comment]:-}"
 PROBE
   } > "$probe"
 
@@ -1389,6 +1440,33 @@ yazi_flavor_of() {
   ' "$1"
 }
 
+# glow_config_file - the glow.yml glow reads, as glow itself names it in the
+# default of its --config flag. The flag's own value is no use: glow 3 parses
+# it and then reads the default file anyway. glow names the file only once it
+# exists, and any run creates the default one - style "auto" and nothing of
+# anybody's - so a first call that names nothing is followed by a second.
+glow_config_file() {
+  local f
+  f="$(glow --help 2>/dev/null | sed -n 's/.*--config string.*(default \(..*\))[[:space:]]*$/\1/p' | head -1)"
+  [[ -n "$f" ]] \
+    || f="$(glow --help 2>/dev/null | sed -n 's/.*--config string.*(default \(..*\))[[:space:]]*$/\1/p' | head -1)"
+  printf '%s' "$f"
+}
+
+# lnav_config_dir - where lnav keeps its config: ~/.lnav when that exists and
+# the XDG directory otherwise. lnav -h says which, on the line after the one
+# that introduces it, behind a folder glyph.
+lnav_config_dir() {
+  lnav -h 2>&1 | sed -n '/format files are stored in/{n;s|^[^/]*||;p;q;}'
+}
+
+# lnav_theme_of - the theme lnav is using, "default" when nobody chose one.
+# Asked of lnav rather than read from its config.json, which lnav writes itself
+# and fills with settings of its own.
+lnav_theme_of() {
+  lnav -nN -c ':config /ui/theme' 2>/dev/null | sed -n 's|^/ui/theme = "\(.*\)"[[:space:]]*$|\1|p' | head -1
+}
+
 # k9s_paths - the config file and skins directory, into _K9S_CFG and _K9S_SKINS.
 # `k9s info` is the only answer that is right everywhere: the directory moved
 # to XDG in 0.30 and differs by platform regardless. The output is coloured,
@@ -1476,6 +1554,81 @@ doctor_check_themes() {
       *) doctor_note 'yazi dark flavor' "$flavor - yours, not the repo's" ;;
     esac
   fi
+
+  doctor_check_more_themes
+}
+
+# eza has no key naming a theme - the file is read whenever it is there - so
+# its one check is the file. On macOS eza looks in Application Support, the
+# directory Rust's dirs crate calls the config dir, not in ~/.config.
+eza_theme_file() {
+  printf '%s/theme.yml' "${EZA_CONFIG_DIR:-${HOME}/Library/Application Support/eza}"
+}
+
+# The themes added after yazi, the same three shapes: a file the repo owns
+# (eza, vim), a file plus a key that names it (glow, lnav), and a file the
+# shell has to source (zsh-syntax-highlighting), whose proof is a style that
+# is actually in effect in a login shell.
+doctor_check_more_themes() {
+  local glow_cfg style lnav_dir theme hl
+  hl="$(probe_get 'hl:comment')"
+  doctor_config 'syntax-highlighting theme' \
+    "${SCRIPT_DIR}/../zsh-syntax-highlighting/catppuccin_mocha.zsh" \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/zsh-syntax-highlighting/catppuccin_mocha.zsh"
+  case "$hl" in
+    'fg=#585b70') doctor_ok 'syntax-highlighting colours' 'Catppuccin Mocha' ;;
+    # The plugin's own default for comments: it loaded, and the theme did not.
+    'fg=black,bold') doctor_broken 'syntax-highlighting colours' "the plugin's defaults - the theme is not sourced" ;;
+    '') doctor_broken 'syntax-highlighting colours' 'a login shell has no styles - neither the theme nor the plugin loaded' ;;
+    *) doctor_note 'syntax-highlighting colours' "comment is ${hl} - set after the theme, so yours" ;;
+  esac
+
+  if command -v eza >/dev/null 2>&1; then
+    doctor_config 'eza theme' "${SCRIPT_DIR}/../eza/theme.yml" "$(eza_theme_file)"
+  fi
+
+  if command -v glow >/dev/null 2>&1; then
+    glow_cfg="$(glow_config_file)"
+    if [[ -z "$glow_cfg" ]]; then
+      doctor_broken 'glow style' 'glow --help named no config file'
+    else
+      doctor_config 'glow theme' "${SCRIPT_DIR}/../glow/catppuccin-mocha.json" \
+                    "$(dirname "$glow_cfg")/catppuccin-mocha.json"
+      style=''
+      command -v yq >/dev/null 2>&1 && style="$(yq '.style // ""' "$glow_cfg" 2>/dev/null || true)"
+      case "$style" in
+        "$(dirname "$glow_cfg")/catppuccin-mocha.json") doctor_ok 'glow style' 'catppuccin-mocha.json' ;;
+        ''|auto) doctor_broken 'glow style' "unset in ${glow_cfg} - nothing tells glow to use the theme" ;;
+        *) doctor_note 'glow style' "${style} - yours, not the repo's" ;;
+      esac
+    fi
+  fi
+
+  if command -v lnav >/dev/null 2>&1; then
+    lnav_dir="$(lnav_config_dir)"
+    if [[ -z "$lnav_dir" ]]; then
+      doctor_broken 'lnav theme' 'lnav -h named no config directory'
+    else
+      doctor_config 'lnav theme' "${SCRIPT_DIR}/../lnav/catppuccin-mocha.json" \
+                    "${lnav_dir}/configs/installed/catppuccin-mocha.json"
+      theme="$(lnav_theme_of)"
+      case "$theme" in
+        catppuccin-mocha) doctor_ok 'lnav /ui/theme' 'catppuccin-mocha' ;;
+        ''|default) doctor_broken 'lnav /ui/theme' 'default - nothing tells lnav to use the theme' ;;
+        *) doctor_note 'lnav /ui/theme' "${theme} - yours, not the repo's" ;;
+      esac
+    fi
+  fi
+
+  if command -v vim >/dev/null 2>&1; then
+    doctor_config 'vim colours' "${SCRIPT_DIR}/../vim/colors/catppuccin_mocha.vim" \
+                  "${HOME}/.vim/colors/catppuccin_mocha.vim"
+    if [[ -e "${HOME}/.vimrc" ]]; then
+      doctor_note 'vimrc' "${HOME}/.vimrc is yours, and vim reads it instead of ~/.vim/vimrc"
+    else
+      doctor_config 'vimrc' "${SCRIPT_DIR}/../vim/vimrc" "${HOME}/.vim/vimrc"
+    fi
+  fi
 }
 
 doctor_check_configs() {
@@ -1513,10 +1666,14 @@ doctor_check_schedule() {
     doctor_note 'launchd agent' 'SCHEDULE_ENABLED is not yes'
   elif [[ ! -f "${HOME}/Library/LaunchAgents/${label}.plist" ]]; then
     doctor_broken 'launchd agent' 'no plist - the daily run has never been installed'
-  elif launchctl list "$label" >/dev/null 2>&1; then
-    doctor_ok 'launchd agent' "$label is loaded"
-  else
+  elif ! launchctl list "$label" >/dev/null 2>&1; then
     doctor_broken 'launchd agent' "$label has a plist but is not loaded"
+  elif ! grep -q -- '--scheduled' "${HOME}/Library/LaunchAgents/${label}.plist"; then
+    # Harmless - the run tells it is launchd's by its parent - but a sign the
+    # agent has not been rewritten by this version yet.
+    doctor_note 'launchd agent' "$label is loaded, from a plist older than --scheduled - the next run rewrites it"
+  else
+    doctor_ok 'launchd agent' "$label is loaded"
   fi
 }
 
@@ -1799,6 +1956,16 @@ if [[ "$SELECT" == yes ]]; then
       fi
       to_remove+=("$i")
     done
+    to_keep=() KEEP_WHY=()
+    [[ "${#to_remove[@]}" -gt 0 ]] && split_removals
+
+    if [[ "${#to_keep[@]}" -gt 0 && "$DRY_RUN" == no ]]; then
+      printf '\n  %sUnticked, but another installed package needs them - kept:%s\n' "$C_YELLOW" "$C_RESET"
+      for (( k = 0; k < ${#to_keep[@]}; k++ )); do
+        i="${to_keep[$k]}"
+        printf '    %-10s %s %s(needed by %s)%s\n' "${CAT_GROUP[$i]}" "${CAT_ID[$i]}" "$C_DIM" "${KEEP_WHY[$k]}" "$C_RESET"
+      done
+    fi
 
     apply=yes
     if [[ "${#to_remove[@]}" -gt 0 && "$DRY_RUN" == no ]]; then
@@ -1822,6 +1989,7 @@ if [[ "$SELECT" == yes ]]; then
       done
       SEL_EXISTS=yes
       [[ "$DRY_RUN" == no ]] && save_selection
+      for (( k = 0; k < ${#to_keep[@]}; k++ )); do keep_item "${to_keep[$k]}" "${KEEP_WHY[$k]}"; done
       for i in ${to_remove[@]+"${to_remove[@]}"}; do uninstall_item "$i"; done
     fi
   fi
@@ -2297,6 +2465,8 @@ FZF_FILES
       echo 'eval "$(starship init zsh)"'
       echo "[ -r \"${BREW_PREFIX}/share/fzf-tab/fzf-tab.zsh\" ] && source \"${BREW_PREFIX}/share/fzf-tab/fzf-tab.zsh\""
       echo "[ -r \"${BREW_PREFIX}/share/zsh-autosuggestions/zsh-autosuggestions.zsh\" ] && source \"${BREW_PREFIX}/share/zsh-autosuggestions/zsh-autosuggestions.zsh\""
+      # The theme first: the plugin only fills in the styles still unset.
+      echo '[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/zsh-syntax-highlighting/catppuccin_mocha.zsh" ] && source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh-syntax-highlighting/catppuccin_mocha.zsh"'
       echo "[ -r \"${BREW_PREFIX}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh\" ] && source \"${BREW_PREFIX}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh\""
       echo "[ -r \"${BREW_PREFIX}/share/zsh-history-substring-search/zsh-history-substring-search.zsh\" ] && source \"${BREW_PREFIX}/share/zsh-history-substring-search/zsh-history-substring-search.zsh\""
       echo
@@ -2805,16 +2975,19 @@ fi
 # choice, the same rule the git config below follows. lazygit has no separate
 # theme file at all, so there the whole config.yml is the repo's.
 
-# set_yaml_key <file> <yq path> <value> <label> - set one key, only when unset.
-# yq is in the cli group on all three platforms; without it the step says so
-# rather than guessing at somebody's YAML with sed.
+# set_yaml_key <file> <yq path> <value> <label> [default] - set one key, only
+# when unset. yq is in the cli group on all three platforms; without it the
+# step says so rather than guessing at somebody's YAML with sed. [default] is
+# a value that counts as unset, the way btop's "Default" does: glow writes
+# style "auto" into the glow.yml it creates, and nobody chose that.
 set_yaml_key() {
-  local file="$1" key="$2" want="$3" label="$4" have=''
+  local file="$1" key="$2" want="$3" label="$4" default="${5:-}" have=''
   if ! command -v yq >/dev/null 2>&1; then
     result 'missing' "$label" 'yq is not installed, so nothing can set the key'
     return
   fi
   [[ -f "$file" ]] && have="$(yq "${key} // \"\"" "$file" 2>/dev/null || true)"
+  [[ -n "$default" && "$have" == "$default" ]] && have=''
   if [[ "$have" == "$want" ]]; then
     result 'current' "$label" "$want"
   elif [[ -n "$have" ]]; then
@@ -2899,6 +3072,20 @@ yazi_set_flavor() {
   esac
 }
 
+# deploy_owned_config <source> <target> <label> - deploy_config for a file the
+# repo takes over whole, where one of your own may already be sitting. The
+# first replacement of a file that was not ours is kept as .bak - the courtesy
+# Deploy-ManagedFile already does on Windows.
+deploy_owned_config() {
+  local src="$1" dst="$2" label="$3"
+  if [[ "$DRY_RUN" != "yes" && -f "$dst" && ! -f "${dst}.bak" ]] \
+     && ! cmp -s "$src" "$dst"; then
+    cp "$dst" "${dst}.bak"
+    result 'installed' "${label} backup" "${dst}.bak"
+  fi
+  deploy_config "$src" "$dst" "$label"
+}
+
 K9S_SOURCE="${SCRIPT_DIR}/../k9s"
 phase 'k9s skin'
 if ! command -v k9s >/dev/null 2>&1; then
@@ -2924,13 +3111,7 @@ else
   if [[ -z "$_lazygit_dir" ]]; then
     result 'failed' 'lazygit config' 'lazygit --print-config-dir said nothing'
   else
-    _lazygit_cfg="${_lazygit_dir}/config.yml"
-    if [[ "$DRY_RUN" != "yes" && -f "$_lazygit_cfg" && ! -f "${_lazygit_cfg}.bak" ]] \
-       && ! cmp -s "${LAZYGIT_SOURCE}/config.yml" "$_lazygit_cfg"; then
-      cp "$_lazygit_cfg" "${_lazygit_cfg}.bak"
-      result 'installed' 'lazygit config backup' "${_lazygit_cfg}.bak"
-    fi
-    deploy_config "${LAZYGIT_SOURCE}/config.yml" "$_lazygit_cfg" 'lazygit config'
+    deploy_owned_config "${LAZYGIT_SOURCE}/config.yml" "${_lazygit_dir}/config.yml" 'lazygit config'
   fi
 fi
 
@@ -2966,6 +3147,113 @@ else
   deploy_config "${YAZI_SOURCE}/flavors/catppuccin-mocha.yazi/tmtheme.xml" \
                 "${_yazi_pkg}/tmtheme.xml" 'yazi tmTheme'
   yazi_set_flavor "${_yazi_dir}/theme.toml" 'catppuccin-mocha'
+fi
+
+# zsh-syntax-highlighting theme. The file only sets ZSH_HIGHLIGHT_STYLES; the
+# zsh fragment sources it just before the plugin, which keeps any style that
+# is already set. Deployed even while the fragment is off, so turning ZSH_ENABLED
+# on later finds it in place.
+phase 'zsh-syntax-highlighting theme'
+if [[ ! -r "${BREW_PREFIX}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]]; then
+  result 'missing' 'syntax-highlighting theme' 'zsh-syntax-highlighting is not installed'
+else
+  deploy_config "${SCRIPT_DIR}/../zsh-syntax-highlighting/catppuccin_mocha.zsh" \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/zsh-syntax-highlighting/catppuccin_mocha.zsh" \
+    'syntax-highlighting theme'
+fi
+
+# eza theme. eza reads theme.yml whenever it exists and has no key that names
+# it, so the whole file is the repo's, as lazygit's config.yml is.
+phase 'eza theme'
+if ! command -v eza >/dev/null 2>&1; then
+  result 'missing' 'eza theme' 'eza is not installed'
+else
+  deploy_owned_config "${SCRIPT_DIR}/../eza/theme.yml" "$(eza_theme_file)" 'eza theme'
+fi
+
+# glow theme. The JSON is the repo's and goes beside glow.yml; the style key in
+# glow.yml is yours, and set only when it is unset - "auto", which glow writes
+# into the file it creates, counts as unset. The key holds an absolute path,
+# which is fine here: glow.yml is per machine, only the JSON is shared.
+#
+# A dry run does not ask glow where its config is: asking is a run, and glow's
+# first run creates glow.yml.
+phase 'glow theme'
+if ! command -v glow >/dev/null 2>&1; then
+  result 'missing' 'glow theme' 'glow is not installed'
+elif [[ "$DRY_RUN" == "yes" ]]; then
+  result 'would-install' 'glow theme' 'catppuccin-mocha.json beside glow.yml, and style set if unset'
+else
+  _glow_cfg="$(glow_config_file)"
+  if [[ -z "$_glow_cfg" ]]; then
+    result 'failed' 'glow theme' 'glow --help named no config file'
+  else
+    _glow_theme="$(dirname "$_glow_cfg")/catppuccin-mocha.json"
+    deploy_config "${SCRIPT_DIR}/../glow/catppuccin-mocha.json" "$_glow_theme" 'glow theme'
+    set_yaml_key "$_glow_cfg" '.style' "$_glow_theme" 'glow style' 'auto'
+  fi
+fi
+
+# lnav theme. The theme goes where lnav loads installed config from, and lnav
+# sets the key itself: `:config` writes its own config.json, which is lnav's to
+# lay out. "default" is lnav's built-in and counts as unset. lnav exits 0 even
+# when it rejects a theme, so the result is read back rather than trusted.
+lnav_set_theme() {   # lnav_set_theme <theme>
+  local want="$1" have
+  have="$(lnav_theme_of)"
+  case "$have" in
+    "$want")
+      result 'current' 'lnav /ui/theme' "$want" ;;
+    ''|default)
+      if [[ "$DRY_RUN" == "yes" ]]; then
+        result 'would-install' 'lnav /ui/theme' "$want"
+      else
+        lnav -nN -c ":config /ui/theme ${want}" >/dev/null 2>&1 || true
+        have="$(lnav_theme_of)"
+        if [[ "$have" == "$want" ]]; then
+          result 'installed' 'lnav /ui/theme' "$want"
+        else
+          result 'failed' 'lnav /ui/theme' "lnav did not take ${want} - still ${have:-unset}"
+        fi
+      fi ;;
+    *)
+      result 'skipped' 'lnav /ui/theme' \
+             "yours is ${have} - run lnav -nN -c ':config /ui/theme ${want}' to switch" ;;
+  esac
+}
+
+# Nor does it ask lnav, for the same reason: any lnav run, -h included, lays
+# out its config directory first.
+phase 'lnav theme'
+if ! command -v lnav >/dev/null 2>&1; then
+  result 'missing' 'lnav theme' 'lnav is not installed'
+elif [[ "$DRY_RUN" == "yes" ]]; then
+  result 'would-install' 'lnav theme' 'catppuccin-mocha.json in configs/installed, and /ui/theme set if default'
+else
+  _lnav_dir="$(lnav_config_dir)"
+  if [[ -z "$_lnav_dir" ]]; then
+    result 'failed' 'lnav theme' 'lnav -h named no config directory'
+  else
+    deploy_config "${SCRIPT_DIR}/../lnav/catppuccin-mocha.json" \
+                  "${_lnav_dir}/configs/installed/catppuccin-mocha.json" 'lnav theme'
+    lnav_set_theme 'catppuccin-mocha'
+  fi
+fi
+
+# vim. ~/.vim/vimrc is the repo's, but vim reads it only when there is no
+# ~/.vimrc - so a ~/.vimrc of yours wins and is left alone, the same rule as
+# every key above. The colours are deployed either way, for `:colorscheme`.
+phase 'vim config'
+if ! command -v vim >/dev/null 2>&1; then
+  result 'missing' 'vim config' 'vim is not installed'
+else
+  deploy_config "${SCRIPT_DIR}/../vim/colors/catppuccin_mocha.vim" \
+                "${HOME}/.vim/colors/catppuccin_mocha.vim" 'vim colours'
+  if [[ -e "${HOME}/.vimrc" ]]; then
+    result 'skipped' 'vimrc' "${HOME}/.vimrc is yours - add 'source ~/.vim/vimrc' to it to use the repo's"
+  else
+    deploy_config "${SCRIPT_DIR}/../vim/vimrc" "${HOME}/.vim/vimrc" 'vimrc'
+  fi
 fi
 
 # Git config
@@ -3270,7 +3558,7 @@ fi
 
 phase 'Summary'
 
-for action in installed upgraded removed would-install would-upgrade would-remove failed missing no-gui held skipped deselected current present; do
+for action in installed upgraded removed kept would-install would-upgrade would-remove would-keep failed missing no-gui held skipped deselected current present; do
   count=0
   for a in "${RESULT_ACTIONS[@]:-}"; do [[ "$a" == "$action" ]] && count=$((count + 1)); done
   [[ "$count" -gt 0 ]] && printf '  %-16s%s\n' "$action" "$count"

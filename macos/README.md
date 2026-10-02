@@ -123,8 +123,9 @@ command` - has nobody to ask and is meant to leave the machine matching the
 manifest, so it installs those newcomers without asking. What you unticked in
 the menu stays out for it too, and it saves nothing, so your next manual run
 still asks about them. The agent tells itself apart by the `--scheduled` flag
-its plist passes; add that flag yourself to get the agent's behaviour from any
-other launcher.
+its plist passes, or - for a plist written before that flag existed - by
+having launchd as its parent; add the flag yourself to get the agent's
+behaviour from any other launcher.
 
 ## The manifest
 
