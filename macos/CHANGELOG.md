@@ -46,6 +46,9 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
   no terminal whose parent is launchd counts as the agent. 1.46.0 let the first
   run after an update read as automation, and that run installed packages new
   to the manifest that nobody had confirmed. `--doctor` notes such a plist.
+- **`bitwarden-cli` moved from `apps` to `dev`.** `apps` is GUI-only, so
+  `--no-gui` skipped a command-line tool with it, and the release check that
+  GUI groups carry only casks refused 1.45.0 and 1.46.0.
 
 ### Removed
 
