@@ -905,7 +905,9 @@ if section 'theme activation'; then
   {
     printf 'DRY_RUN=no\n'
     printf 'result() { printf "%%s %%s\\n" "$1" "$3"; }\n'
+    extract_func "$theme_src" btop_value_of
     extract_func "$theme_src" btop_theme_of
+    extract_func "$theme_src" btop_set_key
     extract_func "$theme_src" btop_set_theme
     printf 'btop_set_theme "$1" catppuccin_mocha\n'
     printf 'printf "now=%%s\\n" "$(btop_theme_of "$1")"\n'
@@ -940,6 +942,33 @@ if section 'theme activation'; then
   contains 'btop: a theme of your own is left alone' 'skipped' "$out"
   contains 'btop: really left alone'                 'now=gruvbox_dark' "$out"
 
+  # The behaviour keys go through the same writer, bare rather than quoted:
+  # btop writes True, False and numbers that way and reads them back so.
+  {
+    printf 'DRY_RUN=no\n'
+    printf 'result() { printf "%%s %%s\\n" "$1" "$3"; }\n'
+    extract_func "$theme_src" btop_value_of
+    extract_func "$theme_src" btop_set_key
+    printf 'btop_set_key "$1" proc_tree True False\n'
+    printf 'btop_set_key "$1" update_ms 1000 2000\n'
+  } > "$TMP/btopkey.sh"
+
+  conf="$TMP/btop-keys.conf"
+  printf 'color_theme = "catppuccin_mocha"\nproc_tree = False\nupdate_ms = 2000\n' > "$conf"
+  bash "$TMP/btopkey.sh" "$conf" >/dev/null 2>&1
+  is 'btop: a key at its default is set, bare' 'proc_tree = True' "$(grep '^proc_tree' "$conf")"
+  is 'btop: a number is set bare too'          'update_ms = 1000' "$(grep '^update_ms' "$conf")"
+  is 'btop: the theme next to them is untouched' 'color_theme = "catppuccin_mocha"' \
+     "$(grep '^color_theme' "$conf")"
+  contains 'btop: a second run changes nothing' 'current' "$(bash "$TMP/btopkey.sh" "$conf" 2>&1)"
+
+  conf="$TMP/btop-keys-theirs.conf"
+  printf 'update_ms = 500\n' > "$conf"
+  out="$(bash "$TMP/btopkey.sh" "$conf" 2>&1)"
+  contains 'btop: a value of your own is left alone' 'skipped' "$out"
+  is 'btop: really left alone' 'update_ms = 500' "$(grep '^update_ms' "$conf")"
+  is 'btop: an absent key is appended' 'proc_tree = True' "$(grep '^proc_tree' "$conf")"
+
   # The same rule over YAML, which is yq's job rather than sed's.
   if ! command -v yq >/dev/null 2>&1; then
     skip 'the k9s ui.skin key' 'yq is not installed'
@@ -947,6 +976,7 @@ if section 'theme activation'; then
     {
       printf 'DRY_RUN=no\n'
       printf 'result() { printf "%%s %%s\\n" "$1" "$3"; }\n'
+      extract_func "$theme_src" yaml_scalar
       extract_func "$theme_src" set_yaml_key
       printf 'set_yaml_key "$1" .k9s.ui.skin catppuccin-mocha skin\n'
       printf 'printf "now=%%s\\n" "$(yq ".k9s.ui.skin // \\"\\"" "$1")"\n'
@@ -975,6 +1005,31 @@ if section 'theme activation'; then
     contains 'k9s: a skin of your own is left alone' 'skipped' "$out"
     contains 'k9s: really left alone'                'now=dracula' "$out"
 
+    # The behaviour keys are booleans. k9s writes each one out at false the
+    # first time it runs, so false is the default that counts as unset - and
+    # the value has to land as a YAML boolean, not the string "true", which
+    # k9s's schema check rejects.
+    {
+      printf 'DRY_RUN=no\n'
+      printf 'result() { printf "%%s %%s\\n" "$1" "$3"; }\n'
+      extract_func "$theme_src" yaml_scalar
+      extract_func "$theme_src" set_yaml_key
+      printf 'set_yaml_key "$1" .k9s.ui.logoless true logoless false\n'
+    } > "$TMP/yamlbool.sh"
+
+    cfg="$TMP/k9s-bool-default.yaml"
+    printf 'k9s:\n  ui:\n    logoless: false\n    skin: dracula\n' > "$cfg"
+    out="$(bash "$TMP/yamlbool.sh" "$cfg" 2>&1)"
+    contains 'k9s: a key at its default false is set' 'installed' "$out"
+    is 'k9s: and lands as a boolean, not a string' '!!bool true' \
+       "$(yq '.k9s.ui.logoless | tag + " " + (. | tostring)' "$cfg")"
+    is 'k9s: and leaves the skin alone' 'dracula' "$(yq '.k9s.ui.skin' "$cfg")"
+    contains 'k9s: a second run changes nothing' 'current' "$(bash "$TMP/yamlbool.sh" "$cfg" 2>&1)"
+
+    cfg="$TMP/k9s-bool-absent.yaml"
+    bash "$TMP/yamlbool.sh" "$cfg" >/dev/null 2>&1
+    is 'k9s: an absent key is written as a boolean' '!!bool' "$(yq '.k9s.ui.logoless | tag' "$cfg")"
+
     # A dry run is the whole promise of --dry-run: it must not write.
     cfg="$TMP/k9s-dry.yaml"
     sed 's/^DRY_RUN=no$/DRY_RUN=yes/' "$TMP/yamlkey.sh" > "$TMP/yamlkey-dry.sh"
@@ -987,7 +1042,8 @@ if section 'theme activation'; then
   # lazygit and lazydocker reject them at startup and the colours silently stay
   # default.
   if command -v yq >/dev/null 2>&1; then
-    for f in k9s/skins/catppuccin-mocha.yaml lazygit/config.yml lazydocker/config.yml; do
+    for f in k9s/skins/catppuccin-mocha.yaml k9s/plugins.yaml k9s/aliases.yaml \
+             kubecolor/color.yaml lazygit/config.yml lazydocker/config.yml; do
       if yq -e '.' "${ROOT}/$f" >/dev/null 2>&1; then ok "$f is valid YAML"
       else bad "$f is valid YAML" 'parses' "$(yq '.' "${ROOT}/$f" 2>&1 | head -1)"; fi
     done
@@ -1027,6 +1083,16 @@ if section 'yazi flavor'; then
       ok 'flavor.toml is valid TOML'
     else
       bad 'flavor.toml is valid TOML' 'parses' 'it does not'
+    fi
+    # yazi refuses to start on a yazi.toml that does not parse, and a key
+    # outside [mgr] would be silently ignored.
+    if "${PYTHON[@]}" -c "
+import tomllib, sys
+d = tomllib.load(open(sys.argv[1], 'rb'))
+assert set(d) == {'mgr'}, d" "${ROOT}/yazi/yazi.toml" 2>/dev/null; then
+      ok 'yazi.toml is valid TOML, all under [mgr]'
+    else
+      bad 'yazi.toml is valid TOML, all under [mgr]' 'parses' 'it does not'
     fi
     if "${PYTHON[@]}" -c "
 import sys, xml.etree.ElementTree as ET
@@ -1123,6 +1189,96 @@ ET.parse(sys.argv[1])" "${yazi_flavor_src}/tmtheme.xml" 2>/dev/null; then
         bad "$(basename "$f") is still valid TOML" 'parses' "$(cat "$f")"
       fi
     done
+  fi
+fi
+
+# --------------------------------------------------------- ripgrep config ----
+#
+# rg reads the file only through RIPGREP_CONFIG_PATH, so the path the zsh
+# fragment exports, the one the deploy step writes to and the one profile.ps1
+# exports on Windows have to agree, or a deployed config is never read. And a
+# flag rg does not know makes every search - grep included, through the alias -
+# fail, so the file is fed to the rg on this machine.
+
+if section 'ripgrep config'; then
+  rg_src="${ROOT}/ripgrep/config"
+  [[ -s "$rg_src" ]] && ok 'ripgrep/config is in the repo' \
+                     || bad 'ripgrep/config is in the repo' 'a non-empty file' 'missing or empty'
+
+  for os in linux macos; do
+    f="${ROOT}/${os}/bootstrap.sh"
+    if grep -qF 'export RIPGREP_CONFIG_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/ripgrep/config"' "$f" \
+       && grep -qF '"${XDG_CONFIG_HOME:-$HOME/.config}/ripgrep/config" '"'ripgrep config'" "$f"; then
+      ok "${os}: the fragment exports the path the deploy step writes"
+    else
+      bad "${os}: the fragment exports the path the deploy step writes" 'the same path in both' 'they differ'
+    fi
+  done
+  if grep -qF "Join-Path \$env:APPDATA 'ripgrep\\config'" "${ROOT}/windows/profile.ps1" \
+     && grep -qF "Join-Path \$env:APPDATA 'ripgrep\\config'" "${ROOT}/windows/bootstrap.ps1"; then
+    ok 'windows: profile.ps1 exports the path bootstrap.ps1 writes'
+  else
+    bad 'windows: profile.ps1 exports the path bootstrap.ps1 writes' '%APPDATA%\ripgrep\config in both' 'they differ'
+  fi
+
+  if command -v rg >/dev/null 2>&1; then
+    # A lowercase pattern against "Needle" matches only under --smart-case.
+    printf 'Needle\n' > "$TMP/rg-probe.txt"
+    if out="$(RIPGREP_CONFIG_PATH="$rg_src" rg -c needle "$TMP/rg-probe.txt" 2>&1)" && [[ "$out" == 1 ]]; then
+      ok 'rg accepts every flag in the config, smart-case included'
+    else
+      bad 'rg accepts every flag in the config, smart-case included' '1 match' "$out"
+    fi
+  else
+    skip 'rg accepts the config' 'rg is not installed'
+  fi
+fi
+
+# --------------------------------------------------------- yt-dlp config ----
+#
+# yt-dlp reads its config as command-line options, so an option it does not
+# know fails every download. Fed to the real yt-dlp with no URL: it parses
+# the file, then stops at "provide at least one URL" - nothing is fetched.
+
+if section 'yt-dlp config'; then
+  if command -v yt-dlp >/dev/null 2>&1; then
+    out="$(yt-dlp -v --config-locations "${ROOT}/yt-dlp/config" 2>&1 || true)"
+    contains 'yt-dlp reads every option in the config' '--merge-output-format' "$out"
+    contains 'and stops only for want of a URL' 'at least one URL' "$out"
+  else
+    skip 'yt-dlp parses the config' 'yt-dlp is not installed'
+  fi
+fi
+
+# ----------------------------------------------------------------- vimrc ----
+#
+# vim reports every error in the vimrc at start-up and waits for Enter, so a
+# line that fails anywhere - rvim and vim -Z refuse mkdir() and shell
+# commands - makes every launch there stop on a prompt. Run against an empty
+# HOME, the state of a machine the vimrc has just landed on.
+
+if section 'vimrc'; then
+  if command -v vim >/dev/null 2>&1; then
+    # -es, Ex silent mode: an error in the vimrc makes vim exit 1 instead of
+    # stopping on "Press ENTER", which would hang the test.
+    for mode in normal restricted; do
+      flag=''; [[ "$mode" == restricted ]] && flag='-Z'
+      vhome="$TMP/vim-home-$mode"
+      mkdir -p "$vhome"
+      # shellcheck disable=SC2086
+      if HOME="$vhome" vim $flag -es -u "${ROOT}/vim/vimrc" -c 'qa!' </dev/null >/dev/null 2>&1; then
+        ok "vimrc: $mode vim starts without an error"
+      else
+        bad "vimrc: $mode vim starts without an error" 'exit 0' "exit $?"
+      fi
+    done
+    if [[ -d "$TMP/vim-home-normal/.vim/undo" ]]; then
+      ok 'vimrc: a normal vim creates the undo directory'
+    else
+      bad 'vimrc: a normal vim creates the undo directory' '.vim/undo under HOME' 'missing'
+    fi
+  else
+    skip 'the vimrc starts clean' 'vim is not installed'
   fi
 fi
 

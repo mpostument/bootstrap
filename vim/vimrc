@@ -24,14 +24,19 @@ set updatetime=300
 set belloff=all
 
 " Undo that survives closing the file. The directory is created here because
-" vim will not create it itself, and writes no undo file without it.
+" vim will not create it itself, and writes no undo file without it. rvim and
+" vim -Z refuse mkdir() (E145), so the attempt is silent! and the undo file is
+" turned on only once the directory is really there - otherwise undo just
+" lasts the session, as it does by default.
 if has('persistent_undo')
   let s:undo = expand('~/.vim/undo')
   if !isdirectory(s:undo)
-    call mkdir(s:undo, 'p', 0700)
+    silent! call mkdir(s:undo, 'p', 0700)
   endif
-  let &undodir = s:undo
-  set undofile
+  if isdirectory(s:undo)
+    let &undodir = s:undo
+    set undofile
+  endif
 endif
 
 " The system clipboard for y and p, where this vim was built with one. The

@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.48.0'
+BOOTSTRAP_VERSION='1.49.0'
 BOOTSTRAP_PLATFORM='macos'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -1222,6 +1222,7 @@ doctor_probe() {
     cat <<'PROBE'
 print -r -- "env:starship=${STARSHIP_SESSION_KEY:+yes}"
 print -r -- "env:JAVA_HOME=${JAVA_HOME:-}"
+print -r -- "env:RIPGREP_CONFIG_PATH=${RIPGREP_CONFIG_PATH:-}"
 print -r -- "env:PATH=${PATH}"
 print -r -- "widget:atuin=$(( $+widgets[atuin-search] ))"
 print -r -- "widget:hss=$(( $+widgets[history-substring-search-up] ))"
@@ -1457,10 +1458,16 @@ doctor_check_runtimes() {
 # btop_theme_of <btop.conf> - the theme named in it, empty when the file or the
 # key is absent. btop.conf is `key = "value"` lines, not YAML, so this is sed's
 # job rather than yq's. Read by the doctor as well as the phase that sets it.
-btop_theme_of() {
+# btop_value_of <btop.conf> <key> - the value of one key, quotes stripped,
+# empty when the file or the key is absent.
+btop_value_of() {
   [[ -f "$1" ]] || return 0
-  sed -n 's/^color_theme[[:space:]]*=[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' "$1" \
+  sed -n "s/^$2[[:space:]]*=[[:space:]]*\"\{0,1\}\([^\"]*\)\"\{0,1\}[[:space:]]*\$/\1/p" "$1" \
     | tail -1
+}
+
+btop_theme_of() {
+  btop_value_of "$1" color_theme
 }
 
 # yazi_flavor_of <theme.toml> - the dark flavor named in it, empty when the
@@ -1531,6 +1538,10 @@ k9s_paths() {
   _K9S_CFG="$(printf '%s\n' "$info" | sed -n 's/^Config[a-z]*:[[:space:]]*//p' | head -1)"
   _K9S_SKINS="$(printf '%s\n' "$info" | sed -n 's/^Skins:[[:space:]]*//p' | head -1)"
   [[ -n "$_K9S_SKINS" || -z "$_K9S_CFG" ]] || _K9S_SKINS="$(dirname "$_K9S_CFG")/skins"
+  _K9S_PLUGINS="$(printf '%s\n' "$info" | sed -n 's/^Plugins:[[:space:]]*//p' | head -1)"
+  [[ -n "$_K9S_PLUGINS" || -z "$_K9S_CFG" ]] || _K9S_PLUGINS="$(dirname "$_K9S_CFG")/plugins.yaml"
+  _K9S_ALIASES="$(printf '%s\n' "$info" | sed -n 's/^Aliases:[[:space:]]*//p' | head -1)"
+  [[ -n "$_K9S_ALIASES" || -z "$_K9S_CFG" ]] || _K9S_ALIASES="$(dirname "$_K9S_CFG")/aliases.yaml"
   [[ -n "$_K9S_CFG" ]]
 }
 
@@ -1590,6 +1601,8 @@ doctor_check_themes() {
   else
     doctor_config 'k9s skin' "${SCRIPT_DIR}/../k9s/skins/catppuccin-mocha.yaml" \
                   "${_K9S_SKINS}/catppuccin-mocha.yaml"
+    doctor_config 'k9s plugins' "${SCRIPT_DIR}/../k9s/plugins.yaml" "$_K9S_PLUGINS"
+    doctor_config 'k9s aliases' "${SCRIPT_DIR}/../k9s/aliases.yaml" "$_K9S_ALIASES"
     skin=''
     [[ -f "$_K9S_CFG" ]] && command -v yq >/dev/null 2>&1 \
       && skin="$(yq '.k9s.ui.skin // ""' "$_K9S_CFG" 2>/dev/null || true)"
@@ -1641,6 +1654,7 @@ doctor_check_themes() {
             "unset in ${yazi_dir}/theme.toml - nothing tells yazi to use the flavor" ;;
       *) doctor_note 'yazi dark flavor' "$flavor - yours, not the repo's" ;;
     esac
+    doctor_config 'yazi config' "${SCRIPT_DIR}/../yazi/yazi.toml" "${yazi_dir}/yazi.toml"
   fi
 
   doctor_check_more_themes
@@ -1726,7 +1740,7 @@ doctor_check_more_themes() {
 }
 
 doctor_check_configs() {
-  local bat_cfg
+  local bat_cfg rg_cfg
   doctor_config 'starship.toml' "${SCRIPT_DIR}/../starship.toml" "${HOME}/.config/starship.toml"
   doctor_config 'atuin config' "${SCRIPT_DIR}/../atuin/config.toml" "${HOME}/.config/atuin/config.toml"
 
@@ -1743,6 +1757,30 @@ doctor_check_configs() {
                   "${XDG_CONFIG_HOME:-$HOME/.config}/tealdeer/config.toml"
   else
     doctor_broken 'tealdeer config' 'tldr is not installed'
+  fi
+
+  if command -v kubecolor >/dev/null 2>&1; then
+    doctor_config 'kubecolor theme' "${SCRIPT_DIR}/../kubecolor/color.yaml" \
+                  "${KUBECOLOR_CONFIG:-$HOME/.kube/color.yaml}"
+  fi
+  if command -v yt-dlp >/dev/null 2>&1; then
+    doctor_config 'yt-dlp config' "${SCRIPT_DIR}/../yt-dlp/config" \
+                  "${XDG_CONFIG_HOME:-$HOME/.config}/yt-dlp/config"
+  fi
+
+  if command -v rg >/dev/null 2>&1; then
+    doctor_config 'ripgrep config' "${SCRIPT_DIR}/../ripgrep/config" \
+                  "${XDG_CONFIG_HOME:-$HOME/.config}/ripgrep/config"
+    # rg finds no config file by itself: without the variable the file above
+    # is never read.
+    rg_cfg="$(probe_get 'env:RIPGREP_CONFIG_PATH')"
+    if [[ -z "$rg_cfg" ]]; then
+      doctor_broken 'RIPGREP_CONFIG_PATH' 'unset in a login shell, so rg reads no config'
+    elif [[ "$rg_cfg" == "${XDG_CONFIG_HOME:-$HOME/.config}/ripgrep/config" ]]; then
+      doctor_ok 'RIPGREP_CONFIG_PATH' "$rg_cfg"
+    else
+      doctor_note 'RIPGREP_CONFIG_PATH' "$rg_cfg - not the repo's config, which may be deliberate"
+    fi
   fi
   doctor_check_tldr_cache
 
@@ -2717,6 +2755,10 @@ FZF_FILES
     echo 'command -v bat    >/dev/null && export MANPAGER="sh -c '"'"'col -bx | bat -l man -p'"'"'" MANROFFOPT="-c"'
     echo 'command -v eza    >/dev/null && alias ls="eza --icons=auto --group-directories-first"'
     echo 'command -v rg     >/dev/null && alias grep="rg"'
+    # ripgrep reads a config file only when this names one; the bootstrap
+    # deploys ripgrep/config there. Checked when the shell starts, so a
+    # missing file leaves rg on its defaults rather than warning every search.
+    echo '[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/ripgrep/config" ] && export RIPGREP_CONFIG_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/ripgrep/config"'
     echo 'command -v fd     >/dev/null && alias find="fd"'
     echo 'command -v dust   >/dev/null && alias du="dust"'
     echo 'command -v duf    >/dev/null && alias df="duf"'
@@ -3043,6 +3085,16 @@ else
   fi
 fi
 
+# ripgrep config - smart-case, dotfiles searched, .git left out. rg reads it
+# through RIPGREP_CONFIG_PATH, which the zsh fragment exports.
+phase 'ripgrep config'
+if ! command -v rg >/dev/null 2>&1; then
+  result 'missing' 'ripgrep config' 'ripgrep is not installed'
+else
+  deploy_config "${SCRIPT_DIR}/../ripgrep/config" \
+                "${XDG_CONFIG_HOME:-$HOME/.config}/ripgrep/config" 'ripgrep config'
+fi
+
 # Carapace specs - completion for CLIs carapace has no completer of its own for
 CARAPACE_SOURCE="${SCRIPT_DIR}/../carapace"
 phase 'Carapace specs'
@@ -3074,6 +3126,17 @@ fi
 # step says so rather than guessing at somebody's YAML with sed. [default] is
 # a value that counts as unset, the way btop's "Default" does: glow writes
 # style "auto" into the glow.yml it creates, and nobody chose that.
+# yaml_scalar <value> - the value as yq should write it. true, false and plain
+# integers go in bare; anything else quoted. k9s refuses a config whose
+# boolean is the string "true".
+yaml_scalar() {
+  if [[ "$1" =~ ^(true|false|[0-9]+)$ ]]; then
+    printf '%s' "$1"
+  else
+    printf '"%s"' "$1"
+  fi
+}
+
 set_yaml_key() {
   local file="$1" key="$2" want="$3" label="$4" default="${5:-}" have=''
   if ! command -v yq >/dev/null 2>&1; then
@@ -3089,7 +3152,7 @@ set_yaml_key() {
   elif [[ "$DRY_RUN" == "yes" ]]; then
     result 'would-install' "$label" "${key} = ${want} in ${file}"
   elif mkdir -p "$(dirname "$file")" && touch "$file" \
-       && yq -i "${key} = \"${want}\"" "$file"; then
+       && yq -i "${key} = $(yaml_scalar "$want")" "$file"; then
     result 'installed' "$label" "${key} = ${want} in ${file}"
   else
     result 'failed' "$label" "yq could not set ${key} in ${file}"
@@ -3098,30 +3161,36 @@ set_yaml_key() {
 
 # btop_set_theme <btop.conf> <theme> - the same rule as set_yaml_key, for a
 # file that is not YAML. "Default" counts as unset: it is btop's built-in.
+btop_set_key() {   # btop_set_key <btop.conf> <key> <value> <default>
+  local conf="$1" key="$2" want="$3" default="$4" have line
+  have="$(btop_value_of "$conf" "$key")"
+  # btop writes strings quoted and True, False and numbers bare.
+  line="${key} = \"${want}\""
+  [[ "$want" =~ ^(True|False|[0-9]+)$ ]] && line="${key} = ${want}"
+  if [[ "$have" == "$want" ]]; then
+    result 'current' "btop ${key}" "$want"
+  elif [[ -n "$have" && "$have" != "$default" ]]; then
+    result 'skipped' "btop ${key}" \
+           "yours is ${have} - set ${key} to ${want} by hand to switch"
+  elif [[ "$DRY_RUN" == "yes" ]]; then
+    result 'would-install' "btop ${key}" "${want} in ${conf}"
+  elif [[ -f "$conf" ]] && grep -q "^${key}[[:space:]]*=" "$conf"; then
+    if sed -i '' "s/^${key}[[:space:]]*=.*/${line}/" "$conf"; then
+      result 'upgraded' "btop ${key}" "$conf"
+    else
+      result 'failed' "btop ${key}" "sed could not rewrite $conf"
+    fi
+  else
+    mkdir -p "$(dirname "$conf")"
+    printf '%s\n' "$line" >> "$conf"
+    result 'installed' "btop ${key}" "$conf"
+  fi
+}
+
+# btop_set_theme <btop.conf> <theme> - "Default" is btop's built-in theme, so
+# it counts as unset.
 btop_set_theme() {
-  local conf="$1" want="$2" have
-  have="$(btop_theme_of "$conf")"
-  case "$have" in
-    "$want")
-      result 'current' 'btop color_theme' "$want" ;;
-    ''|Default)
-      if [[ "$DRY_RUN" == "yes" ]]; then
-        result 'would-install' 'btop color_theme' "${want} in ${conf}"
-      elif [[ -f "$conf" ]] && grep -q '^color_theme' "$conf"; then
-        if sed -i '' "s/^color_theme.*/color_theme = \"${want}\"/" "$conf"; then
-          result 'upgraded' 'btop color_theme' "$conf"
-        else
-          result 'failed' 'btop color_theme' "sed could not rewrite $conf"
-        fi
-      else
-        mkdir -p "$(dirname "$conf")"
-        printf 'color_theme = "%s"\n' "$want" >> "$conf"
-        result 'installed' 'btop color_theme' "$conf"
-      fi ;;
-    *)
-      result 'skipped' 'btop color_theme' \
-             "yours is ${have} - set color_theme to ${want} by hand to switch" ;;
-  esac
+  btop_set_key "$1" color_theme "$2" Default
 }
 
 # yazi_set_flavor <theme.toml> <flavor> - the same rule as set_yaml_key, for
@@ -3192,6 +3261,41 @@ else
   deploy_config "${K9S_SOURCE}/skins/catppuccin-mocha.yaml" \
                 "${_K9S_SKINS}/catppuccin-mocha.yaml" 'k9s skin'
   set_yaml_key "$_K9S_CFG" '.k9s.ui.skin' 'catppuccin-mocha' 'k9s ui.skin'
+  # Behaviour, not looks. k9s writes every key out at its default the first
+  # time it runs, so the default counts as unset here, as glow's "auto" does:
+  # a key you changed to anything else is left alone. No logo, which gives the
+  # table its rows back; live views (describe, YAML) that follow the resource;
+  # skin and config edits that apply without a restart; and no check for a
+  # newer k9s at start-up, since the bootstrap upgrades it.
+  set_yaml_key "$_K9S_CFG" '.k9s.ui.logoless' 'true' 'k9s ui.logoless' 'false'
+  set_yaml_key "$_K9S_CFG" '.k9s.ui.reactive' 'true' 'k9s ui.reactive' 'false'
+  set_yaml_key "$_K9S_CFG" '.k9s.liveViewAutoRefresh' 'true' 'k9s liveViewAutoRefresh' 'false'
+  set_yaml_key "$_K9S_CFG" '.k9s.skipLatestRevCheck' 'true' 'k9s skipLatestRevCheck' 'false'
+  # Plugins and aliases are files k9s never writes after creating them, so
+  # both are the repo's whole, like lazygit's config.yml.
+  deploy_owned_config "${K9S_SOURCE}/plugins.yaml" "$_K9S_PLUGINS" 'k9s plugins'
+  deploy_owned_config "${K9S_SOURCE}/aliases.yaml" "$_K9S_ALIASES" 'k9s aliases'
+fi
+
+# kubecolor theme - Catppuccin Mocha, so kubectl output matches the k9s skin.
+# kubecolor has no separate theme file: colours are the config, so the whole
+# color.yaml is the repo's. KUBECOLOR_CONFIG, when set, is where it reads.
+phase 'kubecolor theme'
+if ! command -v kubecolor >/dev/null 2>&1; then
+  result 'missing' 'kubecolor theme' 'kubecolor is not installed'
+else
+  deploy_owned_config "${SCRIPT_DIR}/../kubecolor/color.yaml" \
+                      "${KUBECOLOR_CONFIG:-$HOME/.kube/color.yaml}" 'kubecolor theme'
+fi
+
+# yt-dlp config - downloads land in ~/Downloads with metadata, chapters,
+# cover art and subtitles embedded, merged into .mkv.
+phase 'yt-dlp config'
+if ! command -v yt-dlp >/dev/null 2>&1; then
+  result 'missing' 'yt-dlp config' 'yt-dlp is not installed'
+else
+  deploy_owned_config "${SCRIPT_DIR}/../yt-dlp/config" \
+                      "${XDG_CONFIG_HOME:-$HOME/.config}/yt-dlp/config" 'yt-dlp config'
 fi
 
 # lazygit config. Its colours live in the one config file, so there is no theme
@@ -3233,6 +3337,13 @@ else
   deploy_config "${BTOP_SOURCE}/themes/catppuccin_mocha.theme" \
                 "${_btop_dir}/themes/catppuccin_mocha.theme" 'btop theme'
   btop_set_theme "$_btop_conf" 'catppuccin_mocha'
+  # btop rewrites btop.conf with every key on exit, so a key at btop's own
+  # default counts as unset. The process list as a tree, a refresh every
+  # second rather than two, and h/j/k/l to move (help and kill move to
+  # Shift-H and Shift-K).
+  btop_set_key "$_btop_conf" proc_tree True False
+  btop_set_key "$_btop_conf" update_ms 1000 2000
+  btop_set_key "$_btop_conf" vim_keys True False
 fi
 
 # yazi flavor. A flavor is a directory, not a file - flavor.toml and the
@@ -3253,6 +3364,10 @@ else
   deploy_config "${YAZI_SOURCE}/flavors/catppuccin-mocha.yazi/tmtheme.xml" \
                 "${_yazi_pkg}/tmtheme.xml" 'yazi tmTheme'
   yazi_set_flavor "${_yazi_dir}/theme.toml" 'catppuccin-mocha'
+  # yazi.toml is the repo's whole, the way lazygit's config.yml is: yazi
+  # never writes to it, and it carries only the keys that differ from the
+  # preset.
+  deploy_owned_config "${YAZI_SOURCE}/yazi.toml" "${_yazi_dir}/yazi.toml" 'yazi config'
 fi
 
 # zsh-syntax-highlighting theme. The file only sets ZSH_HIGHLIGHT_STYLES; the
@@ -3288,7 +3403,7 @@ phase 'glow theme'
 if ! command -v glow >/dev/null 2>&1; then
   result 'missing' 'glow theme' 'glow is not installed'
 elif [[ "$DRY_RUN" == "yes" ]]; then
-  result 'would-install' 'glow theme' 'catppuccin-mocha.json beside glow.yml, and style set if unset'
+  result 'would-install' 'glow theme' 'catppuccin-mocha.json beside glow.yml; style, pager and width set if unset'
 else
   _glow_cfg="$(glow_config_file)"
   if [[ -z "$_glow_cfg" ]]; then
@@ -3297,6 +3412,11 @@ else
     _glow_theme="$(dirname "$_glow_cfg")/catppuccin-mocha.json"
     deploy_config "${SCRIPT_DIR}/../glow/catppuccin-mocha.json" "$_glow_theme" 'glow theme'
     set_yaml_key "$_glow_cfg" '.style' "$_glow_theme" 'glow style' 'auto'
+    # glow writes pager: false and width: 80 into the glow.yml it creates, so
+    # those count as unset, as "auto" does for style. The pager is $PAGER, or
+    # less -r. With it on, `glow -t` needs -p=false: glow refuses both at once.
+    set_yaml_key "$_glow_cfg" '.pager' 'true' 'glow pager' 'false'
+    set_yaml_key "$_glow_cfg" '.width' '100' 'glow width' '80'
   fi
 fi
 

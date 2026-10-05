@@ -1,0 +1,29 @@
+# yt-dlp config - managed by the bootstrap on every platform.
+#
+# Deployed to ${XDG_CONFIG_HOME:-~/.config}/yt-dlp/config on Linux and macOS
+# and %APPDATA%\yt-dlp\config on Windows, the paths yt-dlp recommends. The
+# whole file is the repo's; the first replacement is kept as config.bak.
+# --ignore-config skips it for one download.
+#
+# The file name stays yt-dlp's default, "<title> [<id>].<ext>".
+
+# Into ~/Downloads (%USERPROFILE%\Downloads on Windows) wherever you run it
+# from. -P . for the current directory.
+-P ~/Downloads
+
+# Title, uploader, date and description in the file's tags, and chapters as
+# real chapter marks.
+--embed-metadata
+
+# The thumbnail as cover art, and subtitles as tracks, rather than loose
+# .webp and .vtt files beside the video. English and Ukrainian when the
+# uploader provided them; auto-generated captions stay off.
+--embed-thumbnail
+--embed-subs
+--sub-langs en.*,uk.*
+
+# Matroska takes all of the above for any codec. YouTube's best video and
+# audio merge into .webm by default, and yt-dlp cannot put a thumbnail in a
+# .webm - the download would end in a post-processing error. mpv and VLC, both
+# in the apps group, play .mkv.
+--merge-output-format mkv

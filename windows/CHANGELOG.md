@@ -20,6 +20,92 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.53.0]
+
+### Added
+
+- **ripgrep config**, `ripgrep/config` at the repo root: `--smart-case`,
+  `--hidden` with `.git/` left out (the same reach as the fzf file widgets),
+  and long lines cut at 200 columns with a preview. Deployed to
+  `%APPDATA%\ripgrep\config`. rg reads it only through `RIPGREP_CONFIG_PATH`,
+  which `profile.ps1` sets for the session when the file exists. It is not a
+  user variable, because an editor's bundled rg would read that too. The
+  `grep` function calls `rg`, so `grep` at the prompt picks up the same flags.
+  `rg --no-config` or `--case-sensitive` overrides it for one search.
+  `-Doctor` checks the file and the variable.
+- **yazi config**, `yazi/yazi.toml` at the repo root: dotfiles shown,
+  natural sort (`file2` before `file10`) and each file's size beside its name.
+  It sets only the keys that differ from yazi's preset. yazi never writes to
+  the file, so the whole file is the repo's, like lazygit's `config.yml`, and
+  the first replacement of yours is kept as `yazi.toml.bak`. `theme.toml`
+  stays yours. `-Doctor` checks it.
+- **k9s behaviour settings.** Four keys in k9s's `config.yaml`, set the way
+  `ui.skin` already is: only while still at k9s's default (`false`, which k9s
+  writes out the first time it runs). A key you changed is left alone.
+  `ui.logoless` gives the table back the rows the logo took, `ui.reactive`
+  applies skin and config edits without a restart, `liveViewAutoRefresh` keeps
+  describe and YAML views following the resource, and `skipLatestRevCheck`
+  drops the start-up check for a newer k9s, since the bootstrap upgrades it.
+  They are written as YAML booleans. k9s rejects the string `"true"`.
+- **k9s plugins and aliases**, `k9s/plugins.yaml` and `k9s/aliases.yaml`,
+  deployed where `k9s info` says they live. Both are the repo's whole: k9s
+  never writes them after creating them. The first replacement of yours is
+  kept as `.bak`.
+  - `Ctrl-L` on a pod tails, with stern, every pod matching the view's filter
+    (`/api` follows every replica). `Ctrl-L` on a deployment, statefulset or
+    daemonset tails every pod it owns.
+  - `Shift-D` on a container adds an ephemeral `nicolaka/netshoot` debug
+    container that shares its processes. k9s asks first, because the change
+    to the pod cannot be undone.
+  - The aliases are k9s's own eight defaults plus `vwc` and `mwc` (admission
+    webhooks) and `le` (leases).
+  - Every plugin runs a program rather than a shell line, so the one file
+    works on all three platforms. Helm values need no plugin: `v` on a
+    release in k9s's helm view shows them.
+  - `-Doctor` checks both files.
+- **kubecolor theme**, `kubecolor/color.yaml`: Catppuccin Mocha, so
+  `kubectl` output matches the k9s skin. It sets only the base colours and a
+  few data types, and kubecolor derives the rest. Deployed to
+  `%USERPROFILE%\.kube\color.yaml`, or wherever `KUBECOLOR_CONFIG` points. The first
+  replacement of yours is kept as `color.yaml.bak`. `-Doctor` checks it.
+- **yt-dlp config**, `yt-dlp/config`, deployed to `%APPDATA%\yt-dlp\config`.
+  - Downloads go to `%USERPROFILE%\Downloads` wherever you run yt-dlp from (`-P .` for
+    the current directory).
+  - Metadata and chapters, the thumbnail as cover art, and English or
+    Ukrainian subtitles are embedded in the file rather than left beside it.
+  - Merges go into `.mkv`, because yt-dlp cannot embed a thumbnail in `.webm`,
+    YouTube's default merge, and would end the download in a post-processing
+    error.
+  - The file name stays yt-dlp's default. `--ignore-config` skips the config
+    for one download, and `-Doctor` checks it.
+- **glow wraps at 100 columns** rather than 80, set only while `width` is
+  still at the value glow writes into a new `glow.yml`. The pager setting that
+  Linux and macOS get is left off here: glow pages through `less`, which is not
+  on PATH on Windows.
+
+### Fixed
+
+- **The lnav theme never took.** The winget lnav is an MSYS2 build, and
+  `lnav -h` names its config directory as it sees it,
+  `/cygdrive/c/Users/<you>/AppData/Roaming/lnav`. `Join-Path` hung that off the
+  root of the current drive. The theme landed in `C:\cygdrive\c\...`, and
+  lnav refused `/ui/theme catppuccin-mocha` ("lnav did not take
+  catppuccin-mocha"). The path is converted to `C:\Users\...` now. A
+  `C:\cygdrive` folder left by an earlier run is not used, and can be deleted.
+- **Windows PowerShell 5.1 threw on a native command's stderr.** With
+  `$ErrorActionPreference = 'Stop'`, every stderr line of a redirected native
+  command became a terminating error under 5.1. That covers git in the update
+  check, `uv tool`, `mise use`, `lnav -h`, `code --install-extension` and
+  others. Each redirected call goes through `Invoke-Native` now, which runs it
+  under `Continue`. Callers already read the exit code.
+- **`-Doctor` created configs for glow, lnav and k9s.** Each of the three
+  writes a default config the first time it runs, `--help` included. The
+  doctor asks a tool only once its config directory exists:
+  `%LOCALAPPDATA%\glow\Config`, `%APPDATA%\lnav` or `%LOCALAPPDATA%\k9s`, or
+  `GLOW_CONFIG_HOME`, `K9S_CONFIG_DIR` and `XDG_CONFIG_HOME` when they are set.
+  Before that, it reports "not deployed - <tool> has no config directory yet",
+  as macOS does.
+
 ## [1.52.0]
 
 ### Added

@@ -1,0 +1,18 @@
+# yazi.toml - yazi's config, managed by the bootstrap on every platform.
+#
+# Only the keys that differ from yazi's preset are set; yazi merges this file
+# over its own defaults, so everything else keeps upstream's value. The whole
+# file is the repo's: a run replaces a copy that has drifted from it, and the
+# first replacement is kept as yazi.toml.bak. theme.toml beside it stays yours.
+#
+# Deployed to $YAZI_CONFIG_HOME, or ${XDG_CONFIG_HOME:-~/.config}/yazi on Linux
+# and macOS and %APPDATA%\yazi\config on Windows.
+
+[mgr]
+# Dotfiles are the point of half the directories this repo touches. `.` in
+# yazi toggles them off again for the session.
+show_hidden = true
+# file2 before file10.
+sort_by     = "natural"
+# Each file's size in the right-hand column of the current pane.
+linemode    = "size"

@@ -1,0 +1,25 @@
+# ripgrep config - managed by the bootstrap on every platform.
+#
+# ripgrep reads no config file unless RIPGREP_CONFIG_PATH names one, so the zsh
+# fragment and profile.ps1 export it, and only when this file is in place. The
+# shells alias grep to rg, so these flags apply to grep at the prompt too.
+# Deployed to ${XDG_CONFIG_HOME:-~/.config}/ripgrep/config on Linux and macOS
+# and %APPDATA%\ripgrep\config on Windows. One flag per line, as rg wants.
+#
+# Every flag here has an opposite for a one-off: --case-sensitive,
+# --no-hidden, --max-columns=0. `rg --no-config` drops the whole file.
+
+# Case-insensitive unless the pattern has a capital letter.
+--smart-case
+
+# Search dotfiles and dot-directories (.github, .env, .config), the same reach
+# the fzf file widgets have. .gitignore is still honoured.
+--hidden
+
+# .git itself is only noise once --hidden is on.
+--glob=!.git/
+
+# A minified bundle or a lockfile line no longer fills the screen: long lines
+# show their first 200 columns, followed by a count of the matches cut off.
+--max-columns=200
+--max-columns-preview

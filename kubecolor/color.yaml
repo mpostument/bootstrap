@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=https://github.com/kubecolor/kubecolor/raw/main/config-schema.json
+#
+# color.yaml - kubecolor's config, managed by the bootstrap on every platform.
+#
+# Catppuccin Mocha, the palette the k9s skin, starship.toml, ghostty and bat
+# use, so `kubectl get` (an alias for kubecolor in both shells) and k9s look
+# alike. Only the base colours and a few data types are set; kubecolor derives
+# every other slot - status words, ratios, apply results - from these.
+#
+# Deployed to ~/.kube/color.yaml on every platform (%USERPROFILE%\.kube on
+# Windows), kubecolor's own path, unless KUBECOLOR_CONFIG names another. The
+# whole file is the repo's; the first replacement is kept as color.yaml.bak.
+
+preset: dark
+
+theme:
+  base:
+    info: fg=#cdd6f4        # text
+    primary: fg=#cba6f7     # mauve
+    secondary: fg=#89b4fa   # blue
+    success: fg=#a6e3a1     # green
+    warning: fg=#f9e2af     # yellow
+    danger: fg=#f38ba8      # red
+    muted: fg=#6c7086       # overlay0
+    # Cycled by nesting depth in YAML, JSON and describe output.
+    key: fg=#89b4fa / fg=#94e2d5 / fg=#cba6f7
+  default: fg=#cdd6f4
+  data:
+    string: fg=#a6e3a1
+    number: fg=#fab387      # peach
+    "true": fg=#a6e3a1
+    "false": fg=#f38ba8
+    "null": fg=#6c7086
+    quantity: fg=#fab387
+    duration: fg=#bac2de    # subtext1
+  table:
+    header: fg=#cba6f7:bold

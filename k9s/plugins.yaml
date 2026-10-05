@@ -1,0 +1,78 @@
+# plugins.yaml - k9s plugins, managed by the bootstrap on every platform.
+#
+# k9s never writes this file, so the whole of it is the repo's: a run replaces
+# a copy that has drifted, and the first replacement is kept as
+# plugins.yaml.bak. Deployed where `k9s info` says Plugins live.
+#
+# Every command is a program, not a shell line - no `bash -c` - so the same
+# file works under PowerShell on Windows. stern and kubectl are in the cloud
+# group on all three platforms. Helm values need no plugin: `v` on a release
+# in k9s's helm view shows them.
+
+plugins:
+  # Ctrl-L on a pod: every pod whose name matches the view's current filter
+  # (/), tailed together with stern. With no filter, k9s passes the selected
+  # pod's name instead, so it is that one pod. Filter by a prefix (/api) to
+  # follow every replica at once.
+  stern-pods:
+    shortCut: Ctrl-L
+    description: Logs (stern)
+    scopes:
+      - pods
+    command: stern
+    background: false
+    confirm: false
+    args:
+      - --tail
+      - "50"
+      - --context
+      - $CONTEXT
+      - -n
+      - $NAMESPACE
+      - $FILTER
+
+  # Ctrl-L on a deployment, statefulset or daemonset: every pod it owns, so a
+  # rollout's old and new replicas sit in one stream.
+  stern-workload:
+    shortCut: Ctrl-L
+    description: Logs (stern)
+    scopes:
+      - deployments
+      - statefulsets
+      - daemonsets
+    command: stern
+    background: false
+    confirm: false
+    args:
+      - --tail
+      - "50"
+      - --context
+      - $CONTEXT
+      - -n
+      - $NAMESPACE
+      - $RESOURCE_NAME/$NAME
+
+  # Shift-D on a container: an ephemeral debug container in the same pod,
+  # sharing that container's process namespace. netshoot carries curl, dig,
+  # tcpdump and friends - what a distroless image leaves out. Confirmed first,
+  # since it changes the pod spec (ephemeral containers cannot be removed).
+  debug:
+    shortCut: Shift-D
+    description: Debug container (netshoot)
+    dangerous: true
+    scopes:
+      - containers
+    command: kubectl
+    background: false
+    confirm: true
+    args:
+      - debug
+      - -it
+      - --context
+      - $CONTEXT
+      - -n
+      - $NAMESPACE
+      - $POD
+      - --target=$NAME
+      - --image=nicolaka/netshoot:v0.16
+      - --profile=general

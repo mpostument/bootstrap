@@ -80,10 +80,19 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Windows PowerShell turns each stderr line of a redirected native command into
+# an error, which 'Stop' throws on - git, uv and mise all report there. Every
+# redirected native call goes through this; the exit code is what callers check.
+function Invoke-Native {
+    param([scriptblock]$NativeCommand)
+    $ErrorActionPreference = 'Continue'
+    & $NativeCommand
+}
+
 # The parameters as given, for the rerun after an update.
 $script:BoundParams = @{} + $PSBoundParameters
 
-$script:BootstrapVersion = '1.52.0'
+$script:BootstrapVersion = '1.53.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -97,6 +106,9 @@ $script:ProfileSource = Join-Path $script:ToolRoot 'profile.ps1'
 $script:StarshipTomlSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'starship.toml'
 $script:AtuinSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'atuin'
 $script:BatSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'bat'
+$script:RipgrepSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'ripgrep'
+$script:KubecolorSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'kubecolor'
+$script:YtDlpSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'yt-dlp'
 $script:TealdeerSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'tealdeer'
 $script:CarapaceSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'carapace'
 $script:K9sSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'k9s'
@@ -409,7 +421,7 @@ function Send-FailureNotification {
 
     try {
         $msg = Get-Command msg.exe -ErrorAction SilentlyContinue
-        if ($msg) { & $msg.Source '*' "windows-bootstrap: $headline - $body" 2>$null }
+        if ($msg) { Invoke-Native { & $msg.Source '*' "windows-bootstrap: $headline - $body" 2>$null } }
     } catch {
         # Home editions have no msg.exe. There is nothing left to try, and a
         # missing notification is not itself a failure.
@@ -554,6 +566,7 @@ foreach (`$c in @($list)) {
 }
 `$out += "env:PATH=`$env:PATH"
 `$out += "env:JAVA_HOME=`$env:JAVA_HOME"
+`$out += "env:RIPGREP_CONFIG_PATH=`$env:RIPGREP_CONFIG_PATH"
 `$prompt = Get-Command prompt -CommandType Function -ErrorAction SilentlyContinue
 `$out += "fn:prompt=`$(if (`$prompt) { `$prompt.Definition -replace '\s+', ' ' } else { '' })"
 foreach (`$n in 'tools', 'gb', 'gs', 'fkill', 'cheat', 'y') {
@@ -570,7 +583,7 @@ foreach (`$n in 'tools', 'gb', 'gs', 'fkill', 'cheat', 'y') {
         # -EncodedCommand, because Windows PowerShell and pwsh before 7.3 pass
         # the probe's embedded double quotes to the child unescaped.
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($probe))
-        $raw = & $script:PwshForTask -NoLogo -NonInteractive -EncodedCommand $encoded 2>$null
+        $raw = Invoke-Native { & $script:PwshForTask -NoLogo -NonInteractive -EncodedCommand $encoded 2>$null }
     } catch {
         Write-Verbose ('the probe shell failed - {0}' -f $_.Exception.Message)
         return $false
@@ -773,16 +786,21 @@ function Test-DoctorThemes {
     # A theme file deployed with nothing naming it is the failure worth
     # catching: every install step says ok, and the colours never change.
     if (Get-Command k9s -ErrorAction SilentlyContinue) {
-        $paths = Get-K9sPaths
-        if (-not $paths) {
+        $hasConfig = Test-ToolHasConfig 'k9s'
+        $paths = if ($hasConfig) { Get-K9sPaths } else { $null }
+        if (-not $hasConfig) {
+            Add-DoctorBroken 'k9s skin' 'not deployed - k9s has no config directory yet'
+        } elseif (-not $paths) {
             Add-DoctorBroken 'k9s skin' 'k9s info named no config file'
         } else {
             Test-DoctorFile -Label 'k9s skin' `
                 -Source (Join-Path $script:K9sSource 'skins\catppuccin-mocha.yaml') `
                 -Target (Join-Path $paths.Skins 'catppuccin-mocha.yaml')
+            Test-DoctorFile -Label 'k9s plugins' -Source (Join-Path $script:K9sSource 'plugins.yaml') -Target $paths.Plugins
+            Test-DoctorFile -Label 'k9s aliases' -Source (Join-Path $script:K9sSource 'aliases.yaml') -Target $paths.Aliases
             $skin = ''
             if ((Test-Path -LiteralPath $paths.Config) -and (Get-Command yq -ErrorAction SilentlyContinue)) {
-                $skin = (& yq '.k9s.ui.skin' $paths.Config 2>$null | Select-Object -First 1)
+                $skin = (Invoke-Native { & yq '.k9s.ui.skin' $paths.Config 2>$null } | Select-Object -First 1)
                 if ($null -eq $skin -or $skin -eq 'null') { $skin = '' }
             }
             if ($skin -eq 'catppuccin-mocha') {
@@ -796,7 +814,7 @@ function Test-DoctorThemes {
     }
 
     if (Get-Command lazygit -ErrorAction SilentlyContinue) {
-        $dir = (& lazygit --print-config-dir 2>$null | Select-Object -First 1)
+        $dir = (Invoke-Native { & lazygit --print-config-dir 2>$null } | Select-Object -First 1)
         if (-not $dir) {
             Add-DoctorBroken 'lazygit config' 'lazygit --print-config-dir said nothing'
         } else {
@@ -830,6 +848,8 @@ function Test-DoctorThemes {
         } else {
             Add-DoctorNote 'yazi dark flavor' ("{0} - yours, not the repo's" -f $flavor)
         }
+        Test-DoctorFile -Label 'yazi config' -Source (Join-Path $script:YaziSource 'yazi.toml') `
+            -Target (Join-Path $yaziHome 'yazi.toml')
     }
 
     if (Get-Command eza -ErrorAction SilentlyContinue) {
@@ -837,15 +857,18 @@ function Test-DoctorThemes {
     }
 
     if (Get-Command glow -ErrorAction SilentlyContinue) {
-        $glowCfg = Get-GlowConfigFile
-        if (-not $glowCfg) {
+        $hasConfig = Test-ToolHasConfig 'glow'
+        $glowCfg = if ($hasConfig) { Get-GlowConfigFile } else { '' }
+        if (-not $hasConfig) {
+            Add-DoctorBroken 'glow theme' 'not deployed - glow has no config directory yet'
+        } elseif (-not $glowCfg) {
             Add-DoctorBroken 'glow style' 'glow --help named no config file'
         } else {
             $glowTheme = Join-Path (Split-Path $glowCfg -Parent) 'catppuccin-mocha.json'
             Test-DoctorFile -Label 'glow theme' -Source (Join-Path $script:GlowSource 'catppuccin-mocha.json') -Target $glowTheme
             $style = ''
             if ((Test-Path -LiteralPath $glowCfg) -and (Get-Command yq -ErrorAction SilentlyContinue)) {
-                $style = (& yq '.style' $glowCfg 2>$null | Select-Object -First 1)
+                $style = (Invoke-Native { & yq '.style' $glowCfg 2>$null } | Select-Object -First 1)
                 if ($null -eq $style -or $style -eq 'null') { $style = '' }
             }
             if ($style -eq $glowTheme) {
@@ -859,8 +882,11 @@ function Test-DoctorThemes {
     }
 
     if (Get-Command lnav -ErrorAction SilentlyContinue) {
-        $lnavDir = Get-LnavConfigDir
-        if (-not $lnavDir) {
+        $hasConfig = Test-ToolHasConfig 'lnav'
+        $lnavDir = if ($hasConfig) { Get-LnavConfigDir } else { '' }
+        if (-not $hasConfig) {
+            Add-DoctorBroken 'lnav theme' 'not deployed - lnav has no config directory yet'
+        } elseif (-not $lnavDir) {
             Add-DoctorBroken 'lnav theme' 'lnav -h named no config directory'
         } else {
             Test-DoctorFile -Label 'lnav theme' -Source (Join-Path $script:LnavSource 'catppuccin-mocha.json') `
@@ -888,6 +914,28 @@ function Test-DoctorConfig {
     )
     foreach ($pair in $pairs) {
         Test-DoctorFile -Label $pair.Label -Source $pair.Source -Target $pair.Target
+    }
+    if (Get-Command kubecolor -ErrorAction SilentlyContinue) {
+        Test-DoctorFile -Label 'kubecolor theme' -Source (Join-Path $script:KubecolorSource 'color.yaml') `
+            -Target (Get-KubecolorConfigFile)
+    }
+    if (Get-Command yt-dlp -ErrorAction SilentlyContinue) {
+        Test-DoctorFile -Label 'yt-dlp config' -Source (Join-Path $script:YtDlpSource 'config') `
+            -Target (Join-Path $env:APPDATA 'yt-dlp\config')
+    }
+    if (Get-Command rg -ErrorAction SilentlyContinue) {
+        $rgConfig = Join-Path $env:APPDATA 'ripgrep\config'
+        Test-DoctorFile -Label 'ripgrep config' -Source (Join-Path $script:RipgrepSource 'config') -Target $rgConfig
+        # rg finds no config file by itself: without the variable the file
+        # above is never read.
+        $rgEnv = Get-ProbeValue 'env:RIPGREP_CONFIG_PATH'
+        if (-not $rgEnv) {
+            Add-DoctorBroken 'RIPGREP_CONFIG_PATH' 'unset in a new shell, so rg reads no config'
+        } elseif ($rgEnv -eq $rgConfig) {
+            Add-DoctorOk 'RIPGREP_CONFIG_PATH' $rgEnv
+        } else {
+            Add-DoctorNote 'RIPGREP_CONFIG_PATH' ("{0} - not the repo's config, which may be deliberate" -f $rgEnv)
+        }
     }
     Test-DoctorTldrCache
 }
@@ -993,14 +1041,14 @@ function Test-BootstrapUpdate {
 
     $isCheckout = $false
     if (Get-Command git -ErrorAction SilentlyContinue) {
-        git -C $script:ToolRoot rev-parse --is-inside-work-tree *> $null
+        Invoke-Native { git -C $script:ToolRoot rev-parse --is-inside-work-tree *> $null }
         $isCheckout = $LASTEXITCODE -eq 0
     }
     if ($isCheckout) {
         $kind = 'git'
-        $originUrl = (git -C $script:ToolRoot remote get-url origin 2>$null) -replace '\.git$', ''
+        $originUrl = (Invoke-Native { git -C $script:ToolRoot remote get-url origin 2>$null }) -replace '\.git$', ''
         if ($originUrl -match 'github\.com[:/](?<slug>[^/]+/[^/]+)$') { $repoSlug = $Matches['slug'] }
-        $localTag = git -C $script:ToolRoot describe --tags --abbrev=0 2>$null
+        $localTag = Invoke-Native { git -C $script:ToolRoot describe --tags --abbrev=0 2>$null }
     } elseif (Test-Path $releaseFile) {
         $kind = 'archive'
         foreach ($line in Get-Content $releaseFile) {
@@ -1395,7 +1443,7 @@ function Set-YamlKey {
     }
     $have = ''
     if (Test-Path -LiteralPath $File) {
-        $have = (& yq $Key $File 2>$null | Select-Object -First 1)
+        $have = (Invoke-Native { & yq $Key $File 2>$null } | Select-Object -First 1)
         if ($null -eq $have -or $have -eq 'null') { $have = '' }
     }
     if ($Default -and $have -eq $Default) { $have = '' }
@@ -1415,8 +1463,11 @@ function Set-YamlKey {
     }
     New-Item -ItemType Directory -Path (Split-Path $File -Parent) -Force | Out-Null
     if (-not (Test-Path -LiteralPath $File)) { New-Item -ItemType File -Path $File -Force | Out-Null }
+    # true, false and plain integers go in through env(), which yq parses as
+    # YAML: k9s refuses a config whose boolean is the string "true".
+    $reader = if ($Value -match '^(true|false|[0-9]+)$') { 'env' } else { 'strenv' }
     $env:BOOTSTRAP_YQ_VALUE = $Value
-    & yq -i "$Key = strenv(BOOTSTRAP_YQ_VALUE)" $File
+    & yq -i "$Key = $reader(BOOTSTRAP_YQ_VALUE)" $File
     $code = $LASTEXITCODE
     Remove-Item Env:\BOOTSTRAP_YQ_VALUE -ErrorAction SilentlyContinue
     if ($code -eq 0) {
@@ -1424,6 +1475,13 @@ function Set-YamlKey {
     } else {
         Add-Result -Group 'shell' -Id $Label -Action 'failed' -Detail ('yq could not set {0} in {1}' -f $Key, $File)
     }
+}
+
+function Get-KubecolorConfigFile {
+    # kubecolor's own rule: KUBECOLOR_CONFIG wins, otherwise color.yaml in
+    # ~/.kube, which on Windows is under %USERPROFILE%.
+    if ($env:KUBECOLOR_CONFIG) { return $env:KUBECOLOR_CONFIG }
+    return (Join-Path $env:USERPROFILE '.kube\color.yaml')
 }
 
 function Get-YaziConfigHome {
@@ -1447,7 +1505,7 @@ function Get-GlowConfigFile {
     # default one - style "auto" and nothing of anybody's - so a first call
     # that names nothing is followed by a second.
     foreach ($attempt in 1, 2) {
-        $line = @(& glow --help 2>$null) | Where-Object { $_ -match '--config string.*\(default (.+)\)\s*$' } |
+        $line = @(Invoke-Native { & glow --help 2>$null }) | Where-Object { $_ -match '--config string.*\(default (.+)\)\s*$' } |
             Select-Object -First 1
         if ($line -and $line -match '\(default (.+)\)\s*$') { return $matches[1].Trim() }
     }
@@ -1456,20 +1514,53 @@ function Get-GlowConfigFile {
 
 function Get-LnavConfigDir {
     # Where lnav keeps its config, from lnav -h: the line after the one that
-    # introduces it, behind a folder glyph.
-    $lines = @(& lnav -h 2>&1 | ForEach-Object { "$_" })
+    # introduces it, behind a folder glyph. The Windows lnav is an MSYS2 build
+    # and names the place as it sees it, /cygdrive/c/Users/...; Join-Path
+    # would hang that off the root of the current drive.
+    $lines = @(Invoke-Native { & lnav -h 2>&1 } | ForEach-Object { "$_" })
     for ($i = 0; $i -lt $lines.Count - 1; $i++) {
         if ($lines[$i] -match 'format files are stored in') {
-            return ($lines[$i + 1] -replace '^[^A-Za-z\\/]*', '').Trim()
+            $dir = ($lines[$i + 1] -replace '^[^A-Za-z\\/]*', '').Trim()
+            if ($dir -match '^/(?:cygdrive/)?([A-Za-z])(/.*)?$') {
+                $dir = '{0}:{1}' -f $matches[1].ToUpper(), ($(if ($matches[2]) { $matches[2] } else { '/' }) -replace '/', '\')
+            }
+            return $dir
         }
     }
     return ''
 }
 
+function Test-ToolHasConfig {
+    # Whether glow, lnav or k9s has a config directory yet, in any of the
+    # places it looks. Each creates one the first time it runs - --help, -h and
+    # `k9s info` included - so the doctor, which changes nothing, asks the tool
+    # only once this says yes. The places are the tools' own on Windows: glow's
+    # go-app-paths, lnav's APPDATA branch, and k9s's adrg/xdg.
+    param([string]$Tool)
+    $xdg = $env:XDG_CONFIG_HOME
+    $dirs = switch ($Tool) {
+        'glow' {
+            $env:GLOW_CONFIG_HOME
+            if ($xdg) { Join-Path $xdg 'glow' }
+            Join-Path $env:LOCALAPPDATA 'glow\Config'
+        }
+        'lnav' { Join-Path $env:APPDATA 'lnav' }
+        'k9s' {
+            $env:K9S_CONFIG_DIR
+            if ($xdg) { Join-Path $xdg 'k9s' }
+            Join-Path $env:LOCALAPPDATA 'k9s'
+        }
+    }
+    foreach ($dir in @($dirs)) {
+        if ($dir -and (Test-Path -LiteralPath $dir -PathType Container)) { return $true }
+    }
+    return $false
+}
+
 function Get-LnavTheme {
     # The theme lnav is using, "default" when nobody chose one. Asked of lnav
     # rather than read from its config.json, which lnav writes itself.
-    $line = @(& lnav -nN -c ':config /ui/theme' 2>$null) | Where-Object { $_ -match '^/ui/theme = "(.*)"' } |
+    $line = @(Invoke-Native { & lnav -nN -c ':config /ui/theme' 2>$null }) | Where-Object { $_ -match '^/ui/theme = "(.*)"' } |
         Select-Object -First 1
     if ($line -and $line -match '^/ui/theme = "(.*)"') { return $matches[1] }
     return ''
@@ -1494,7 +1585,7 @@ function Set-LnavTheme {
         Add-Result -Group 'shell' -Id 'lnav /ui/theme' -Action 'would-install' -Detail $Value
         return
     }
-    & lnav -nN -c ":config /ui/theme $Value" *> $null
+    Invoke-Native { & lnav -nN -c ":config /ui/theme $Value" *> $null }
     $have = Get-LnavTheme
     if ($have -eq $Value) {
         Add-Result -Group 'shell' -Id 'lnav /ui/theme' -Action 'installed' -Detail $Value
@@ -1588,7 +1679,7 @@ function Get-K9sPaths {
     # coloured, hence the escape strip, and k9s has spelled the line both
     # Config and Configuration. Returns $null when k9s names no config file.
     $esc = [char]27
-    $lines = @(& k9s info 2>$null) -replace "$esc\[[0-9;]*m", ''
+    $lines = @(Invoke-Native { & k9s info 2>$null }) -replace "$esc\[[0-9;]*m", ''
     $first = {
         param($pattern)
         $hit = $lines | Select-String -Pattern $pattern | Select-Object -First 1
@@ -1598,7 +1689,11 @@ function Get-K9sPaths {
     if (-not $config) { return $null }
     $skins = & $first '^Skins:\s*(.+)$'
     if (-not $skins) { $skins = Join-Path (Split-Path $config -Parent) 'skins' }
-    @{ Config = $config; Skins = $skins }
+    $plugins = & $first '^Plugins:\s*(.+)$'
+    if (-not $plugins) { $plugins = Join-Path (Split-Path $config -Parent) 'plugins.yaml' }
+    $aliases = & $first '^Aliases:\s*(.+)$'
+    if (-not $aliases) { $aliases = Join-Path (Split-Path $config -Parent) 'aliases.yaml' }
+    @{ Config = $config; Skins = $skins; Plugins = $plugins; Aliases = $aliases }
 }
 
 function Get-CliToolsIndex {
@@ -2147,7 +2242,7 @@ function Uninstall-Item {
         return
     }
     if ($Item.Kind -eq 'uv') {
-        & uv tool uninstall $Item.Id *> $null
+        Invoke-Native { & uv tool uninstall $Item.Id *> $null }
         $ok = $LASTEXITCODE -eq 0
         $why = 'uv tool uninstall failed'
     } else {
@@ -2330,7 +2425,7 @@ if ($Select) {
     $wantedBefore = @($catalog | Where-Object { Test-ItemWanted -Id $_.Id -Selection $selection } |
             ForEach-Object { $_.Id })
     $uvNow = @()
-    if (Get-Command uv -ErrorAction SilentlyContinue) { $uvNow = @(& uv tool list 2>$null) }
+    if (Get-Command uv -ErrorAction SilentlyContinue) { $uvNow = @(Invoke-Native { & uv tool list 2>$null }) }
     $versions = @{}
     if ($null -ne $installed) { foreach ($k in $installed.Keys) { $versions[$k] = $installed[$k] } }
     foreach ($it in @($catalog | Where-Object { $_.Kind -eq 'uv' })) {
@@ -2478,7 +2573,7 @@ if ($uvEntries.Count -gt 0) {
         Add-Result -Group 'uv' -Id 'uv tools' -Action 'missing' `
             -Detail 'uv is not on PATH - astral-sh.uv installs it in the dev group'
     } else {
-        $uvListing = @(& uv tool list 2>$null)
+        $uvListing = @(Invoke-Native { & uv tool list 2>$null })
         foreach ($entry in $uvEntries) {
             $tool = $entry.Split('|')[0]
             $extra = @()
@@ -2495,9 +2590,9 @@ if ($uvEntries.Count -gt 0) {
                         -Detail ('uv tool install {0}' -f ((@($tool) + $extra) -join ' '))
                     continue
                 }
-                & uv tool install --quiet $tool @extra *> $null
+                Invoke-Native { & uv tool install --quiet $tool @extra *> $null }
                 if ($LASTEXITCODE -eq 0) {
-                    $now = Get-UvToolVersion -Name $tool -Listing @(& uv tool list 2>$null)
+                    $now = Get-UvToolVersion -Name $tool -Listing @(Invoke-Native { & uv tool list 2>$null })
                     Add-Result -Group 'uv' -Id $tool -Action 'installed' -Detail $now
                 } else {
                     Add-Result -Group 'uv' -Id $tool -Action 'failed' -Detail ('uv tool install {0} failed' -f $tool)
@@ -2505,12 +2600,12 @@ if ($uvEntries.Count -gt 0) {
             } elseif (-not $PSCmdlet.ShouldProcess($tool, 'uv tool upgrade')) {
                 Add-Result -Group 'uv' -Id $tool -Action 'present' -Detail ('{0} - would run uv tool upgrade' -f $have)
             } else {
-                & uv tool upgrade --quiet $tool *> $null
+                Invoke-Native { & uv tool upgrade --quiet $tool *> $null }
                 if ($LASTEXITCODE -ne 0) {
                     Add-Result -Group 'uv' -Id $tool -Action 'failed' -Detail ('uv tool upgrade {0} failed' -f $tool)
                     continue
                 }
-                $now = Get-UvToolVersion -Name $tool -Listing @(& uv tool list 2>$null)
+                $now = Get-UvToolVersion -Name $tool -Listing @(Invoke-Native { & uv tool list 2>$null })
                 if ($now -eq $have) {
                     Add-Result -Group 'uv' -Id $tool -Action 'current' -Detail $have
                 } else {
@@ -2539,7 +2634,7 @@ if (-not (Get-Command mise -ErrorAction SilentlyContinue)) {
     Add-Result -Group 'mise' -Id 'mise runtimes' -Action 'failed' `
         -Detail ('not found at {0}' -f $miseToolsFile)
 } else {
-    $miseHave = @(& mise ls -g 2>$null | ForEach-Object { ($_ -split '\s+')[0] })
+    $miseHave = @(Invoke-Native { & mise ls -g 2>$null } | ForEach-Object { ($_ -split '\s+')[0] })
     $entries = @(Get-Content $miseToolsFile |
         ForEach-Object { ($_ -split '#')[0].Trim() } |
         Where-Object { $_ })
@@ -2547,13 +2642,13 @@ if (-not (Get-Command mise -ErrorAction SilentlyContinue)) {
     foreach ($entry in $entries) {
         $tool = $entry.Split('@')[0]
         if ($miseHave -contains $tool) {
-            Add-Result -Group 'mise' -Id $entry -Action 'current' -Detail (& mise current $tool 2>$null)
+            Add-Result -Group 'mise' -Id $entry -Action 'current' -Detail (Invoke-Native { & mise current $tool 2>$null })
         } elseif (-not $PSCmdlet.ShouldProcess($entry, 'mise use -g')) {
             Add-Result -Group 'mise' -Id $entry -Action 'would-install' -Detail ('mise use -g {0}' -f $entry)
         } else {
-            & mise use -g $entry *> $null
+            Invoke-Native { & mise use -g $entry *> $null }
             if ($LASTEXITCODE -eq 0) {
-                Add-Result -Group 'mise' -Id $entry -Action 'installed' -Detail (& mise current $tool 2>$null)
+                Add-Result -Group 'mise' -Id $entry -Action 'installed' -Detail (Invoke-Native { & mise current $tool 2>$null })
             } else {
                 Add-Result -Group 'mise' -Id $entry -Action 'failed' -Detail ('run by hand: mise use -g {0}' -f $entry)
             }
@@ -2575,7 +2670,7 @@ if (-not (Get-Command mise -ErrorAction SilentlyContinue)) {
     # JAVA_HOME, for Gradle, Maven and the IDEs that read it rather than PATH.
     $javaEntry = $entries | Where-Object { $_ -like 'java@*' } | Select-Object -First 1
     if ($javaEntry) {
-        $javaHome = (& mise where $javaEntry 2>$null)
+        $javaHome = (Invoke-Native { & mise where $javaEntry 2>$null })
         if (-not $javaHome) {
             Add-Result -Group 'mise' -Id 'JAVA_HOME' -Action 'missing' -Detail ('mise where {0} returned nothing' -f $javaEntry)
         } elseif ([Environment]::GetEnvironmentVariable('JAVA_HOME', 'User') -eq $javaHome) {
@@ -2738,10 +2833,20 @@ if ($SkipShell) {
         Add-Result -Group 'shell' -Id 'tealdeer config' -Action 'missing' -Detail 'tldr is not installed'
     }
 
+    # ripgrep config: smart-case, dotfiles searched, .git left out. rg reads it
+    # through RIPGREP_CONFIG_PATH, which profile.ps1 sets when the file exists.
+    if (Get-Command rg -ErrorAction SilentlyContinue) {
+        Deploy-ManagedFile -Source (Join-Path $script:RipgrepSource 'config') `
+            -Target (Join-Path $env:APPDATA 'ripgrep\config') `
+            -Group 'shell' -Label 'ripgrep config' -Marker 'managed by the bootstrap'
+    } else {
+        Add-Result -Group 'shell' -Id 'ripgrep config' -Action 'missing' -Detail 'ripgrep is not installed'
+    }
+
     # bat config: the theme bat, and through it delta, renders with. bat reads
     # %APPDATA%\bat on Windows, which is what `bat --config-dir` reports.
     if (Get-Command bat -ErrorAction SilentlyContinue) {
-        $batConfig = (& bat --config-dir 2>$null)
+        $batConfig = (Invoke-Native { & bat --config-dir 2>$null })
         if (-not $batConfig) { $batConfig = Join-Path $env:APPDATA 'bat' }
 
         Deploy-ManagedFile -Source (Join-Path $script:BatSource 'config') `
@@ -2755,13 +2860,13 @@ if ($SkipShell) {
         # bat since 0.24 reads the themes directory at startup, so this is a
         # no-op on anything current - kept for an older bat, which only sees a
         # theme once it is in the cache.
-        $themes = @(& bat --list-themes 2>$null)
+        $themes = @(Invoke-Native { & bat --list-themes 2>$null })
         if ($themes -contains 'Catppuccin Mocha') {
             Add-Result -Group 'shell' -Id 'bat cache' -Action 'current' -Detail 'Catppuccin Mocha is in the theme list'
         } elseif ($WhatIfPreference) {
             Add-Result -Group 'shell' -Id 'bat cache' -Action 'would-install' -Detail 'bat cache --build'
         } else {
-            & bat cache --build *> $null
+            Invoke-Native { & bat cache --build *> $null }
             if ($LASTEXITCODE -eq 0) {
                 Add-Result -Group 'shell' -Id 'bat cache' -Action 'installed' -Detail 'bat cache --build'
             } else {
@@ -2806,13 +2911,28 @@ if ($SkipShell) {
                 -Target (Join-Path $k9sPaths.Skins 'catppuccin-mocha.yaml') `
                 -Group 'shell' -Label 'k9s skin' -Marker 'managed by the bootstrap'
             Set-YamlKey -File $k9sPaths.Config -Key '.k9s.ui.skin' -Value 'catppuccin-mocha' -Label 'k9s ui.skin'
+            # Behaviour, not looks - the same four keys as Linux and macOS.
+            # k9s writes each one out at false the first time it runs, so
+            # false counts as unset; a key you changed is left alone.
+            foreach ($key in '.k9s.ui.logoless', '.k9s.ui.reactive', '.k9s.liveViewAutoRefresh', '.k9s.skipLatestRevCheck') {
+                Set-YamlKey -File $k9sPaths.Config -Key $key -Value 'true' -Default 'false' `
+                    -Label ('k9s {0}' -f ($key -replace '^\.k9s\.', ''))
+            }
+            # Plugins and aliases are files k9s never writes after creating
+            # them, so both are the repo's whole, like lazygit's config.yml.
+            # Every plugin runs a program, not a shell line, so the file is
+            # the same one Linux and macOS get.
+            Deploy-ManagedFile -Source (Join-Path $script:K9sSource 'plugins.yaml') -Target $k9sPaths.Plugins `
+                -Group 'shell' -Label 'k9s plugins' -Marker 'managed by the bootstrap'
+            Deploy-ManagedFile -Source (Join-Path $script:K9sSource 'aliases.yaml') -Target $k9sPaths.Aliases `
+                -Group 'shell' -Label 'k9s aliases' -Marker 'managed by the bootstrap'
         }
     } else {
         Add-Result -Group 'shell' -Id 'k9s skin' -Action 'missing' -Detail 'k9s is not installed'
     }
 
     if (Get-Command lazygit -ErrorAction SilentlyContinue) {
-        $lazygitDir = (& lazygit --print-config-dir 2>$null | Select-Object -First 1)
+        $lazygitDir = (Invoke-Native { & lazygit --print-config-dir 2>$null } | Select-Object -First 1)
         if (-not $lazygitDir) {
             Add-Result -Group 'shell' -Id 'lazygit config' -Action 'failed' -Detail 'lazygit --print-config-dir said nothing'
         } else {
@@ -2822,6 +2942,27 @@ if ($SkipShell) {
         }
     } else {
         Add-Result -Group 'shell' -Id 'lazygit config' -Action 'missing' -Detail 'lazygit is not installed'
+    }
+
+    # kubecolor's theme - Catppuccin Mocha, so kubectl output matches the k9s
+    # skin. The colours are the config, so the whole color.yaml is the repo's.
+    # kubecolor reads %USERPROFILE%\.kube\color.yaml, or KUBECOLOR_CONFIG.
+    if (Get-Command kubecolor -ErrorAction SilentlyContinue) {
+        Deploy-ManagedFile -Source (Join-Path $script:KubecolorSource 'color.yaml') -Target (Get-KubecolorConfigFile) `
+            -Group 'shell' -Label 'kubecolor theme' -Marker 'managed by the bootstrap'
+    } else {
+        Add-Result -Group 'shell' -Id 'kubecolor theme' -Action 'missing' -Detail 'kubecolor is not installed'
+    }
+
+    # yt-dlp's config - downloads land in Downloads with metadata, chapters,
+    # cover art and subtitles embedded, merged into .mkv. %APPDATA%\yt-dlp\config
+    # is the path yt-dlp recommends on Windows.
+    if (Get-Command yt-dlp -ErrorAction SilentlyContinue) {
+        Deploy-ManagedFile -Source (Join-Path $script:YtDlpSource 'config') `
+            -Target (Join-Path $env:APPDATA 'yt-dlp\config') `
+            -Group 'shell' -Label 'yt-dlp config' -Marker 'managed by the bootstrap'
+    } else {
+        Add-Result -Group 'shell' -Id 'yt-dlp config' -Action 'missing' -Detail 'yt-dlp is not installed'
     }
 
     # lazydocker's config - the same shape as lazygit's: the theme is gui.theme
@@ -2848,6 +2989,12 @@ if ($SkipShell) {
             -Target (Join-Path $yaziPkg 'tmtheme.xml') `
             -Group 'shell' -Label 'yazi tmTheme' -Marker 'managed by the bootstrap'
         Set-YaziFlavor -File (Join-Path $yaziHome 'theme.toml') -Value 'catppuccin-mocha' -Label 'yazi dark flavor'
+        # yazi.toml is the repo's whole, the way lazygit's config.yml is: yazi
+        # never writes to it, and it carries only the keys that differ from
+        # the preset.
+        Deploy-ManagedFile -Source (Join-Path $script:YaziSource 'yazi.toml') `
+            -Target (Join-Path $yaziHome 'yazi.toml') `
+            -Group 'shell' -Label 'yazi config' -Marker 'managed by the bootstrap'
     } else {
         Add-Result -Group 'shell' -Id 'yazi flavor' -Action 'missing' -Detail 'yazi is not installed'
     }
@@ -2868,7 +3015,7 @@ if ($SkipShell) {
         Add-Result -Group 'shell' -Id 'glow theme' -Action 'missing' -Detail 'glow is not installed'
     } elseif ($WhatIfPreference) {
         Add-Result -Group 'shell' -Id 'glow theme' -Action 'would-install' `
-            -Detail 'catppuccin-mocha.json beside glow.yml, and style set if unset'
+            -Detail 'catppuccin-mocha.json beside glow.yml; style and width set if unset'
     } else {
         $glowCfg = Get-GlowConfigFile
         if (-not $glowCfg) {
@@ -2878,6 +3025,10 @@ if ($SkipShell) {
             Deploy-ManagedFile -Source (Join-Path $script:GlowSource 'catppuccin-mocha.json') -Target $glowTheme `
                 -Group 'shell' -Label 'glow theme' -Marker 'managed by the bootstrap'
             Set-YamlKey -File $glowCfg -Key '.style' -Value $glowTheme -Label 'glow style' -Default 'auto'
+            # glow writes width: 80 into the glow.yml it creates, so that
+            # counts as unset. pager stays off here, unlike Linux and macOS:
+            # glow pages through less, which Windows does not have on PATH.
+            Set-YamlKey -File $glowCfg -Key '.width' -Value '100' -Label 'glow width' -Default '80'
         }
     }
 
@@ -3168,14 +3319,14 @@ if ($SkipVsCode) {
             -Detail 'code CLI not found - install VS Code, then "Shell Command: Install code command in PATH"'
     } else {
         Write-Phase 'VS Code extensions - install what is missing, never remove'
-        $installed = @(& code --list-extensions 2>$null)
+        $installed = @(Invoke-Native { & code --list-extensions 2>$null })
         foreach ($extId in $manifest.VsCodeExtensions) {
             if ($installed -contains $extId) {
                 Add-Result -Group 'vscode' -Id $extId -Action 'present'
             } elseif (-not $PSCmdlet.ShouldProcess($extId, 'code --install-extension')) {
                 Add-Result -Group 'vscode' -Id $extId -Action 'would-install'
             } else {
-                & code --install-extension $extId *> $null
+                Invoke-Native { & code --install-extension $extId *> $null }
                 if ($LASTEXITCODE -eq 0) {
                     Add-Result -Group 'vscode' -Id $extId -Action 'installed'
                 } else {
@@ -3217,17 +3368,17 @@ if ($SkipShell) {
         if (-not $git.LfsEnabled) {
             Add-Result -Group 'git' -Id 'git-lfs' -Action 'skipped' -Detail 'LfsEnabled is false'
         } else {
-            $lfsVersion = (& git lfs version 2>&1 | Out-String).Trim()
+            $lfsVersion = (Invoke-Native { & git lfs version 2>&1 } | Out-String).Trim()
             if ($LASTEXITCODE -ne 0) {
                 Add-Result -Group 'git' -Id 'git-lfs' -Action 'missing' -Detail 'not bundled with this Git install; re-run the Git installer'
             } else {
-                $filter = (& git config --global --get filter.lfs.process 2>$null)
+                $filter = (Invoke-Native { & git config --global --get filter.lfs.process 2>$null })
                 if ($filter) {
                     Add-Result -Group 'git' -Id 'git-lfs' -Action 'current' -Detail (($lfsVersion -split '\s+')[0])
                 } elseif (-not $PSCmdlet.ShouldProcess('git lfs install', 'configure')) {
                     Add-Result -Group 'git' -Id 'git-lfs' -Action 'would-install' -Detail 'git lfs install'
                 } else {
-                    & git lfs install --skip-repo *> $null
+                    Invoke-Native { & git lfs install --skip-repo *> $null }
                     if ($LASTEXITCODE -eq 0) {
                         Add-Result -Group 'git' -Id 'git-lfs' -Action 'installed' -Detail 'global filters configured'
                     } else {
@@ -3256,7 +3407,7 @@ if ($SkipShell) {
                 Add-Result -Group 'git' -Id 'UnityYAMLMerge' -Action 'missing' -Detail "no editor with the tool under $($git.UnityEditorRoot)"
             } else {
                 $want = '''{0}'' merge -p "$BASE" "$REMOTE" "$LOCAL" "$MERGED"' -f $tool
-                $have = (& git config --global --get 'mergetool.unityyamlmerge.cmd' 2>$null)
+                $have = (Invoke-Native { & git config --global --get 'mergetool.unityyamlmerge.cmd' 2>$null })
 
                 if ($have -eq $want) {
                     Add-Result -Group 'git' -Id 'UnityYAMLMerge' -Action 'current' -Detail $tool
@@ -3341,7 +3492,7 @@ if ($SkipShell) {
         }
 
         foreach ($pair in $gitWant) {
-            $have = (& git config --global --get $pair.Key 2>$null)
+            $have = (Invoke-Native { & git config --global --get $pair.Key 2>$null })
             if ($have -eq $pair.Value) {
                 Add-Result -Group 'git' -Id $pair.Key -Action 'current' -Detail $pair.Value
             } elseif ($have) {

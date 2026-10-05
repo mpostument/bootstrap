@@ -1,0 +1,26 @@
+# aliases.yaml - k9s command aliases, managed by the bootstrap on every
+# platform.
+#
+# k9s writes the first eight below as its own default when the file is
+# missing, and never touches the file after that, so the whole of it is the
+# repo's: a run replaces a copy that has drifted, and the first replacement is
+# kept as aliases.yaml.bak. Deployed where `k9s info` says Aliases live.
+#
+# Only resources without an API short name are here: deploy, svc, ing, cm, sa,
+# pvc, hpa, sts, ds, cj, ev and the rest already work as `:<name>`.
+
+aliases:
+  # k9s's defaults.
+  dp: deployments
+  sec: v1/secrets
+  jo: jobs
+  cr: clusterroles
+  crb: clusterrolebindings
+  ro: roles
+  rb: rolebindings
+  np: networkpolicies
+  # Admission webhooks - the first place to look when every apply is refused.
+  vwc: admissionregistration.k8s.io/v1/validatingwebhookconfigurations
+  mwc: admissionregistration.k8s.io/v1/mutatingwebhookconfigurations
+  # Leases - leader election and node heartbeats.
+  le: coordination.k8s.io/v1/leases

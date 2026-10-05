@@ -15,6 +15,96 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.46.0]
+
+### Added
+
+- **jnv**, interactive jq: type a filter and watch the JSON it selects. A
+  release binary (the gnu build: upstream's musl one is x86_64 only), in the
+  `releases` section of the menu. It has no winget package, so Windows goes
+  without, as with fx.
+- **ripgrep config**, `ripgrep/config` at the repo root: `--smart-case`,
+  `--hidden` with `.git/` left out (the same reach as the fzf file widgets),
+  and long lines cut at 200 columns with a preview. Deployed to `~/.config/ripgrep/config`. rg
+  reads it only through `RIPGREP_CONFIG_PATH`, which the zsh fragment exports when the
+  file exists. `grep` is aliased to `rg`, so `grep` at the prompt picks up the
+  same flags. `rg --no-config` or `--case-sensitive` overrides it for one
+  search. `--doctor` checks the file and the variable.
+- **yazi config**, `yazi/yazi.toml` at the repo root: dotfiles shown,
+  natural sort (`file2` before `file10`) and each file's size beside its name.
+  It sets only the keys that differ from yazi's preset. yazi never writes to
+  the file, so the whole file is the repo's, like lazygit's `config.yml`, and
+  the first replacement of yours is kept as `yazi.toml.bak`. `theme.toml`
+  stays yours. `--doctor` checks it.
+- **k9s behaviour settings.** Four keys in k9s's `config.yaml`, set the way
+  `ui.skin` already is: only while still at k9s's default (`false`, which k9s
+  writes out the first time it runs). A key you changed is left alone.
+  `ui.logoless` gives the table back the rows the logo took, `ui.reactive`
+  applies skin and config edits without a restart, `liveViewAutoRefresh` keeps
+  describe and YAML views following the resource, and `skipLatestRevCheck`
+  drops the start-up check for a newer k9s, since the bootstrap upgrades it.
+  They are written as YAML booleans. k9s rejects the string `"true"`.
+- **k9s plugins and aliases**, `k9s/plugins.yaml` and `k9s/aliases.yaml`,
+  deployed where `k9s info` says they live. Both are the repo's whole: k9s
+  never writes them after creating them. The first replacement of yours is
+  kept as `.bak`.
+  - `Ctrl-L` on a pod tails, with stern, every pod matching the view's filter
+    (`/api` follows every replica). `Ctrl-L` on a deployment, statefulset or
+    daemonset tails every pod it owns.
+  - `Shift-D` on a container adds an ephemeral `nicolaka/netshoot` debug
+    container that shares its processes. k9s asks first, because the change
+    to the pod cannot be undone.
+  - The aliases are k9s's own eight defaults plus `vwc` and `mwc` (admission
+    webhooks) and `le` (leases).
+  - Every plugin runs a program rather than a shell line, so the one file
+    works on all three platforms. Helm values need no plugin: `v` on a
+    release in k9s's helm view shows them.
+  - `--doctor` checks both files.
+- **kubecolor theme**, `kubecolor/color.yaml`: Catppuccin Mocha, so
+  `kubectl` output matches the k9s skin. It sets only the base colours and a
+  few data types, and kubecolor derives the rest. Deployed to
+  `~/.kube/color.yaml`, or wherever `KUBECOLOR_CONFIG` points. The first
+  replacement of yours is kept as `color.yaml.bak`. `--doctor` checks it.
+- **yt-dlp config**, `yt-dlp/config`, deployed to `~/.config/yt-dlp/config`.
+  - Downloads go to `~/Downloads` wherever you run yt-dlp from (`-P .` for
+    the current directory).
+  - Metadata and chapters, the thumbnail as cover art, and English or
+    Ukrainian subtitles are embedded in the file rather than left beside it.
+  - Merges go into `.mkv`, because yt-dlp cannot embed a thumbnail in `.webm`,
+    YouTube's default merge, and would end the download in a post-processing
+    error.
+  - The file name stays yt-dlp's default. `--ignore-config` skips the config
+    for one download, and `--doctor` checks it.
+- **btop settings**, set the way `color_theme` already is: only while each
+  key is still at btop's default. The process list is shown as a tree
+  (`proc_tree`), the refresh is every second rather than two (`update_ms`),
+  and `vim_keys` turns on h/j/k/l, which moves help and kill to Shift-H and
+  Shift-K.
+- **glow settings**: long documents open in a pager (`$PAGER`, or `less -r`),
+  and text wraps at 100 columns rather than 80. Each is set only while still at
+  the value glow writes into a new `glow.yml`. With the pager on,
+  `glow -t` needs `-p=false`, because glow refuses both at once.
+
+### Fixed
+
+- **32-bit ARM and other machines got x86_64 release builds.** Every
+  architecture that was not aarch64 mapped to x86_64, so on armv7l, i686 or
+  riscv64 the GoReleaser-named tools (lazygit, glow, duf, lnav and more) were
+  installed as binaries that cannot run there. Release builds are fetched for
+  x86_64 and aarch64 only now. Elsewhere each one is reported `missing` (or
+  `skipped`, when one is already there), and so is AWS CLI v2, before anything
+  is downloaded.
+- **The timer unit broke on a checkout path with a space or a `%`.**
+  `ExecStart` split the path on spaces, and systemd read `%` as a specifier in
+  every line. The path is now escaped (`%%`, `$$`, `\\`) and `ExecStart` quotes
+  it. Checked with `systemd-analyze verify`. The unit is rewritten once, on the
+  next run.
+- **vim stopped on an E145 prompt in rvim and `vim -Z`.** Restricted mode
+  refuses `mkdir()`, and the vimrc called it for `~/.vim/undo` whenever that
+  directory was missing, so vim stopped on "Press ENTER" before opening
+  anything. The call is now `silent!`. The undo file is turned on only once the
+  directory exists, and until then undo lasts the session, vim's own default.
+
 ## [1.45.0]
 
 ### Added

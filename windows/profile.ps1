@@ -130,6 +130,12 @@ if (Get-Command fd -ErrorAction SilentlyContinue) {
 }
 if (Get-Command rg -ErrorAction SilentlyContinue) {
     function grep { rg @args }
+    # ripgrep reads a config file only when this names one; bootstrap.ps1
+    # deploys ripgrep/config there. Set per session, not as a user variable:
+    # an editor's own bundled rg would read that one too.
+    $rgConfig = Join-Path $env:APPDATA 'ripgrep\config'
+    if (Test-Path -LiteralPath $rgConfig) { $env:RIPGREP_CONFIG_PATH = $rgConfig }
+    Remove-Variable rgConfig
 }
 
 if (Get-Command dust -ErrorAction SilentlyContinue) {
