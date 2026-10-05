@@ -223,18 +223,26 @@ jobs:
           set -euo pipefail
           # shellcheck disable=SC1091
           . macos/packages.conf
+          # A formula in a GUI group is skipped by --no-gui with the rest of
+          # the group, which is wrong for a CLI tool and right for a desktop
+          # app Homebrew happens to ship as a formula. GUI_FORMULAE in the
+          # manifest names the second kind; anything else fails here.
           bad=0
           for g in "${PKG_GROUPS[@]}"; do
             gui_var="GROUP_${g}_GUI"
+            [ "${!gui_var:-no}" = "yes" ] || continue
             declare -n _form="GROUP_${g}_FORMULA"
-            if [ "${!gui_var:-no}" = "yes" ] && [ "${#_form[@]}" -gt 0 ]; then
-              echo "::error file=macos/packages.conf::group '$g' is GUI=yes but lists ${#_form[@]} formula(e) - --no-gui would skip those too"
-              bad=1
-            fi
+            for f in ${_form[@]+"${_form[@]}"}; do
+              case " ${GUI_FORMULAE[*]:-} " in
+                *" $f "*) ;;
+                *) echo "::error file=macos/packages.conf::group '$g' is GUI=yes but lists formula '$f' - --no-gui would skip it too (add it to GUI_FORMULAE if it is a desktop app)"
+                   bad=1 ;;
+              esac
+            done
             unset -n _form
           done
           [ "$bad" -eq 0 ]
-          echo 'OK   every macOS GUI group is casks only'
+          echo 'OK   every formula in a macOS GUI group is a desktop app'
 
       - name: Check the shell scripts can be launched
         run: |
