@@ -15,6 +15,13 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.51.0]
+
+### Added
+
+- **Anki**, spaced-repetition flashcards, as the `anki` cask in the `apps`
+  group. Linux gets it from Flathub and Windows from winget (`Anki.Anki`).
+
 ## [1.50.0]
 
 ### Added

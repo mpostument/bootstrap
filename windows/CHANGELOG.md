@@ -20,6 +20,13 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.55.0]
+
+### Added
+
+- **Anki**, spaced-repetition flashcards, as `Anki.Anki` in the `apps` group.
+  Linux gets it from Flathub and macOS from the `anki` cask.
+
 ## [1.54.0]
 
 ### Added

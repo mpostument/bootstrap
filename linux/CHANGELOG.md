@@ -15,6 +15,14 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.48.0]
+
+### Added
+
+- **Anki**, spaced-repetition flashcards, in the `apps` group, from Flathub
+  (`net.ankiweb.Anki`, a verified publisher), beside Obsidian. macOS gets the
+  `anki` cask and Windows `Anki.Anki`.
+
 ## [1.47.0]
 
 ### Added

@@ -161,6 +161,7 @@
                 'Valve.Steam'
                 'Telegram.TelegramDesktop'
                 'Obsidian.Obsidian'
+                'Anki.Anki'
                 'ONLYOFFICE.DesktopEditors'
                 'Anthropic.Claude'
                 'Bruno.Bruno'
