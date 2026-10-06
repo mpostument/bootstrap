@@ -45,10 +45,11 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
   pid and process, filtered by port number or name. With fzf at a terminal,
   Tab marks rows and Enter signals the owners, TERM by default.
 - **xh config**, `xh/config.json` at the repo root: every request follows
-  redirects, gives up on a connection after 10 seconds and exits non-zero on a
-  4xx or 5xx. `--no-follow`, `--no-timeout` or `--no-check-status` undoes one
-  for a run. Colours stay `auto`, the terminal's palette. JSON has no
-  comments, so the file carries a `"//"` key, which xh ignores. Deployed to
+  redirects and exits non-zero on a 4xx or 5xx. `--no-follow` or
+  `--no-check-status` undoes one for a run. There is no `--timeout`: xh's
+  bounds the whole wait for a response, not only the connection, so a slow
+  endpoint would fail. Colours stay `auto`, the terminal's palette. JSON has
+  no comments, so the file carries a `"//"` key, which xh ignores. Deployed to
   `~/.config/xh/config.json` - or to `~/Library/Application Support/xh` while
   that legacy directory is the one xh reads, or `$XH_CONFIG_DIR` when set.
   `--doctor` checks it.

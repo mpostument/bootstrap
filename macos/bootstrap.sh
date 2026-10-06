@@ -3458,9 +3458,10 @@ else
                       "${XDG_CONFIG_HOME:-$HOME/.config}/trippy/trippy.toml" 'trippy config'
 fi
 
-# xh config - default options for every request: follow redirects, give up
-# on a connection after 10 seconds, and exit non-zero on a 4xx or 5xx.
-# `--no-follow`, `--no-timeout` or `--no-check-status` undoes one for a run.
+# xh config - default options for every request: follow redirects and exit
+# non-zero on a 4xx or 5xx. `--no-follow` or `--no-check-status` undoes one for
+# a run. No --timeout: xh's bounds the whole wait for a response, so a slow
+# endpoint (a non-streaming ollama call) would fail, not just a dead host.
 # Colours stay `auto`, the terminal's own palette, which is Catppuccin.
 phase 'xh config'
 if ! command -v xh >/dev/null 2>&1; then

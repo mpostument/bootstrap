@@ -2934,9 +2934,9 @@ if ($SkipShell) {
         Add-Result -Group 'shell' -Id 'procs config' -Action 'missing' -Detail 'procs is not installed'
     }
 
-    # xh config: follow redirects, a 10-second connection timeout and a non-zero
-    # exit on a 4xx or 5xx; --no-follow, --no-timeout or --no-check-status
-    # undoes one for a run. JSON has no comments, so the marker is a "//" key,
+    # xh config: follow redirects and a non-zero exit on a 4xx or 5xx;
+    # --no-follow or --no-check-status undoes one for a run. No --timeout: xh's
+    # bounds the whole wait for a response, not only the connection. JSON has no comments, so the marker is a "//" key,
     # which xh ignores.
     if (Get-Command xh -ErrorAction SilentlyContinue) {
         Deploy-ManagedFile -Source (Join-Path $script:XhSource 'config.json') -Target (Get-XhConfigFile) `
