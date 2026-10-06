@@ -78,6 +78,12 @@ what runs afterwards is an ordinary git or kill command.
 | `fkill [signal]` | pick some of your own processes and signal them, TERM by default |
 | `cheat` | search the `tools` list, preview its tldr page, put the command on the prompt |
 
+`ports [filter] [signal]` is defined with or without fzf: listening TCP ports
+with their pid and process, filtered by a port number or a name. With fzf at a
+terminal it is a picker too - Tab marks rows, Enter signals their owners, TERM
+by default; piped or without fzf it prints the table. Without sudo, lsof sees
+only your own processes.
+
 ## Choosing packages
 
 ```bash

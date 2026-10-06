@@ -1250,6 +1250,86 @@ if section 'yt-dlp config'; then
   fi
 fi
 
+# ------------------------------------------------ procs and trippy configs ----
+#
+# Both tools refuse to start on a config they cannot read - procs on a column
+# kind the OS lacks, trippy on a bad value or a key combination it rejects (AS
+# lookups through the system resolver) - so each file is fed to the real tool.
+# trippy is given a target that cannot resolve: it reads and validates the
+# config, then stops at the lookup, before a single probe is sent.
+
+if section 'procs and trippy configs'; then
+  if command -v procs >/dev/null 2>&1; then
+    if out="$(procs --load-config "${ROOT}/procs/config.toml" --color disable "$$" 2>&1)"; then
+      contains 'procs loads the config' 'Command' "$out"
+    else
+      bad 'procs loads the config' 'a process table' "$out"
+    fi
+  else
+    skip 'procs loads the config' 'procs is not installed'
+  fi
+  if command -v trip >/dev/null 2>&1; then
+    out="$(command trip -c "${ROOT}/trippy/trippy.toml" -m silent -C 1 -u 256.0.0.1 2>&1 || true)"
+    contains 'trippy accepts the config and gets as far as the lookup' 'failed to resolve target' "$out"
+  else
+    skip 'trippy accepts the config' 'trippy is not installed'
+  fi
+fi
+
+# --------------------------------------------------- xh and jnv configs ----
+#
+# xh refuses an unknown option in default_options and only warns on a file it
+# cannot parse, so the config is fed to the real xh with --offline: it prints
+# the request it would send and sends nothing. jnv is quieter still - a config
+# it cannot read is swapped for its defaults without a word - so it is started
+# on a pseudo-terminal and its first frame must carry the Mocha blue the file
+# sets as truecolor; jnv's defaults are ANSI names and never emit one.
+
+if section 'xh and jnv configs'; then
+  if command -v xh >/dev/null 2>&1; then
+    if out="$(XH_CONFIG_DIR="${ROOT}/xh" xh --offline --ignore-stdin example.org </dev/null 2>&1)" \
+       && [[ "$out" != *warning* ]]; then
+      contains 'xh takes the default options' 'GET / HTTP/1.1' "$out"
+    else
+      bad 'xh takes the default options' 'a printed request' "$out"
+    fi
+  else
+    skip 'xh takes the default options' 'xh is not installed'
+  fi
+  if ! command -v jnv >/dev/null 2>&1; then
+    skip 'jnv draws with the config' 'jnv is not installed'
+  elif ! "${PYTHON[@]}" -c 'import pty' >/dev/null 2>&1; then
+    skip 'jnv draws with the config' 'no python with a pty module'
+  else
+    out="$(printf '{"key":"value","n":1}\n' > "${TMP}/jnv.json"
+           "${PYTHON[@]}" - "${ROOT}/jnv/config.toml" "${TMP}/jnv.json" <<'PY' 2>&1
+import os, pty, select, signal, struct, sys, time, fcntl, termios
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp('jnv', ['jnv', '-c', sys.argv[1], sys.argv[2]])
+fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
+out, asked, end = b'', 0, time.time() + 3
+while time.time() < end and b'38;2;137;180;250' not in out:
+    if select.select([fd], [], [], 0.2)[0]:
+        try:
+            out += os.read(fd, 65536)
+        except OSError:
+            break
+        # jnv asks where the cursor is (ESC[6n) and gives up without a reply.
+        while out.count(b'\x1b[6n') > asked:
+            asked += 1
+            os.write(fd, b'\x1b[1;1R')
+try:
+    os.kill(pid, signal.SIGKILL)
+except ProcessLookupError:
+    pass
+sys.stdout.write(out.decode('utf-8', 'replace'))
+PY
+)"
+    contains 'jnv draws with the config' '38;2;137;180;250' "$out"
+  fi
+fi
+
 # ----------------------------------------------------------------- vimrc ----
 #
 # vim reports every error in the vimrc at start-up and waits for Enter, so a

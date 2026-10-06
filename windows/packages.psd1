@@ -74,6 +74,10 @@
                 # claude.exe. Google's Antigravity CLI is the same shape.
                 'Anthropic.ClaudeCode'
                 'Google.AntigravityCLI'
+                # Local LLM runtime: `ollama run <model>`, and an offline
+                # backend for k8sgpt (`k8sgpt auth add --backend ollama`). A
+                # per-user installer that also starts a tray app at sign-in.
+                'Ollama.Ollama'
             )
         }
 

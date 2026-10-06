@@ -183,6 +183,12 @@ picks; what runs afterwards is an ordinary git command. `gb` switches branch
 `gs`); `cheat` searches the `tools` list and shows the pick's tldr page. The
 zsh side also has `fkill` - here PSFzf already provides it.
 
+`ports` lists who listens on which TCP port - PID, port, address and command,
+narrowed by a port number or part of a process name (`ports 5432`,
+`ports node`). It is always defined. With fzf it is a picker: Tab marks
+several, and Enter prints the `Stop-Process` it runs on their owners. A
+listener another account owns needs an elevated shell to stop.
+
 ## Did last night's run work?
 
 The task runs at 04:20 and tees into `%LOCALAPPDATA%\windows-bootstrap\logs`,

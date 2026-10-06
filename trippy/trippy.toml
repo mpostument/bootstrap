@@ -1,0 +1,67 @@
+# trippy config - deployed by bootstrap to ~/.config/trippy/trippy.toml on
+# Linux and macOS and to %APPDATA%\trippy\trippy.toml on Windows. Every key is
+# optional; what is not here keeps trippy's default.
+#
+# `unprivileged` is deliberately absent. Only macOS traces without root, and
+# there the zsh alias `trip -u` says so; set here, it would break the trace on
+# the other two platforms.
+
+[dns]
+# Look up the autonomous system of every hop, so a jump between networks - your
+# ISP handing over to a transit provider - is visible without a whois.
+dns-lookup-as-info = true
+# AS lookups need trippy's own resolver: `system` refuses them, and `resolv`
+# reads /etc/resolv.conf, which Windows lacks. The cost is that hop names come
+# from public DNS, so a name only a VPN or office resolver knows shows as an
+# IP. The CLI cannot switch AS lookups off again, so for the OS resolver skip
+# this file: `trip -c /dev/null` (`-c NUL` on Windows).
+dns-resolve-method = "cloudflare"
+
+[tui]
+# Hostname and IP side by side: the name tells you whose router it is, the
+# address is what you paste into the next command.
+tui-address-mode = "both"
+# The AS name (GOOGLE, CLOUDFLARENET) rather than its bare number.
+tui-as-mode = "name"
+# Leave the last frame on screen after quitting, so the trace can be read and
+# copied instead of vanishing with the alternate screen.
+tui-preserve-screen = true
+
+# Catppuccin Mocha, the palette ghostty, btop, k9s and yazi use. Hex values need
+# a truecolor terminal - Ghostty, Windows Terminal and every current Linux
+# terminal emulator are.
+[theme-colors]
+bg-color = "1e1e2e"
+border-color = "585b70"
+text-color = "cdd6f4"
+tab-text-color = "a6e3a1"
+hops-table-header-bg-color = "313244"
+hops-table-header-text-color = "cba6f7"
+hops-table-row-active-text-color = "cdd6f4"
+hops-table-row-inactive-text-color = "6c7086"
+hops-chart-selected-color = "a6e3a1"
+hops-chart-unselected-color = "585b70"
+hops-chart-axis-color = "6c7086"
+frequency-chart-bar-color = "89b4fa"
+frequency-chart-text-color = "bac2de"
+flows-chart-bar-selected-color = "a6e3a1"
+flows-chart-bar-unselected-color = "585b70"
+flows-chart-text-current-color = "a6e3a1"
+flows-chart-text-non-current-color = "bac2de"
+samples-chart-color = "f9e2af"
+samples-chart-lost-color = "f38ba8"
+help-dialog-bg-color = "181825"
+help-dialog-text-color = "cdd6f4"
+settings-dialog-bg-color = "181825"
+settings-tab-text-color = "a6e3a1"
+settings-table-header-text-color = "cba6f7"
+settings-table-header-bg-color = "313244"
+settings-table-row-text-color = "cdd6f4"
+map-world-color = "585b70"
+map-radius-color = "f9e2af"
+map-selected-color = "a6e3a1"
+map-info-panel-border-color = "585b70"
+map-info-panel-bg-color = "181825"
+map-info-panel-text-color = "cdd6f4"
+info-bar-bg-color = "313244"
+info-bar-text-color = "cdd6f4"

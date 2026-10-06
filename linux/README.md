@@ -44,15 +44,18 @@ none. Override with `--gui` or `--no-gui`.
 11. **Nerd Font** — Meslo, on desktop machines.
 12. **Claude Code** — Anthropic's script into `~/.local/bin`.
 13. **Antigravity CLI** — Google's script into `~/.local/bin`.
-14. **VS Code extensions** — `VSCODE_EXTENSIONS`, installed with
+14. **Ollama** — with the dev group, ollama.com's script into `/usr/local`,
+    with an `ollama.service` that starts at boot. Rerun only for a newer
+    release, because each install downloads about 1.4 GB.
+15. **VS Code extensions** — `VSCODE_EXTENSIONS`, installed with
     `code --install-extension`; never removes one that isn't listed.
-15. **zsh** — Starship, completion and the `ZSH_PLUGIN_REPOS` checkouts,
+16. **zsh** — Starship, completion and the `ZSH_PLUGIN_REPOS` checkouts,
     plus a managed `~/.zshrc.bootstrap` sourced from your own `.zshrc`.
-16. **Prompt config** — `starship.toml` from the repo root to
+17. **Prompt config** — `starship.toml` from the repo root to
     `~/.config/starship.toml`, the same file all three platforms deploy.
-17. **bat config** — `bat/config` and the Catppuccin Mocha theme from the repo
+18. **bat config** — `bat/config` and the Catppuccin Mocha theme from the repo
     root, the palette starship, ghostty, atuin and delta all render in.
-18. **Schedule** — a systemd system timer that re-runs this script daily.
+19. **Schedule** — a systemd system timer that re-runs this script daily.
 
 ## Options
 
@@ -84,8 +87,8 @@ none. Override with `--gui` or `--no-gui`.
 `tools` is a zsh function written into the managed fragment: the `cli` group as
 of the last run, with what to type and what it does.
 
-Four fzf pickers sit beside it, defined when fzf is on `PATH`. Each only picks;
-what runs afterwards is an ordinary git or kill command.
+Four fzf pickers sit beside it, defined when fzf is on `PATH`, and `ports`.
+Each only picks; what runs afterwards is an ordinary git or kill command.
 
 | | |
 |---|---|
@@ -93,6 +96,7 @@ what runs afterwards is an ordinary git or kill command.
 | `gs` | browse stashes; Enter applies, ctrl-p pops, ctrl-x drops (not defined where Ghostscript owns `gs`) |
 | `fkill [signal]` | pick some of your own processes and signal them, TERM by default |
 | `cheat` | search the `tools` list, preview its tldr page, put the command on the prompt |
+| `ports [filter] [signal]` | listening TCP ports and who owns them - a number filters by port, a word by process name; with fzf, Enter signals the picked owners, TERM by default. `lsof` where installed, else `ss`; without sudo only your own processes are named |
 
 ## Choosing packages
 

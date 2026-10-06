@@ -20,6 +20,54 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.54.0]
+
+### Added
+
+- **Ollama**, `Ollama.Ollama` in the `dev` group: a local LLM runtime, and an
+  offline backend for k8sgpt (`k8sgpt auth add --backend ollama`). The
+  installer is per user and starts a tray app at sign-in.
+- **procs config**, `procs/config.toml` at the repo root: the busiest process
+  first, a state and resident-memory column, elapsed time, and colours that
+  land on Catppuccin Mocha through the terminal's palette (procs takes ANSI
+  names only). Every column exists on all three platforms, since procs
+  rejects a column its OS lacks rather than skipping it - `Tty` is gone for
+  that reason; `procs -i <kind>` adds one for a run. Deployed to
+  `~\.config\procs\config.toml`, which procs reads on Windows too. procs
+  stops at the first config it finds, so a `~\.procs.toml` or
+  `%APPDATA%\dalance\procs\config\config.toml` of yours is left alone and
+  reported instead. `-Doctor` checks it.
+- **trippy config**, `trippy/trippy.toml` at the repo root: the AS name of
+  every hop, host and IP side by side, the last frame left on screen after
+  quitting, and a Catppuccin Mocha theme. AS lookups need trippy's own
+  resolver, so hop names come from Cloudflare's public DNS - a name only a VPN
+  resolver knows shows as its IP; `trip -c NUL` skips the file for one run.
+  Deployed to `%APPDATA%\trippy\trippy.toml`. The `trip` function elevates
+  through gsudo as the same account, so the elevated trace reads the same
+  file. A `trippy.toml` or `.trippy.toml` of yours in `~` or `%APPDATA%` is
+  read first, so it is left alone and reported. `-Doctor` checks it.
+- **`ports [filter]`** in `profile.ps1`: every listening TCP port as PID, port,
+  address and command - the columns the zsh side prints. The filter is a port
+  number or part of a process name. With fzf it is a picker: Tab marks
+  several, Enter prints `Stop-Process -Id ...` and runs it, the way `fkill`
+  does on zsh. Without fzf it returns the table. `-Doctor` checks that it is
+  defined.
+- **xh config**, `xh/config.json` at the repo root: every request follows
+  redirects, gives up on a connection after 10 seconds and exits non-zero on a
+  4xx or 5xx. `--no-follow`, `--no-timeout` or `--no-check-status` undoes one
+  for a run. Colours stay `auto`, the terminal's palette. JSON has no
+  comments, so the file carries a `"//"` key, which xh ignores. Deployed to
+  `%APPDATA%\xh\config.json`, or `%XH_CONFIG_DIR%` when set. `-Doctor` checks
+  it. (jnv's matching theme is Linux and macOS only: jnv has no winget
+  package.)
+- **Git defaults**, set only while unset like the others:
+  `branch.sort=-committerdate` (the branch you touched last first),
+  `diff.colorMoved=default` with `diff.colorMovedWS=allow-indentation-change`
+  (moved code painted apart from real changes, through delta too),
+  `commit.verbose=true` (the diff under the message in the editor),
+  `help.autocorrect=prompt` (`git stauts` offers `status`) and
+  `init.defaultBranch=main`.
+
 ## [1.53.0]
 
 ### Added

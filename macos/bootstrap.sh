@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.49.0'
+BOOTSTRAP_VERSION='1.50.0'
 BOOTSTRAP_PLATFORM='macos'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -1559,6 +1559,47 @@ tool_has_config() {
   esac
 }
 
+# The file procs or trippy would read instead of the one the bootstrap deploys.
+# Both look in several places and take the first file that exists, and both
+# check the deployed path last - so a file of yours higher up the list means
+# the deployed one is never read. Prints that file, or nothing.
+procs_config_shadow() {   # procs: src/main.rs get_config
+  local f
+  for f in "${HOME}/.procs.toml" \
+           "${HOME}/Library/Preferences/com.github.dalance.procs/config.toml"; do
+    [[ -f "$f" ]] && { printf '%s\n' "$f"; return 0; }
+  done
+  return 0
+}
+trippy_config_shadow() {  # trippy: crates/trippy-tui/src/config/file.rs
+  local d f
+  for d in "$HOME" "${XDG_CONFIG_HOME:-$HOME/.config}"; do
+    for f in "${d}/trippy.toml" "${d}/.trippy.toml"; do
+      [[ -f "$f" ]] && { printf '%s\n' "$f"; return 0; }
+    done
+  done
+  return 0
+}
+
+# Where xh reads config.json (src/utils.rs config_dir): $XH_CONFIG_DIR wins,
+# then ~/Library/Application Support/xh while it exists and the XDG one does
+# not - xh's legacy location - then xh/ under the config home.
+xh_config_file() {
+  local xdg="${XDG_CONFIG_HOME:-$HOME/.config}/xh"
+  local legacy="${HOME}/Library/Application Support/xh"
+  if [[ -n "${XH_CONFIG_DIR:-}" ]]; then
+    echo "${XH_CONFIG_DIR}/config.json"
+  elif [[ -d "$legacy" && ! -d "$xdg" ]]; then
+    echo "${legacy}/config.json"
+  else
+    echo "${xdg}/config.json"
+  fi
+}
+
+# Where jnv reads config.toml: the OS config dir, which on macOS is
+# Application Support - jnv ignores XDG_CONFIG_HOME here.
+jnv_config_file() { echo "${HOME}/Library/Application Support/jnv/config.toml"; }
+
 doctor_config() {   # doctor_config <label> <repo copy> <deployed path>
   local label="$1" src="$2" dst="$3"
   if [[ ! -r "$dst" ]]; then
@@ -1740,7 +1781,7 @@ doctor_check_more_themes() {
 }
 
 doctor_check_configs() {
-  local bat_cfg rg_cfg
+  local bat_cfg rg_cfg shadow
   doctor_config 'starship.toml' "${SCRIPT_DIR}/../starship.toml" "${HOME}/.config/starship.toml"
   doctor_config 'atuin config' "${SCRIPT_DIR}/../atuin/config.toml" "${HOME}/.config/atuin/config.toml"
 
@@ -1766,6 +1807,31 @@ doctor_check_configs() {
   if command -v yt-dlp >/dev/null 2>&1; then
     doctor_config 'yt-dlp config' "${SCRIPT_DIR}/../yt-dlp/config" \
                   "${XDG_CONFIG_HOME:-$HOME/.config}/yt-dlp/config"
+  fi
+  if command -v procs >/dev/null 2>&1; then
+    shadow="$(procs_config_shadow)"
+    if [[ -n "$shadow" ]]; then
+      doctor_note 'procs config' "${shadow} is yours and procs reads it first"
+    else
+      doctor_config 'procs config' "${SCRIPT_DIR}/../procs/config.toml" \
+                    "${HOME}/.config/procs/config.toml"
+    fi
+  fi
+  if command -v trip >/dev/null 2>&1; then
+    shadow="$(trippy_config_shadow)"
+    if [[ -n "$shadow" ]]; then
+      doctor_note 'trippy config' "${shadow} is yours and trippy reads it first"
+    else
+      doctor_config 'trippy config' "${SCRIPT_DIR}/../trippy/trippy.toml" \
+                    "${XDG_CONFIG_HOME:-$HOME/.config}/trippy/trippy.toml"
+    fi
+  fi
+
+  if command -v xh >/dev/null 2>&1; then
+    doctor_config 'xh config' "${SCRIPT_DIR}/../xh/config.json" "$(xh_config_file)"
+  fi
+  if command -v jnv >/dev/null 2>&1; then
+    doctor_config 'jnv config' "${SCRIPT_DIR}/../jnv/config.toml" "$(jnv_config_file)"
   fi
 
   if command -v rg >/dev/null 2>&1; then
@@ -2893,6 +2959,73 @@ if (( $+commands[fzf] )); then
   }
 fi
 
+# ports [filter] [signal] - who listens on which TCP port. A number filters by
+# port, anything else by process name. At a terminal with fzf, Tab marks rows
+# and Enter signals their owners, TERM unless told otherwise; piped, or without
+# fzf, it only prints. lsof where there is one, ss otherwise - Debian ships ss,
+# not lsof. Without sudo either one names the owners of your own sockets only;
+# someone else's shows its port with a - for the PID.
+ports() {
+  local filter=${1:-} sig=${2:-TERM} line pid cmd port pick hit rest
+  local -a hits rows pids match mbegin mend
+  local -A seen
+  if (( $+commands[lsof] )); then
+    # -F: one field per line - p pid, c command, n address - so names with
+    # spaces survive.
+    for line in ${(f)"$(lsof -nP -iTCP -sTCP:LISTEN -F pcn 2>/dev/null)"}; do
+      case $line in
+        p*) pid=${line#p} ;;
+        c*) cmd=${line#c} ;;
+        n*) hits+=("$pid"$'\t'"$cmd"$'\t'"${line##*:}") ;;
+      esac
+    done
+  elif (( $+commands[ss] )); then
+    # Column 4 is the local address. The owners follow as
+    # users:(("name",pid=N,fd=N),...), one entry per process on the socket.
+    for line in ${(f)"$(ss -Hltnp 2>/dev/null)"}; do
+      port=${${=line}[4]##*:}
+      rest=$line pid=''
+      while [[ $rest =~ '\("([^"]*)",pid=([0-9]+)' ]]; do
+        hits+=("${match[2]}"$'\t'"${match[1]}"$'\t'"$port")
+        pid=${match[2]}
+        rest=${rest#*pid=$pid}
+      done
+      [[ -n $pid ]] || hits+=("-"$'\t'"?"$'\t'"$port")
+    done
+  else
+    print -u2 'ports: neither lsof nor ss is installed'
+    return 1
+  fi
+  # A socket on both IPv4 and IPv6 is one row.
+  for hit in $hits; do
+    pid=${hit%%$'\t'*} cmd=${${hit#*$'\t'}%$'\t'*} port=${hit##*$'\t'}
+    [[ -n ${seen[$pid:$port]} ]] && continue
+    seen[$pid:$port]=1
+    if [[ $filter == <-> ]]; then
+      [[ $port == $filter ]] || continue
+    elif [[ -n $filter ]]; then
+      [[ ${(L)cmd} == *${(L)filter}* ]] || continue
+    fi
+    rows+=("$(printf '%5s  %6s  %s' "$port" "$pid" "$cmd")")
+  done
+  (( ${#rows} )) || { print -u2 "ports: nothing listening${filter:+ matches $filter}"; return 1; }
+  rows=("${(@f)$(print -rl -- $rows | sort -n)}")
+  if ! (( $+commands[fzf] )) || [[ ! -t 1 ]]; then
+    printf '%5s  %6s  %s\n' PORT PID COMMAND
+    print -rl -- $rows
+    return
+  fi
+  pick=$( { printf '%5s  %6s  %s\n' PORT PID COMMAND; print -rl -- $rows; } \
+    | fzf --multi --header-lines=1 --height=60% --reverse --prompt="kill -$sig> " \
+          --preview 'ps -p {2} -o pid,ppid,etime,command' --preview-window=down,4) || return
+  for line in ${(f)pick}; do pids+=(${${=line}[2]}); done
+  # Sockets nobody could name have no PID to signal.
+  pids=(${(u)${(M)pids:#<->}})
+  (( ${#pids} )) || return
+  print -r -- "kill -$sig ${pids[*]}"
+  kill -"$sig" "${pids[@]}"
+}
+
 # y - yazi, then cd to wherever you quit it. yazi writes that directory to the
 # file named by --cwd-file; without a wrapper you always come back to where you
 # started. Not inside the fzf guard above: yazi has a finder of its own.
@@ -3298,6 +3431,53 @@ else
                       "${XDG_CONFIG_HOME:-$HOME/.config}/yt-dlp/config" 'yt-dlp config'
 fi
 
+# procs config - the busiest process first, and the columns every platform has.
+# procs ignores XDG_CONFIG_HOME: ~/.config/procs is hard-coded, and it is the
+# last place procs looks. A file of yours in an earlier one is left alone,
+# since a deployed copy would never be read.
+phase 'procs config'
+if ! command -v procs >/dev/null 2>&1; then
+  result 'missing' 'procs config' 'procs is not installed'
+elif _shadow="$(procs_config_shadow)" && [[ -n "$_shadow" ]]; then
+  result 'present' 'procs config' "${_shadow} - yours, read before ~/.config/procs, left alone"
+else
+  deploy_owned_config "${SCRIPT_DIR}/../procs/config.toml" \
+                      "${HOME}/.config/procs/config.toml" 'procs config'
+fi
+
+# trippy config - AS names per hop, hostname and IP together, and Catppuccin
+# Mocha. The same shadowing rule as procs: trippy reads trippy.toml from ~ and
+# ~/.config before ~/.config/trippy.
+phase 'trippy config'
+if ! command -v trip >/dev/null 2>&1; then
+  result 'missing' 'trippy config' 'trippy is not installed'
+elif _shadow="$(trippy_config_shadow)" && [[ -n "$_shadow" ]]; then
+  result 'present' 'trippy config' "${_shadow} - yours, read before ~/.config/trippy, left alone"
+else
+  deploy_owned_config "${SCRIPT_DIR}/../trippy/trippy.toml" \
+                      "${XDG_CONFIG_HOME:-$HOME/.config}/trippy/trippy.toml" 'trippy config'
+fi
+
+# xh config - default options for every request: follow redirects, give up
+# on a connection after 10 seconds, and exit non-zero on a 4xx or 5xx.
+# `--no-follow`, `--no-timeout` or `--no-check-status` undoes one for a run.
+# Colours stay `auto`, the terminal's own palette, which is Catppuccin.
+phase 'xh config'
+if ! command -v xh >/dev/null 2>&1; then
+  result 'missing' 'xh config' 'xh is not installed'
+else
+  deploy_owned_config "${SCRIPT_DIR}/../xh/config.json" "$(xh_config_file)" 'xh config'
+fi
+
+# jnv config - Catppuccin Mocha. jnv writes its own defaults to this path the
+# first time it runs, so that copy is the .bak the first replacement keeps.
+phase 'jnv config'
+if ! command -v jnv >/dev/null 2>&1; then
+  result 'missing' 'jnv config' 'jnv is not installed'
+else
+  deploy_owned_config "${SCRIPT_DIR}/../jnv/config.toml" "$(jnv_config_file)" 'jnv config'
+fi
+
 # lazygit config. Its colours live in the one config file, so there is no theme
 # to copy beside it: config.yml is the repo's, and a run replaces a copy that
 # has drifted from it. The first replacement of a config that was not ours is
@@ -3511,6 +3691,21 @@ else
     # v1.10.0 above v1.9.0. The field is version:refname - plain `-version`
     # is rejected with "unknown field name: version".
     'tag.sort=-version:refname'
+    # `git branch` lists what you touched last first, the order gb uses,
+    # instead of alphabetical.
+    'branch.sort=-committerdate'
+    # Moved blocks get their own colour rather than reading as a delete and an
+    # add; delta renders it. A block that was only reindented still counts.
+    'diff.colorMoved=default'
+    'diff.colorMovedWS=allow-indentation-change'
+    # The commit message editor shows the diff being committed, below the
+    # cut line, so the message is written against what is staged.
+    'commit.verbose=true'
+    # `git stauts` offers `status` and waits for a yes, rather than failing.
+    # `prompt` needs git >= 2.34.
+    'help.autocorrect=prompt'
+    # The default branch of `git init`, and the end of its hint about it.
+    'init.defaultBranch=main'
   )
   # delta is the pager for diff, show, log and add -p; `git sdiff` is the same
   # view side by side.

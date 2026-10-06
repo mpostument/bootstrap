@@ -92,7 +92,7 @@ function Invoke-Native {
 # The parameters as given, for the rerun after an update.
 $script:BoundParams = @{} + $PSBoundParameters
 
-$script:BootstrapVersion = '1.53.0'
+$script:BootstrapVersion = '1.54.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -118,6 +118,9 @@ $script:YaziSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'yazi'
 $script:EzaSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'eza'
 $script:GlowSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'glow'
 $script:LnavSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'lnav'
+$script:ProcsSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'procs'
+$script:TrippySource = Join-Path (Split-Path $script:ToolRoot -Parent) 'trippy'
+$script:XhSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'xh'
 $script:MergeScript = Join-Path $script:ToolRoot 'merge-terminal-settings.ps1'
 $script:MpvSource = Join-Path $script:ToolRoot 'mpv'
 
@@ -569,7 +572,7 @@ foreach (`$c in @($list)) {
 `$out += "env:RIPGREP_CONFIG_PATH=`$env:RIPGREP_CONFIG_PATH"
 `$prompt = Get-Command prompt -CommandType Function -ErrorAction SilentlyContinue
 `$out += "fn:prompt=`$(if (`$prompt) { `$prompt.Definition -replace '\s+', ' ' } else { '' })"
-foreach (`$n in 'tools', 'gb', 'gs', 'fkill', 'cheat', 'y') {
+foreach (`$n in 'tools', 'gb', 'gs', 'fkill', 'cheat', 'y', 'ports') {
     `$out += "cmd:`$n=`$(if (Get-Command `$n -ErrorAction SilentlyContinue) { 1 } else { 0 })"
 }
 `$out += "tools:rows=`$(if (`$global:ToolsRows) { @(`$global:ToolsRows).Count } else { 0 })"
@@ -711,6 +714,10 @@ function Test-DoctorWorkflow {
     } else {
         Add-DoctorBroken 'y' 'not defined in a profile-loaded shell'
     }
+
+    # ports needs nothing on PATH: without fzf it prints the table.
+    if ((Get-ProbeValue 'cmd:ports') -eq '1') { Add-DoctorOk 'ports' 'defined' }
+    else { Add-DoctorBroken 'ports' 'not defined in a profile-loaded shell' }
 
     if (-not (Get-ProbeValue 'resolve:fzf')) {
         Add-DoctorNote 'workflow pickers' 'fzf is not on PATH, so gb, gs, fkill and cheat are not defined'
@@ -935,6 +942,23 @@ function Test-DoctorConfig {
             Add-DoctorOk 'RIPGREP_CONFIG_PATH' $rgEnv
         } else {
             Add-DoctorNote 'RIPGREP_CONFIG_PATH' ("{0} - not the repo's config, which may be deliberate" -f $rgEnv)
+        }
+    }
+    if (Get-Command xh -ErrorAction SilentlyContinue) {
+        Test-DoctorFile -Label 'xh config' -Source (Join-Path $script:XhSource 'config.json') -Target (Get-XhConfigFile)
+    }
+    foreach ($tool in @(
+            @{ Name = 'procs'; Command = 'procs'; Source = (Join-Path $script:ProcsSource 'config.toml') }
+            @{ Name = 'trippy'; Command = 'trip'; Source = (Join-Path $script:TrippySource 'trippy.toml') }
+        )) {
+        if (-not (Get-Command $tool.Command -ErrorAction SilentlyContinue)) { continue }
+        $label = '{0} config' -f $tool.Name
+        $paths = Get-ToolConfigPaths $tool.Name
+        $shadow = $paths.Earlier | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        if ($shadow) {
+            Add-DoctorNote $label ("{0} is read first, so the repo's file is not used" -f $shadow)
+        } else {
+            Test-DoctorFile -Label $label -Source $tool.Source -Target $paths.Target
         }
     }
     Test-DoctorTldrCache
@@ -1353,6 +1377,63 @@ function Deploy-ManagedFile {
     Copy-Item $Source $Target -Force
     Unblock-File $Target -ErrorAction SilentlyContinue
     Add-Result -Group $Group -Id $Label -Action 'installed' -Detail $detail
+}
+
+# Get-XhConfigFile - where xh reads config.json (src/utils.rs config_dir):
+# %XH_CONFIG_DIR% when set, else %APPDATA%\xh.
+function Get-XhConfigFile {
+    $dir = if ($env:XH_CONFIG_DIR) { $env:XH_CONFIG_DIR } else { Join-Path $env:APPDATA 'xh' }
+    Join-Path $dir 'config.json'
+}
+
+# Get-ToolConfigPaths <tool> - where the repo deploys procs' and trippy's config,
+# and the files each tool reads before it. Both stop at the first file they
+# find, so one of those earlier files means ours is never read.
+#   procs:  ~\.procs.toml, then %APPDATA%\dalance\procs\config\config.toml
+#           (its ProjectDirs preference dir), then ~\.config\procs\config.toml.
+#   trippy: trippy.toml or .trippy.toml in the current directory, then in ~,
+#           then in %APPDATA%, then %APPDATA%\trippy\. The current directory is
+#           not checked here - it differs per shell.
+function Get-ToolConfigPaths {
+    param([ValidateSet('procs', 'trippy')][string]$Tool)
+    if ($Tool -eq 'procs') {
+        return @{
+            Target  = Join-Path $env:USERPROFILE '.config\procs\config.toml'
+            Earlier = @(
+                (Join-Path $env:USERPROFILE '.procs.toml')
+                (Join-Path $env:APPDATA 'dalance\procs\config\config.toml')
+            )
+        }
+    }
+    $earlier = foreach ($dir in $env:USERPROFILE, $env:APPDATA) {
+        Join-Path $dir 'trippy.toml'
+        Join-Path $dir '.trippy.toml'
+    }
+    return @{
+        Target  = Join-Path $env:APPDATA 'trippy\trippy.toml'
+        Earlier = @($earlier)
+    }
+}
+
+# Deploy-ShadowableFile - Deploy-ManagedFile for a tool that reads the first of
+# several config files. A file of yours earlier in that order is left alone and
+# reported, since copying ours behind it would change nothing.
+function Deploy-ShadowableFile {
+    param(
+        [string]$Tool,
+        [string]$Source,
+        [string]$Label,
+        [string]$Group
+    )
+    $paths = Get-ToolConfigPaths $Tool
+    $shadow = $paths.Earlier | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if ($shadow) {
+        Add-Result -Group $Group -Id $Label -Action 'present' -Detail ('{0} is read first - left alone' -f $shadow)
+        return
+    }
+    # The marker is the header line both shared files open with.
+    Deploy-ManagedFile -Source $Source -Target $paths.Target -Group $Group -Label $Label `
+        -Marker 'deployed by bootstrap'
 }
 
 function Install-NerdFont {
@@ -2843,6 +2924,38 @@ if ($SkipShell) {
         Add-Result -Group 'shell' -Id 'ripgrep config' -Action 'missing' -Detail 'ripgrep is not installed'
     }
 
+    # procs config: CPU-sorted, Catppuccin through the terminal's palette, and
+    # only columns that exist on Windows - procs rejects a kind the OS lacks.
+    # procs reads ~\.config\procs on Windows too, and ignores XDG_CONFIG_HOME.
+    if (Get-Command procs -ErrorAction SilentlyContinue) {
+        Deploy-ShadowableFile -Tool 'procs' -Source (Join-Path $script:ProcsSource 'config.toml') `
+            -Group 'shell' -Label 'procs config'
+    } else {
+        Add-Result -Group 'shell' -Id 'procs config' -Action 'missing' -Detail 'procs is not installed'
+    }
+
+    # xh config: follow redirects, a 10-second connection timeout and a non-zero
+    # exit on a 4xx or 5xx; --no-follow, --no-timeout or --no-check-status
+    # undoes one for a run. JSON has no comments, so the marker is a "//" key,
+    # which xh ignores.
+    if (Get-Command xh -ErrorAction SilentlyContinue) {
+        Deploy-ManagedFile -Source (Join-Path $script:XhSource 'config.json') -Target (Get-XhConfigFile) `
+            -Group 'shell' -Label 'xh config' -Marker 'managed by the bootstrap'
+    } else {
+        Add-Result -Group 'shell' -Id 'xh config' -Action 'missing' -Detail 'xh is not installed'
+    }
+
+    # trippy config: AS names per hop, Catppuccin Mocha. trip traces only from
+    # an elevated shell here, and a UAC prompt elevates the same account, so it
+    # reads this same %APPDATA%. Elevating as a different admin account would
+    # read that account's profile instead.
+    if (Get-Command trip -ErrorAction SilentlyContinue) {
+        Deploy-ShadowableFile -Tool 'trippy' -Source (Join-Path $script:TrippySource 'trippy.toml') `
+            -Group 'shell' -Label 'trippy config'
+    } else {
+        Add-Result -Group 'shell' -Id 'trippy config' -Action 'missing' -Detail 'trippy is not installed'
+    }
+
     # bat config: the theme bat, and through it delta, renders with. bat reads
     # %APPDATA%\bat on Windows, which is what `bat --config-dir` reports.
     if (Get-Command bat -ErrorAction SilentlyContinue) {
@@ -3446,6 +3559,17 @@ if ($SkipShell) {
         #   showing what each side changed. git >= 2.35.
         # tag.sort: v1.10.0 above v1.9.0. The field is version:refname - plain
         #   '-version' is rejected with "unknown field name: version".
+        # branch.sort: `git branch` lists the most recently committed-to
+        #   branch first, the order gb already uses.
+        # diff.colorMoved: a moved block is painted apart from real adds and
+        #   removes, through delta too; colorMovedWS still calls it moved when
+        #   only its indent changed.
+        # commit.verbose: the diff being committed shows below the message
+        #   in the editor.
+        # help.autocorrect: `git stauts` offers `status` and asks first.
+        #   git >= 2.34.
+        # init.defaultBranch: `git init` makes main, without the hint about
+        #   master.
         $gitWant.Add(@{ Key = 'push.autoSetupRemote';  Value = 'true' })
         $gitWant.Add(@{ Key = 'fetch.prune';           Value = 'true' })
         $gitWant.Add(@{ Key = 'diff.algorithm';        Value = 'histogram' })
@@ -3453,6 +3577,12 @@ if ($SkipShell) {
         $gitWant.Add(@{ Key = 'column.ui';             Value = 'auto' })
         $gitWant.Add(@{ Key = 'merge.conflictStyle';   Value = 'zdiff3' })
         $gitWant.Add(@{ Key = 'tag.sort';              Value = '-version:refname' })
+        $gitWant.Add(@{ Key = 'branch.sort';           Value = '-committerdate' })
+        $gitWant.Add(@{ Key = 'diff.colorMoved';       Value = 'default' })
+        $gitWant.Add(@{ Key = 'diff.colorMovedWS';     Value = 'allow-indentation-change' })
+        $gitWant.Add(@{ Key = 'commit.verbose';        Value = 'true' })
+        $gitWant.Add(@{ Key = 'help.autocorrect';      Value = 'prompt' })
+        $gitWant.Add(@{ Key = 'init.defaultBranch';    Value = 'main' })
 
         # delta is the pager for diff, show, log and add -p; `git sdiff` is the
         # same view side by side.

@@ -15,6 +15,56 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.50.0]
+
+### Added
+
+- **ollama**, a local LLM runtime, in the `dev` group as the `ollama-app`
+  cask. The app runs the server from login and updates itself; the `ollama`
+  formula would need `brew services start`. k8sgpt can use it as an offline
+  backend. The two both own `ollama` on PATH, so a Mac that already has the
+  formula sees the cask fail on the binary link until one is removed.
+- **procs config**, `procs/config.toml` at the repo root: the busiest process
+  first, state and resident memory shown, elapsed time beside CPU time, and
+  only the columns every platform has, so one file serves all three. Deployed
+  to `~/.config/procs/config.toml` - procs hard-codes that path and ignores
+  `XDG_CONFIG_HOME`. procs reads `~/.procs.toml` and
+  `~/Library/Preferences/com.github.dalance.procs/config.toml` first, so a
+  file of yours in either is reported as `present` and left alone. The colours
+  are ANSI names, which Ghostty's Catppuccin palette maps. `--doctor` checks it.
+- **trippy config**, `trippy/trippy.toml`: the AS name of each hop, hostname
+  and IP side by side, the last frame kept on screen after quitting, and a
+  Catppuccin Mocha theme. AS lookups need trippy's own resolver, so hop names
+  come from Cloudflare's DNS: a name only a VPN resolver knows shows as an IP.
+  `trip -c /dev/null` skips the file. Deployed to
+  `~/.config/trippy/trippy.toml`, with the same rule as procs for a
+  `trippy.toml` of yours in `~` or `~/.config`. The `trip -u` alias stays:
+  unprivileged tracing is macOS-only, so it is not in the shared file.
+  `--doctor` checks it.
+- **`ports [filter] [signal]`** in the zsh fragment: listening TCP ports with
+  pid and process, filtered by port number or name. With fzf at a terminal,
+  Tab marks rows and Enter signals the owners, TERM by default.
+- **xh config**, `xh/config.json` at the repo root: every request follows
+  redirects, gives up on a connection after 10 seconds and exits non-zero on a
+  4xx or 5xx. `--no-follow`, `--no-timeout` or `--no-check-status` undoes one
+  for a run. Colours stay `auto`, the terminal's palette. JSON has no
+  comments, so the file carries a `"//"` key, which xh ignores. Deployed to
+  `~/.config/xh/config.json` - or to `~/Library/Application Support/xh` while
+  that legacy directory is the one xh reads, or `$XH_CONFIG_DIR` when set.
+  `--doctor` checks it.
+- **jnv config**, `jnv/config.toml` at the repo root: jnv's own defaults with
+  Catppuccin Mocha in place of its ANSI colours - blue keys, green strings,
+  peach numbers and booleans. jnv does not merge a partial file with its
+  defaults and silently falls back to them on a key it cannot read, so the
+  file holds every key, and `tools/test.sh` starts jnv on a pseudo-terminal to
+  see the theme drawn. Deployed to `~/Library/Application
+  Support/jnv/config.toml`, the only place jnv looks on macOS; the defaults
+  jnv wrote there on its first run are kept as `.bak`. `--doctor` checks it.
+- **Git defaults**, each set only where unset like the rest:
+  `branch.sort=-committerdate`, `diff.colorMoved=default` with
+  `diff.colorMovedWS=allow-indentation-change`, `commit.verbose=true`,
+  `help.autocorrect=prompt` and `init.defaultBranch=main`.
+
 ## [1.49.0]
 
 ### Added

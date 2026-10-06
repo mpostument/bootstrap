@@ -1,0 +1,119 @@
+# procs config - deployed by bootstrap to ~/.config/procs/config.toml, the one
+# path procs reads on all three platforms (it does not honour XDG_CONFIG_HOME).
+#
+# procs takes ANSI colour names only, so Catppuccin Mocha comes from the
+# terminal's palette - Ghostty and Windows Terminal both carry it. The names
+# below are picked to land on the Mocha accents: yellow pids, green users,
+# cyan times, overlay-grey separators.
+#
+# Every column kind here exists on Linux, macOS and Windows: procs builds its
+# column list per OS, and a kind the OS lacks (Tty, Docker on Windows) is a
+# parse error, not a skipped column. Add one with `procs -i <kind>` instead -
+# that is what the MultiSlot is for.
+#
+# Only [[columns]] is required; every section below falls back to procs'
+# defaults key by key, so this file states only what differs from them.
+
+[[columns]]
+kind = "Pid"
+style = "BrightYellow|Yellow"
+numeric_search = true
+nonnumeric_search = false
+align = "Right"
+
+[[columns]]
+kind = "User"
+style = "BrightGreen|Green"
+numeric_search = false
+nonnumeric_search = true
+align = "Left"
+
+[[columns]]
+kind = "Separator"
+style = "BrightBlack|White"
+numeric_search = false
+nonnumeric_search = false
+align = "Left"
+
+[[columns]]
+kind = "State"
+style = "ByState"
+numeric_search = false
+nonnumeric_search = false
+align = "Left"
+
+[[columns]]
+kind = "UsageCpu"
+style = "ByPercentage"
+numeric_search = false
+nonnumeric_search = false
+align = "Right"
+
+[[columns]]
+kind = "UsageMem"
+style = "ByPercentage"
+numeric_search = false
+nonnumeric_search = false
+align = "Right"
+
+[[columns]]
+kind = "VmRss"
+style = "ByUnit"
+numeric_search = false
+nonnumeric_search = false
+align = "Right"
+
+[[columns]]
+kind = "CpuTime"
+style = "BrightCyan|Cyan"
+numeric_search = false
+nonnumeric_search = false
+align = "Left"
+
+[[columns]]
+kind = "ElapsedTime"
+style = "BrightMagenta|Magenta"
+numeric_search = false
+nonnumeric_search = false
+align = "Left"
+
+[[columns]]
+kind = "MultiSlot"
+style = "ByUnit"
+numeric_search = false
+nonnumeric_search = false
+align = "Right"
+
+[[columns]]
+kind = "Separator"
+style = "BrightBlack|White"
+numeric_search = false
+nonnumeric_search = false
+align = "Left"
+
+[[columns]]
+kind = "Command"
+style = "BrightWhite|Black"
+numeric_search = false
+nonnumeric_search = true
+align = "Left"
+
+[style]
+header = "BrightWhite|Black"
+unit = "BrightBlack|White"
+tree = "BrightBlack|White"
+
+[display]
+# Mocha is a dark palette. Auto asks the terminal for its background, which
+# costs a round trip on every run and guesses wrong under tmux-like layers.
+theme = "Dark"
+# Faint rule, the same glyphs the default uses.
+separator = "│"
+tree_symbols = ["│", "─", "┬", "├", "└"]
+
+[sort]
+# Column 4 is UsageCpu (0-based, separators count): the busiest process first,
+# which is what a ps replacement is usually opened to find. --sorta/--sortd and
+# `procs --tree` override it per run.
+column = 4
+order = "Descending"

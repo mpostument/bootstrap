@@ -12,9 +12,17 @@ kend = "kend"
 # zsh-syntax-highlighting/catppuccin_mocha.zsh, a vendored file kept unchanged
 # below its header so it can be diffed against catppuccin/zsh-syntax-highlighting.
 Entitites = "Entitites"
+# The deliberate misspelling in the comments and CHANGELOG entries that show
+# what git's help.autocorrect=prompt does with a mistyped command.
+stauts = "stauts"
+# tasklist's /fo (format) flag in windows/profile.ps1's `ports` preview.
+fo = "fo"
 
 [default.extend-identifiers]
 # zsh `print` flags: -P expands prompt escapes, -n suppresses the trailing
 # newline - `print -Pn '\e]2;...'` sets the terminal tab title.
 # Not a typo of "On".
 Pn = "Pn"
+# Catppuccin Mocha's red as trippy/trippy.toml writes it: hex without a `#`,
+# which typos splits into words and reads `ba` in. Not a typo of "by".
+f38ba8 = "f38ba8"

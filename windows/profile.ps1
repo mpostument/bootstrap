@@ -228,6 +228,48 @@ if (Get-Command fzf -ErrorAction SilentlyContinue) {
     }
 }
 
+# ports [filter] -- who listens on which TCP port: PID, PORT, ADDRESS and
+# COMMAND, the columns the zsh side prints. The filter is a port number or part
+# of a process name. With fzf the table is a picker - Tab marks several, Enter
+# stops their owners, printing the command first, as fkill does on zsh; without
+# fzf it is only the table. Stopping a listener another account owns (System,
+# a service) needs an elevated shell, and Stop-Process says so when it is not.
+function ports {
+    param([string]$Filter)
+    if (-not (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)) {
+        Write-Error 'ports: Get-NetTCPConnection is not available'
+        return
+    }
+    $names = @{}
+    foreach ($p in Get-Process) { $names[$p.Id] = $p.ProcessName }
+    $rows = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
+            [pscustomobject]@{
+                PID     = $_.OwningProcess
+                PORT    = $_.LocalPort
+                ADDRESS = $_.LocalAddress
+                COMMAND = $names[[int]$_.OwningProcess]
+            }
+        } | Sort-Object PORT, ADDRESS, PID -Unique)
+    if ($Filter -match '^\d+$') {
+        $rows = @($rows | Where-Object { $_.PORT -eq [int]$Filter })
+    } elseif ($Filter) {
+        $rows = @($rows | Where-Object { $_.COMMAND -like "*$Filter*" })
+    }
+    if ($rows.Count -eq 0) { return }
+    if (-not (Get-Command fzf -ErrorAction SilentlyContinue)) { return $rows }
+
+    $lines = @('{0,7} {1,6}  {2,-39} {3}' -f 'PID', 'PORT', 'ADDRESS', 'COMMAND')
+    $lines += foreach ($r in $rows) { '{0,7} {1,6}  {2,-39} {3}' -f $r.PID, $r.PORT, $r.ADDRESS, $r.COMMAND }
+    # tasklist, not Get-Process: fzf runs the preview through cmd unless SHELL
+    # names another shell, and tasklist reads the same in both.
+    $pick = $lines | fzf --multi --header-lines=1 --height=60% --reverse --prompt='stop> ' `
+        --preview 'tasklist /v /fo list /fi "PID eq {1}"' --preview-window=down,10
+    if (-not $pick) { return }
+    $ids = @($pick | ForEach-Object { [int](($_.Trim() -split '\s+')[0]) } | Sort-Object -Unique)
+    Write-Host ('Stop-Process -Id {0}' -f ($ids -join ','))
+    Stop-Process -Id $ids
+}
+
 # y -- yazi, then cd to wherever you quit it. yazi writes that directory to the
 # file named by --cwd-file; without a wrapper you always come back to where you
 # started. Outside the fzf block above: yazi has a finder of its own.

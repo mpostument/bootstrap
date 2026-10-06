@@ -15,6 +15,58 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.47.0]
+
+### Added
+
+- **Ollama**, local LLMs, with the dev group. `ollama run <model>` works, and
+  k8sgpt can use it as an offline backend (`k8sgpt auth add --backend ollama`).
+  It isn't in the Debian archive, and its release isn't a single binary: the
+  tarball holds about 1.4 GB of GPU runtimes beside it. So it comes from
+  ollama.com's script, which installs into `/usr/local` and adds an
+  `ollama.service` that starts at boot, the counterpart of the app macOS and
+  Windows start at login. The script is rerun only when GitHub has a newer
+  release, pinned to that release with `OLLAMA_VERSION`. An `ollama` that is
+  not in `/usr/local/bin` (a snap, say) is reported and left alone. `zstd`
+  joins the dev group, because the release is a `.tar.zst`. `--doctor` checks
+  that the service is running.
+- **procs config**, `procs/config.toml` at the repo root: the busiest process
+  first, state, resident memory and elapsed time as columns, and a dark theme
+  that takes Catppuccin Mocha from the terminal's palette. Its column kinds
+  are ones procs has on all three platforms. Deployed to
+  `~/.config/procs/config.toml`, the path procs reads everywhere. A
+  `~/.procs.toml` of yours is read first, so it is left alone and reported.
+- **trippy config**, `trippy/trippy.toml` at the repo root: the AS name of
+  each hop, hostname and IP side by side, the last frame kept on screen after
+  quitting, and Catppuccin Mocha. AS lookups need trippy's own resolver, so
+  hop names come from Cloudflare's DNS. `trip -c /dev/null` skips the file.
+  `trip` runs under sudo here, and sudo sets `HOME` to root's, so the `trip`
+  alias now passes your config with `-c`.
+- **`ports [filter] [signal]`**, a zsh helper: listening TCP ports and the
+  process behind each, from `lsof` when it is installed, else `ss`. A number
+  filters by port, a word by process name. With fzf, Enter signals the picked
+  owners, TERM by default, after printing the `kill` line. Without sudo only
+  your own processes are named.
+- **xh config**, `xh/config.json` at the repo root: every request follows
+  redirects, gives up on a connection after 10 seconds and exits non-zero on a
+  4xx or 5xx. `--no-follow`, `--no-timeout` or `--no-check-status` undoes one
+  for a run. Colours stay `auto`, the terminal's palette. JSON has no
+  comments, so the file carries a `"//"` key, which xh ignores. Deployed to
+  `${XDG_CONFIG_HOME:-~/.config}/xh/config.json`, or `$XH_CONFIG_DIR` when
+  set. `--doctor` checks it.
+- **jnv config**, `jnv/config.toml` at the repo root: jnv's own defaults with
+  Catppuccin Mocha in place of its ANSI colours - blue keys, green strings,
+  peach numbers and booleans. jnv does not merge a partial file with its
+  defaults and silently falls back to them on a key it cannot read, so the
+  file holds every key, and `tools/test.sh` starts jnv on a pseudo-terminal to
+  see the theme drawn. Deployed to
+  `${XDG_CONFIG_HOME:-~/.config}/jnv/config.toml`; the defaults jnv wrote
+  there on its first run are kept as `.bak`. `--doctor` checks it.
+- **Git defaults**, set only where unset like the rest:
+  `branch.sort=-committerdate`, `diff.colorMoved=default` with
+  `colorMovedWS=allow-indentation-change`, `commit.verbose=true`,
+  `help.autocorrect=prompt` and `init.defaultBranch=main`.
+
 ## [1.46.0]
 
 ### Added

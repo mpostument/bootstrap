@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.46.0'
+BOOTSTRAP_VERSION='1.47.0'
 BOOTSTRAP_PLATFORM='linux'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -1631,6 +1631,43 @@ k9s_paths() {
   [[ -n "$_K9S_CFG" ]]
 }
 
+# The file procs or trippy would read instead of the one the bootstrap deploys.
+# Both look in several places and take the first file that exists, and both
+# check the deployed path last - so a file of yours higher up the list means
+# the deployed one is never read. Prints that file, or nothing.
+procs_config_shadow() {   # procs: src/main.rs get_config
+  local f
+  # procs' own ~/.config/procs is hard-coded; the ProjectDirs one before it
+  # follows XDG_CONFIG_HOME, so it is a different file only when that is set.
+  for f in "${HOME}/.procs.toml" "${XDG_CONFIG_HOME:-$HOME/.config}/procs/config.toml"; do
+    [[ "$f" == "${HOME}/.config/procs/config.toml" ]] && continue
+    [[ -f "$f" ]] && { printf '%s\n' "$f"; return 0; }
+  done
+  return 0
+}
+trippy_config_shadow() {  # trippy: crates/trippy-tui/src/config/file.rs
+  local d f
+  for d in "$HOME" "${XDG_CONFIG_HOME:-$HOME/.config}"; do
+    for f in "${d}/trippy.toml" "${d}/.trippy.toml"; do
+      [[ -f "$f" ]] && { printf '%s\n' "$f"; return 0; }
+    done
+  done
+  return 0
+}
+
+# Where xh reads config.json (src/utils.rs config_dir): $XH_CONFIG_DIR wins,
+# then xh/ under the config home.
+xh_config_file() {
+  if [[ -n "${XH_CONFIG_DIR:-}" ]]; then
+    echo "${XH_CONFIG_DIR}/config.json"
+  else
+    echo "${XDG_CONFIG_HOME:-$HOME/.config}/xh/config.json"
+  fi
+}
+
+# Where jnv reads config.toml: jnv/ under the config home.
+jnv_config_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/jnv/config.toml"; }
+
 doctor_config() {   # doctor_config <label> <repo copy> <deployed path>
   local label="$1" src="$2" dst="$3"
   if [[ ! -r "$dst" ]]; then
@@ -1804,7 +1841,7 @@ doctor_check_more_themes() {
 }
 
 doctor_check_configs() {
-  local bat_cfg rg_cfg
+  local bat_cfg rg_cfg shadow
   doctor_config 'starship.toml' "${SCRIPT_DIR}/../starship.toml" "${HOME}/.config/starship.toml"
   doctor_config 'atuin config' "${SCRIPT_DIR}/../atuin/config.toml" "${HOME}/.config/atuin/config.toml"
 
@@ -1832,6 +1869,32 @@ doctor_check_configs() {
   if command -v yt-dlp >/dev/null 2>&1; then
     doctor_config 'yt-dlp config' "${SCRIPT_DIR}/../yt-dlp/config" \
                   "${XDG_CONFIG_HOME:-$HOME/.config}/yt-dlp/config"
+  fi
+
+  if command -v procs >/dev/null 2>&1; then
+    shadow="$(procs_config_shadow)"
+    if [[ -n "$shadow" ]]; then
+      doctor_note 'procs config' "${shadow} is yours and procs reads it first"
+    else
+      doctor_config 'procs config' "${SCRIPT_DIR}/../procs/config.toml" \
+                    "${HOME}/.config/procs/config.toml"
+    fi
+  fi
+  if command -v trip >/dev/null 2>&1; then
+    shadow="$(trippy_config_shadow)"
+    if [[ -n "$shadow" ]]; then
+      doctor_note 'trippy config' "${shadow} is yours and trippy reads it first"
+    else
+      doctor_config 'trippy config' "${SCRIPT_DIR}/../trippy/trippy.toml" \
+                    "${XDG_CONFIG_HOME:-$HOME/.config}/trippy/trippy.toml"
+    fi
+  fi
+
+  if command -v xh >/dev/null 2>&1; then
+    doctor_config 'xh config' "${SCRIPT_DIR}/../xh/config.json" "$(xh_config_file)"
+  fi
+  if command -v jnv >/dev/null 2>&1; then
+    doctor_config 'jnv config' "${SCRIPT_DIR}/../jnv/config.toml" "$(jnv_config_file)"
   fi
 
   if command -v rg >/dev/null 2>&1; then
@@ -1876,6 +1939,24 @@ doctor_check_schedule() {
   fi
 }
 
+# ollama.service is the vendor script's; a machine without systemd as init has
+# none, and the server is then `ollama serve` by hand.
+doctor_check_ollama() {
+  local exe
+  [[ "${OLLAMA_ENABLED:-no}" == "yes" ]] || return 0
+  exe="$(command -v ollama 2>/dev/null || true)"
+  [[ -z "$exe" && -x /usr/local/bin/ollama ]] && exe=/usr/local/bin/ollama
+  if [[ -z "$exe" ]]; then
+    doctor_broken 'ollama' 'not installed - the next run installs it with the dev group'
+  elif [[ ! -d /run/systemd/system ]] || ! systemctl cat ollama.service >/dev/null 2>&1; then
+    doctor_note 'ollama service' "no ollama.service - run \`ollama serve\` before using $exe"
+  elif systemctl is-active --quiet ollama.service 2>/dev/null; then
+    doctor_ok 'ollama service' 'active'
+  else
+    doctor_broken 'ollama service' 'ollama.service is not running - systemctl status ollama'
+  fi
+}
+
 run_doctor() {
   doctor_load_tools
 
@@ -1900,6 +1981,7 @@ run_doctor() {
 
   phase 'Doctor - runtimes and PATH'
   doctor_check_runtimes
+  doctor_check_ollama
 
   phase 'Doctor - deployed config'
   doctor_check_configs
@@ -3100,6 +3182,85 @@ else
   fi
 fi
 
+# Ollama
+#
+# Not in the Debian archive, and not a RELEASES binary either: the tarball is
+# bin/ollama plus about 1.4 GB of GPU runtimes in lib/ollama, which the binary
+# finds beside itself. The vendor script lays that out under /usr/local and adds
+# an ollama user and an ollama.service that starts at boot - the counterpart of
+# the app macOS and Windows start at login. It is rerun only for a newer
+# release, since each run downloads the whole tarball. Where it finds an NVIDIA
+# or AMD GPU without a driver it installs one too; that is upstream's call.
+
+ollama_version() {   # ollama_version <exe> - the client's version, or nothing
+  local out
+  # With no server running the answer is "client version is X"; with an older
+  # server, the server's version comes first and the client's after it.
+  out="$("$1" --version 2>&1 || true)"
+  if printf '%s\n' "$out" | grep -q 'client version'; then
+    out="$(printf '%s\n' "$out" | grep 'client version')"
+  fi
+  printf '%s' "$out" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true
+}
+
+if [[ "${OLLAMA_ENABLED:-no}" != "yes" ]]; then
+  phase 'Ollama - disabled in the manifest'
+elif ! in_list dev "${selected[@]}"; then
+  phase 'Ollama - the dev group is not selected'
+else
+  phase 'Ollama - local LLM server, from the vendor script'
+  ollama_exe="$(command -v ollama 2>/dev/null || true)"
+  [[ -z "$ollama_exe" && -x /usr/local/bin/ollama ]] && ollama_exe=/usr/local/bin/ollama
+  ollama_have=""
+  [[ -n "$ollama_exe" ]] && ollama_have="$(ollama_version "$ollama_exe")"
+
+  # The vendor script installs to /usr/local/bin. Anything else - a snap, a
+  # distro package, a build of your own - came from somewhere else.
+  if [[ -n "$ollama_exe" && "$ollama_exe" != /usr/local/bin/ollama ]]; then
+    result 'present' 'ollama' "${ollama_have:-installed} - ${ollama_exe}, not the vendor script's, left alone"
+  elif [[ -n "$ollama_have" && "$SKIP_UPGRADE" == "yes" ]]; then
+    result 'skipped' 'ollama' "$ollama_have - --skip-upgrade"
+  else
+    ollama_tag="$(github_latest_tag ollama/ollama)"
+    ollama_want="${ollama_tag#v}"
+    if [[ -z "$ollama_want" ]]; then
+      if [[ -n "$ollama_have" ]]; then
+        result 'current' 'ollama' "$ollama_have (could not reach the GitHub API)"
+      else
+        result 'failed' 'ollama' 'could not reach the GitHub API for ollama/ollama'
+      fi
+    elif [[ "$ollama_have" == "$ollama_want" ]]; then
+      result 'current' 'ollama' "$ollama_have"
+    elif [[ "$DRY_RUN" == "yes" ]]; then
+      if [[ -n "$ollama_have" ]]; then
+        result 'would-upgrade' 'ollama' "$ollama_have -> $ollama_want"
+      else
+        result 'would-install' 'ollama' "$ollama_want into /usr/local, with ollama.service"
+      fi
+    elif ! command -v zstd >/dev/null 2>&1; then
+      # The tarball is .tar.zst; zstd is in the dev group's apt list.
+      result 'failed' 'ollama' 'zstd is not installed, and the release is a .tar.zst'
+    else
+      mktemp_tracked ollama_script
+      # OLLAMA_VERSION pins the download to the release compared against above.
+      # The script runs sudo itself, and as root under the timer.
+      if curl -fsSL "$OLLAMA_INSTALLER" -o "$ollama_script" 2>/dev/null &&
+         OLLAMA_VERSION="$ollama_want" sh "$ollama_script" >/dev/null 2>&1 &&
+         [[ -x /usr/local/bin/ollama ]]; then
+        ollama_now="$(ollama_version /usr/local/bin/ollama)"
+        if [[ -n "$ollama_have" ]]; then
+          result 'upgraded' 'ollama' "$ollama_have -> ${ollama_now:-$ollama_want}"
+        else
+          result 'installed' 'ollama' "${ollama_now:-$ollama_want}"
+        fi
+      else
+        result 'failed' 'ollama' "installer failed: $OLLAMA_INSTALLER"
+      fi
+      rm -f "$ollama_script"
+    fi
+  fi
+fi
+
 # VS Code extensions
 
 if [[ "${#VSCODE_EXTENSIONS[@]}" -gt 0 ]]; then
@@ -3569,8 +3730,17 @@ FZF_FILES
         echo 'fi'
         # trippy needs raw sockets, and has no unprivileged mode on Linux. The full
         # path, resolved when the alias is defined: sudo's secure_path does not
-        # include ~/.local/bin, where the release binary lives.
-        echo 'command -v trip >/dev/null && alias trip="sudo $(command -v trip)"'
+        # include ~/.local/bin, where the release binary lives. sudo also resets
+        # HOME to root's, where trippy would find no config: -c names yours, the
+        # first file in trippy's own search order, found when the shell starts.
+        echo 'if command -v trip >/dev/null; then'
+        echo '  _trip_cfg=""'
+        echo '  for _f in ~/trippy.toml ~/.trippy.toml "${XDG_CONFIG_HOME:-$HOME/.config}"/{trippy.toml,.trippy.toml,trippy/trippy.toml,trippy/.trippy.toml}; do'
+        echo '    [[ -r "$_f" ]] && { _trip_cfg="$_f"; break; }'
+        echo '  done'
+        echo '  alias trip="sudo $(command -v trip)${_trip_cfg:+ -c ${(q)_trip_cfg}}"'
+        echo '  unset _trip_cfg _f'
+        echo 'fi'
         echo
         declare -A _cli_cmd=() _cli_desc=()
         _cli_rel=()
@@ -3682,6 +3852,73 @@ if (( $+commands[fzf] )); then
     print -z -- "${pick##*$'\t'}"
   }
 fi
+
+# ports [filter] [signal] - who listens on which TCP port. A number filters by
+# port, anything else by process name. At a terminal with fzf, Tab marks rows
+# and Enter signals their owners, TERM unless told otherwise; piped, or without
+# fzf, it only prints. lsof where there is one, ss otherwise - Debian ships ss,
+# not lsof. Without sudo either one names the owners of your own sockets only;
+# someone else's shows its port with a - for the PID.
+ports() {
+  local filter=${1:-} sig=${2:-TERM} line pid cmd port pick hit rest
+  local -a hits rows pids match mbegin mend
+  local -A seen
+  if (( $+commands[lsof] )); then
+    # -F: one field per line - p pid, c command, n address - so names with
+    # spaces survive.
+    for line in ${(f)"$(lsof -nP -iTCP -sTCP:LISTEN -F pcn 2>/dev/null)"}; do
+      case $line in
+        p*) pid=${line#p} ;;
+        c*) cmd=${line#c} ;;
+        n*) hits+=("$pid"$'\t'"$cmd"$'\t'"${line##*:}") ;;
+      esac
+    done
+  elif (( $+commands[ss] )); then
+    # Column 4 is the local address. The owners follow as
+    # users:(("name",pid=N,fd=N),...), one entry per process on the socket.
+    for line in ${(f)"$(ss -Hltnp 2>/dev/null)"}; do
+      port=${${=line}[4]##*:}
+      rest=$line pid=''
+      while [[ $rest =~ '\("([^"]*)",pid=([0-9]+)' ]]; do
+        hits+=("${match[2]}"$'\t'"${match[1]}"$'\t'"$port")
+        pid=${match[2]}
+        rest=${rest#*pid=$pid}
+      done
+      [[ -n $pid ]] || hits+=("-"$'\t'"?"$'\t'"$port")
+    done
+  else
+    print -u2 'ports: neither lsof nor ss is installed'
+    return 1
+  fi
+  # A socket on both IPv4 and IPv6 is one row.
+  for hit in $hits; do
+    pid=${hit%%$'\t'*} cmd=${${hit#*$'\t'}%$'\t'*} port=${hit##*$'\t'}
+    [[ -n ${seen[$pid:$port]} ]] && continue
+    seen[$pid:$port]=1
+    if [[ $filter == <-> ]]; then
+      [[ $port == $filter ]] || continue
+    elif [[ -n $filter ]]; then
+      [[ ${(L)cmd} == *${(L)filter}* ]] || continue
+    fi
+    rows+=("$(printf '%5s  %6s  %s' "$port" "$pid" "$cmd")")
+  done
+  (( ${#rows} )) || { print -u2 "ports: nothing listening${filter:+ matches $filter}"; return 1; }
+  rows=("${(@f)$(print -rl -- $rows | sort -n)}")
+  if ! (( $+commands[fzf] )) || [[ ! -t 1 ]]; then
+    printf '%5s  %6s  %s\n' PORT PID COMMAND
+    print -rl -- $rows
+    return
+  fi
+  pick=$( { printf '%5s  %6s  %s\n' PORT PID COMMAND; print -rl -- $rows; } \
+    | fzf --multi --header-lines=1 --height=60% --reverse --prompt="kill -$sig> " \
+          --preview 'ps -p {2} -o pid,ppid,etime,command' --preview-window=down,4) || return
+  for line in ${(f)pick}; do pids+=(${${=line}[2]}); done
+  # Sockets nobody could name have no PID to signal.
+  pids=(${(u)${(M)pids:#<->}})
+  (( ${#pids} )) || return
+  print -r -- "kill -$sig ${pids[*]}"
+  kill -"$sig" "${pids[@]}"
+}
 
 # y - yazi, then cd to wherever you quit it. yazi writes that directory to the
 # file named by --cwd-file; without a wrapper you always come back to where you
@@ -4088,6 +4325,54 @@ else
                       "${XDG_CONFIG_HOME:-$HOME/.config}/yt-dlp/config" 'yt-dlp config'
 fi
 
+# procs config - the busiest process first, and the columns every platform has.
+# procs ignores XDG_CONFIG_HOME for this path: ~/.config/procs is hard-coded,
+# and it is the last place procs looks. A file of yours in an earlier one is
+# left alone, since a deployed copy would never be read.
+phase 'procs config'
+if ! command -v procs >/dev/null 2>&1; then
+  result 'missing' 'procs config' 'procs is not installed'
+elif _shadow="$(procs_config_shadow)" && [[ -n "$_shadow" ]]; then
+  result 'present' 'procs config' "${_shadow} - yours, read before ~/.config/procs, left alone"
+else
+  deploy_owned_config "${SCRIPT_DIR}/../procs/config.toml" \
+                      "${HOME}/.config/procs/config.toml" 'procs config'
+fi
+
+# trippy config - AS names per hop, hostname and IP together, and Catppuccin
+# Mocha. The same shadowing rule as procs: trippy reads trippy.toml from ~ and
+# ~/.config before ~/.config/trippy. trip runs under sudo here, whose HOME is
+# root's, so the zsh alias hands it this file with -c.
+phase 'trippy config'
+if ! command -v trip >/dev/null 2>&1; then
+  result 'missing' 'trippy config' 'trippy is not installed'
+elif _shadow="$(trippy_config_shadow)" && [[ -n "$_shadow" ]]; then
+  result 'present' 'trippy config' "${_shadow} - yours, read before ~/.config/trippy, left alone"
+else
+  deploy_owned_config "${SCRIPT_DIR}/../trippy/trippy.toml" \
+                      "${XDG_CONFIG_HOME:-$HOME/.config}/trippy/trippy.toml" 'trippy config'
+fi
+
+# xh config - default options for every request: follow redirects, give up
+# on a connection after 10 seconds, and exit non-zero on a 4xx or 5xx.
+# `--no-follow`, `--no-timeout` or `--no-check-status` undoes one for a run.
+# Colours stay `auto`, the terminal's own palette, which is Catppuccin.
+phase 'xh config'
+if ! command -v xh >/dev/null 2>&1; then
+  result 'missing' 'xh config' 'xh is not installed'
+else
+  deploy_owned_config "${SCRIPT_DIR}/../xh/config.json" "$(xh_config_file)" 'xh config'
+fi
+
+# jnv config - Catppuccin Mocha. jnv writes its own defaults to this path the
+# first time it runs, so that copy is the .bak the first replacement keeps.
+phase 'jnv config'
+if ! command -v jnv >/dev/null 2>&1; then
+  result 'missing' 'jnv config' 'jnv is not installed'
+else
+  deploy_owned_config "${SCRIPT_DIR}/../jnv/config.toml" "$(jnv_config_file)" 'jnv config'
+fi
+
 # lazygit config. Its colours live in the one config file, so there is no theme
 # to copy beside it: config.yml is the repo's, and a run replaces a copy that
 # has drifted from it. The first replacement of a config that was not ours is
@@ -4302,6 +4587,21 @@ else
     # v1.10.0 above v1.9.0. The field is version:refname - plain `-version`
     # is rejected with "unknown field name: version".
     'tag.sort=-version:refname'
+    # `git branch` lists what you touched last first, the order gb uses,
+    # instead of alphabetical.
+    'branch.sort=-committerdate'
+    # Moved blocks get their own colour rather than reading as a delete and an
+    # add; delta renders it. A block that was only reindented still counts.
+    'diff.colorMoved=default'
+    'diff.colorMovedWS=allow-indentation-change'
+    # The commit message editor shows the diff being committed, below the
+    # cut line, so the message is written against what is staged.
+    'commit.verbose=true'
+    # `git stauts` offers `status` and waits for a yes, rather than failing.
+    # `prompt` needs git >= 2.34.
+    'help.autocorrect=prompt'
+    # The default branch of `git init`, and the end of its hint about it.
+    'init.defaultBranch=main'
   )
   # delta is the pager for diff, show, log and add -p; `git sdiff` is the same
   # view side by side.
