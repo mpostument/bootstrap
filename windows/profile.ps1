@@ -129,7 +129,7 @@ if (Get-Command fd -ErrorAction SilentlyContinue) {
     function find { fd @args }
 }
 if (Get-Command rg -ErrorAction SilentlyContinue) {
-    function grep { rg @args }
+    function grep { rg --max-columns=0 @args }
     # ripgrep reads a config file only when this names one; bootstrap.ps1
     # deploys ripgrep/config there. Set per session, not as a user variable:
     # an editor's own bundled rg would read that one too.

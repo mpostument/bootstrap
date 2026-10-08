@@ -2,7 +2,8 @@
 #
 # ripgrep reads no config file unless RIPGREP_CONFIG_PATH names one, so the zsh
 # fragment and profile.ps1 export it, and only when this file is in place. The
-# shells alias grep to rg, so these flags apply to grep at the prompt too.
+# shells alias grep to rg, so these flags apply to grep at the prompt too
+# (except --max-columns: the alias turns it off, as grep never cuts a line).
 # Deployed to ${XDG_CONFIG_HOME:-~/.config}/ripgrep/config on Linux and macOS
 # and %APPDATA%\ripgrep\config on Windows. One flag per line, as rg wants.
 #

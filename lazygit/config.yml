@@ -10,6 +10,11 @@
 # the atuin theme, the k9s skin and the ghostty config use. Colours from
 # catppuccin/lazygit (MIT).
 gui:
+  # File-type icons in the files and commit-files panels, like eza's and
+  # yazi's. Every platform's bootstrap installs a Meslo Nerd Font (v3) and
+  # points the terminal at it; lazygit ships this off.
+  nerdFontsVersion: '3'
+
   theme:
     activeBorderColor:
       - '#89b4fa'

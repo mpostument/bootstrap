@@ -20,6 +20,25 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [1.56.0]
+
+### Added
+
+- **mise global settings**, `mise/settings.conf` at the repo root, one
+  `key=value` per line and shared by all three platforms like `tools.conf`.
+  A new `mise - global settings` phase applies it with `mise settings set`; a
+  key your global `config.toml` already sets to something else is reported as
+  `present` and left alone. The first setting is
+  `idiomatic_version_file_enable_tools=node,python,ruby,go`: mise now reads
+  `.nvmrc`, `.node-version`, `.python-version`, `.ruby-version` and
+  `.go-version`, so another repo's runtime is picked up without a `mise.toml`.
+  mise ships this list empty.
+- **lazygit file icons**: `nerdFontsVersion: '3'` in `lazygit/config.yml`. The
+  Meslo Nerd Font the bootstrap already installs covers it.
+- **Exit code in the prompt**: starship's `status` module, off by default, is
+  on. A failed command shows `✘ 127` before the red `❯`, plus the signal name
+  for one that died of a signal (`✘ 130 INT`).
+
 ## [1.55.0]
 
 ### Added

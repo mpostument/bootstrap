@@ -15,6 +15,7 @@ $git_branch\
 $git_state\
 $git_status\
 $cmd_duration\
+$status\
 $character"""
 
 right_format = """$nodejs$python$golang$rust$dotnet$docker_context$time"""
@@ -70,6 +71,15 @@ ctx_dotnet    = "${custom.dotnet_sdk}$nodejs$python$golang$rust$docker_context$t
 # changes while you are talking to Claude; the shell prompt still shows all of
 # it, and the ctx_* profiles above still switch on the command you are typing.
 claude-code = "$directory$git_branch$git_status$claude_model$claude_context$claude_cost"
+
+# The last command's exit code, beside the red ❯ that only says it failed:
+# 127 is not found, 126 not executable, 130 Ctrl+C. A signal is named too
+# (130 INT, 137 KILL). Starship ships the module off.
+[status]
+disabled = false
+style = 'red bold'
+symbol = '✘ '
+format = '[$symbol$status( $signal_name)]($style) '
 
 [character]
 success_symbol = '[❯](green bold)'

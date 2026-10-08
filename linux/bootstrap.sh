@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.48.0'
+BOOTSTRAP_VERSION='1.49.0'
 BOOTSTRAP_PLATFORM='linux'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -3367,6 +3367,38 @@ else
   done < "$MISE_TOOLS_FILE"
 fi
 
+# mise global settings - mise/settings.conf, shared like tools.conf. A key the
+# global config already sets to something else is the user's: left alone.
+MISE_SETTINGS_FILE="${SCRIPT_DIR}/../mise/settings.conf"
+phase 'mise - global settings'
+if ! command -v mise >/dev/null 2>&1; then
+  result 'missing' 'mise settings' 'mise is not installed'
+elif [[ ! -r "$MISE_SETTINGS_FILE" ]]; then
+  result 'failed' 'mise settings' "not found at $MISE_SETTINGS_FILE"
+else
+  while IFS= read -r _entry || [[ -n "$_entry" ]]; do
+    _entry="${_entry%%#*}"
+    _entry="$(printf '%s' "$_entry" | tr -d '[:space:]')"
+    [[ -z "$_entry" ]] && continue
+    _key="${_entry%%=*}"
+    _want="${_entry#*=}"
+    # `config get -g` prints a list as ["a", "b"]; flatten it to the a,b the
+    # file uses. An unset key is an error, so empty means not set.
+    _have="$(mise config get -g "settings.$_key" 2>/dev/null | tr -d '[]" ' || true)"
+    if [[ "$_have" == "$_want" ]]; then
+      result 'current' "$_key" "$_want"
+    elif [[ -n "$_have" ]]; then
+      result 'present' "$_key" "$_have - left alone"
+    elif [[ "$DRY_RUN" == "yes" ]]; then
+      result 'would-install' "$_key" "$_want"
+    elif mise settings set "$_key" "$_want" >/dev/null 2>&1; then
+      result 'installed' "$_key" "$_want"
+    else
+      result 'failed' "$_key" "run by hand: mise settings set $_key $_want"
+    fi
+  done < "$MISE_SETTINGS_FILE"
+fi
+
 # zsh
 
 if [[ "${ZSH_ENABLED:-no}" != "yes" ]]; then
@@ -3684,7 +3716,7 @@ FZF_FILES
         # Only where no real fd exists: an apt fd-find left from before the
         # release binary would otherwise shadow it.
         echo 'command -v fd >/dev/null || { command -v fdfind >/dev/null && alias fd="fdfind"; }'
-        echo 'command -v rg     >/dev/null && alias grep="rg"'
+        echo 'command -v rg     >/dev/null && alias grep="rg --max-columns=0"'
         # ripgrep reads a config file only when this names one; the bootstrap
         # deploys ripgrep/config there. Checked when the shell starts, so a
         # missing file leaves rg on its defaults rather than warning every

@@ -92,7 +92,7 @@ function Invoke-Native {
 # The parameters as given, for the rerun after an update.
 $script:BoundParams = @{} + $PSBoundParameters
 
-$script:BootstrapVersion = '1.55.0'
+$script:BootstrapVersion = '1.56.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -2762,6 +2762,43 @@ if (-not (Get-Command mise -ErrorAction SilentlyContinue)) {
             [Environment]::SetEnvironmentVariable('JAVA_HOME', $javaHome, 'User')
             $env:JAVA_HOME = $javaHome
             Add-Result -Group 'mise' -Id 'JAVA_HOME' -Action 'installed' -Detail $javaHome
+        }
+    }
+}
+
+# mise global settings - mise\settings.conf, shared like tools.conf. A key the
+# global config already sets to something else is the user's: left alone.
+$miseSettingsFile = Join-Path (Split-Path $script:ToolRoot -Parent) 'mise\settings.conf'
+Write-Phase 'mise - global settings'
+if (-not (Get-Command mise -ErrorAction SilentlyContinue)) {
+    Add-Result -Group 'mise' -Id 'mise settings' -Action 'missing' `
+        -Detail 'mise is not on PATH - jdx.mise installs it in the dev group'
+} elseif (-not (Test-Path $miseSettingsFile)) {
+    Add-Result -Group 'mise' -Id 'mise settings' -Action 'failed' `
+        -Detail ('not found at {0}' -f $miseSettingsFile)
+} else {
+    $settings = @(Get-Content $miseSettingsFile |
+        ForEach-Object { (($_ -split '#')[0]) -replace '\s', '' } |
+        Where-Object { $_ })
+
+    foreach ($entry in $settings) {
+        $key, $want = $entry.Split('=', 2)
+        # `config get -g` prints a list as ["a", "b"]; flatten it to the a,b
+        # the file uses. An unset key is an error, so empty means not set.
+        $have = (Invoke-Native { & mise config get -g "settings.$key" 2>$null }) -join '' -replace '[\[\]" ]', ''
+        if ($have -eq $want) {
+            Add-Result -Group 'mise' -Id $key -Action 'current' -Detail $want
+        } elseif ($have) {
+            Add-Result -Group 'mise' -Id $key -Action 'present' -Detail "$have - left alone"
+        } elseif (-not $PSCmdlet.ShouldProcess($key, 'mise settings set')) {
+            Add-Result -Group 'mise' -Id $key -Action 'would-install' -Detail $want
+        } else {
+            Invoke-Native { & mise settings set $key $want *> $null }
+            if ($LASTEXITCODE -eq 0) {
+                Add-Result -Group 'mise' -Id $key -Action 'installed' -Detail $want
+            } else {
+                Add-Result -Group 'mise' -Id $key -Action 'failed' -Detail ('run by hand: mise settings set {0} {1}' -f $key, $want)
+            }
         }
     }
 }
