@@ -3589,6 +3589,9 @@ if ($SkipShell) {
         #   upstream, so completion stops offering dead origin/* names.
         # diff.algorithm: histogram reads better than myers on moved and
         #   reindented code; delta and difftastic render what it produces.
+        # pull.rebase: `git pull` on a branch that has diverged from its
+        #   upstream rebases your commits onto it, instead of stopping with
+        #   "Need to specify how to reconcile divergent branches".
         # rebase.autoStash: rebase stashes dirty work itself, rather than
         #   refusing to start.
         # column.ui: branch and status lists print in columns.
@@ -3610,6 +3613,7 @@ if ($SkipShell) {
         $gitWant.Add(@{ Key = 'push.autoSetupRemote';  Value = 'true' })
         $gitWant.Add(@{ Key = 'fetch.prune';           Value = 'true' })
         $gitWant.Add(@{ Key = 'diff.algorithm';        Value = 'histogram' })
+        $gitWant.Add(@{ Key = 'pull.rebase';           Value = 'true' })
         $gitWant.Add(@{ Key = 'rebase.autoStash';      Value = 'true' })
         $gitWant.Add(@{ Key = 'column.ui';             Value = 'auto' })
         $gitWant.Add(@{ Key = 'merge.conflictStyle';   Value = 'zdiff3' })
@@ -3637,6 +3641,12 @@ if ($SkipShell) {
             if (Get-Command bat -ErrorAction SilentlyContinue) {
                 $gitWant.Add(@{ Key = 'delta.syntax-theme'; Value = 'Catppuccin Mocha' })
             }
+            # File names and line numbers in a diff are OSC 8 links that open
+            # VS Code at that line; commit hashes link to the commit on GitHub.
+            # Windows Terminal follows them on Ctrl-click. {path} starts with the
+            # drive letter, not a slash, hence vscode://file/{path}.
+            $gitWant.Add(@{ Key = 'delta.hyperlinks';                  Value = 'true' })
+            $gitWant.Add(@{ Key = 'delta.hyperlinks-file-link-format'; Value = 'vscode://file/{path}:{line}' })
         }
 
         # difftastic compares syntax, not lines, and is asked for per command -

@@ -3714,6 +3714,10 @@ else
     # histogram reads better than the default myers on moved and reindented
     # code; delta and difftastic render whatever this produces.
     'diff.algorithm=histogram'
+    # `git pull` on a branch that has diverged from its upstream rebases your
+    # commits onto it, instead of stopping with "Need to specify how to
+    # reconcile divergent branches". autoStash below covers a dirty tree.
+    'pull.rebase=true'
     # rebase stashes and restores dirty work itself rather than refusing.
     'rebase.autoStash=true'
     # branch and status lists print in columns instead of one name per line.
@@ -3751,6 +3755,14 @@ else
     # delta highlights through bat's theme store - the same Catppuccin Mocha
     # the bat phase installs, so a diff and a `bat` of the same file match.
     command -v bat >/dev/null 2>&1 && GIT_WANT+=('delta.syntax-theme=Catppuccin Mocha')
+    # File names and line numbers in a diff are OSC 8 links that open VS Code
+    # at that line; commit hashes link to the commit on GitHub. Ghostty and
+    # Windows Terminal both follow them on Cmd/Ctrl-click. {path} is absolute
+    # and starts with its own slash, hence vscode://file{path}.
+    GIT_WANT+=(
+      'delta.hyperlinks=true'
+      'delta.hyperlinks-file-link-format=vscode://file{path}:{line}'
+    )
   else
     result 'missing' 'delta' 'delta is not installed'
   fi

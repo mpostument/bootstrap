@@ -56,6 +56,13 @@ history_filter = [
   "^(ls|ll|la|cd|pwd|clear|exit|htop|btop|top)$",
 ]
 
+[preview]
+# The preview box keeps one height - max_preview_height, 4 lines by default -
+# whatever is selected. atuin's default, auto, resizes it to the selected
+# command, so moving between a short command and a long, wrapping one makes
+# the whole list jump up and down under the cursor.
+strategy = "fixed"
+
 [theme]
 # themes/catppuccin-mocha.toml, deployed beside this file. Matches the palette
 # starship.toml, Ghostty and Windows Terminal already use.

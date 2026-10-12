@@ -1631,6 +1631,20 @@ k9s_paths() {
   [[ -n "$_K9S_CFG" ]]
 }
 
+# tool_has_config <glow|lnav|k9s> - whether the tool has a config directory
+# yet, in any of the places it looks. Each of the three creates one the first
+# time it runs - --help, -h and `k9s info` included - so the doctor and the
+# dry run, which change nothing, ask the tool only once this says yes.
+tool_has_config() {
+  local xdg="${XDG_CONFIG_HOME:-${HOME}/.config}"
+  case "$1" in
+    glow) [[ -d "${xdg}/glow" ]] ;;
+    lnav) [[ -d "${HOME}/.lnav" || -d "${xdg}/lnav" ]] ;;
+    k9s)  [[ -d "${xdg}/k9s" ]] ;;
+    *)    return 1 ;;
+  esac
+}
+
 # The file procs or trippy would read instead of the one the bootstrap deploys.
 # Both look in several places and take the first file that exists, and both
 # check the deployed path last - so a file of yours higher up the list means
@@ -1703,6 +1717,8 @@ doctor_check_themes() {
   local skin lazygit_dir theme flavor yazi_dir
   if ! command -v k9s >/dev/null 2>&1; then
     :
+  elif ! tool_has_config k9s; then
+    doctor_broken 'k9s skin' 'not deployed - k9s has no config directory yet'
   elif ! k9s_paths; then
     doctor_broken 'k9s skin' 'k9s info named no config file'
   else
@@ -1797,8 +1813,11 @@ doctor_check_more_themes() {
   fi
 
   if command -v glow >/dev/null 2>&1; then
-    glow_cfg="$(glow_config_file)"
-    if [[ -z "$glow_cfg" ]]; then
+    glow_cfg=''
+    tool_has_config glow && glow_cfg="$(glow_config_file)"
+    if ! tool_has_config glow; then
+      doctor_broken 'glow theme' 'not deployed - glow has no config directory yet'
+    elif [[ -z "$glow_cfg" ]]; then
       doctor_broken 'glow style' 'glow --help named no config file'
     else
       doctor_config 'glow theme' "${SCRIPT_DIR}/../glow/catppuccin-mocha.json" \
@@ -1814,8 +1833,11 @@ doctor_check_more_themes() {
   fi
 
   if command -v lnav >/dev/null 2>&1; then
-    lnav_dir="$(lnav_config_dir)"
-    if [[ -z "$lnav_dir" ]]; then
+    lnav_dir=''
+    tool_has_config lnav && lnav_dir="$(lnav_config_dir)"
+    if ! tool_has_config lnav; then
+      doctor_broken 'lnav theme' 'not deployed - lnav has no config directory yet'
+    elif [[ -z "$lnav_dir" ]]; then
       doctor_broken 'lnav theme' 'lnav -h named no config directory'
     else
       doctor_config 'lnav theme' "${SCRIPT_DIR}/../lnav/catppuccin-mocha.json" \
@@ -2623,8 +2645,10 @@ else
   fi
 
   # Reported, never run. --dry-run needs no privileges and changes nothing.
+  # A broken apt (an interrupted dpkg, unmet dependencies) exits 100, which
+  # under pipefail would end the whole run here; report nothing instead.
   orphans="$(apt-get autoremove --dry-run 2>/dev/null \
-               | sed -n 's/^Remv \([^ ]*\).*/\1/p' | tr '\n' ' ')"
+               | sed -n 's/^Remv \([^ ]*\).*/\1/p' | tr '\n' ' ' || true)"
   if [[ -n "${orphans// /}" ]]; then
     result 'present' 'unused packages' "${orphans}- apt autoremove, if you agree"
   fi
@@ -4314,6 +4338,8 @@ K9S_SOURCE="${SCRIPT_DIR}/../k9s"
 phase 'k9s skin'
 if ! command -v k9s >/dev/null 2>&1; then
   result 'missing' 'k9s skin' 'k9s is not installed'
+elif [[ "$DRY_RUN" == "yes" ]] && ! tool_has_config k9s; then
+  result 'would-install' 'k9s skin' 'catppuccin-mocha.yaml in the skins directory k9s info names'
 elif ! k9s_paths; then
   result 'failed' 'k9s skin' 'k9s info named no config file'
 else
@@ -4610,6 +4636,10 @@ else
     # histogram reads better than the default myers on moved and reindented
     # code; delta and difftastic render whatever this produces.
     'diff.algorithm=histogram'
+    # `git pull` on a branch that has diverged from its upstream rebases your
+    # commits onto it, instead of stopping with "Need to specify how to
+    # reconcile divergent branches". autoStash below covers a dirty tree.
+    'pull.rebase=true'
     # rebase stashes and restores dirty work itself rather than refusing.
     'rebase.autoStash=true'
     # branch and status lists print in columns instead of one name per line.
@@ -4648,6 +4678,14 @@ else
     # the bat phase installs, so a diff and a `bat` of the same file match.
     { command -v bat >/dev/null 2>&1 || command -v batcat >/dev/null 2>&1; } && \
       GIT_WANT+=('delta.syntax-theme=Catppuccin Mocha')
+    # File names and line numbers in a diff are OSC 8 links that open VS Code
+    # at that line; commit hashes link to the commit on GitHub. Ghostty and
+    # Windows Terminal both follow them on Cmd/Ctrl-click. {path} is absolute
+    # and starts with its own slash, hence vscode://file{path}.
+    GIT_WANT+=(
+      'delta.hyperlinks=true'
+      'delta.hyperlinks-file-link-format=vscode://file{path}:{line}'
+    )
   else
     result 'missing' 'delta' 'delta is not installed'
   fi

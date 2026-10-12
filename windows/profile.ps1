@@ -116,7 +116,13 @@ if (Get-Command atuin -ErrorAction SilentlyContinue) {
 # bat: https://github.com/sharkdp/bat | eza: https://github.com/eza-community/eza
 if (Get-Command bat -ErrorAction SilentlyContinue) {
     Remove-Item Alias:cat -Force -ErrorAction SilentlyContinue
-    function cat { bat --paging=never @args }
+    # A function's pipeline input arrives in $input, not on the native
+    # command's stdin, so `... | cat` would wait on the keyboard without
+    # passing it on. Same for grep and http below.
+    function cat {
+        if ($MyInvocation.ExpectingInput) { $input | bat --paging=never @args }
+        else { bat --paging=never @args }
+    }
 }
 if (Get-Command eza -ErrorAction SilentlyContinue) {
     Remove-Item Alias:ls -Force -ErrorAction SilentlyContinue
@@ -129,7 +135,12 @@ if (Get-Command fd -ErrorAction SilentlyContinue) {
     function find { fd @args }
 }
 if (Get-Command rg -ErrorAction SilentlyContinue) {
-    function grep { rg --max-columns=0 @args }
+    # Without the $input hand-off, `kubectl get pods | grep x` searches the
+    # current directory instead of the piped text.
+    function grep {
+        if ($MyInvocation.ExpectingInput) { $input | rg --max-columns=0 @args }
+        else { rg --max-columns=0 @args }
+    }
     # ripgrep reads a config file only when this names one; bootstrap.ps1
     # deploys ripgrep/config there. Set per session, not as a user variable:
     # an editor's own bundled rg would read that one too.
@@ -155,8 +166,13 @@ if (Get-Command doggo -ErrorAction SilentlyContinue) {
 # xh -- HTTP from the terminal. The tarball's `xhs` (xh --https) is a symlink
 # upstream, so it is a function here instead. https://github.com/ducaale/xh
 if (Get-Command xh -ErrorAction SilentlyContinue) {
-    function http { xh @args }
-    function https { xh --https @args }
+    # Piped input is the request body: `'{...}' | http POST url`.
+    function http {
+        if ($MyInvocation.ExpectingInput) { $input | xh @args } else { xh @args }
+    }
+    function https {
+        if ($MyInvocation.ExpectingInput) { $input | xh --https @args } else { xh --https @args }
+    }
 }
 
 # lazygit -- git TUI; lg is the name its own README suggests.

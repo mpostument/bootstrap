@@ -33,6 +33,39 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 - **Exit code in the prompt**: starship's `status` module, off by default, is
   on. A failed command shows `✘ 127` before the red `❯`, plus the signal name
   for one that died of a signal (`✘ 130 INT`).
+- **`git pull` rebases a diverged branch**: `pull.rebase=true` joins the git
+  defaults, set only where unset. git otherwise stops with "Need to specify how
+  to reconcile divergent branches"; `rebase.autoStash` already covers a dirty
+  tree.
+- **Clickable delta diffs**: `delta.hyperlinks=true`. File names and line
+  numbers link to `vscode://file{path}:{line}`, so Cmd/Ctrl-click opens VS Code
+  at that line; commit hashes link to the commit on GitHub.
+- **lazygit**: the branches panel shows how far each branch is behind and
+  ahead of main (`showDivergenceFromBaseBranch: arrowAndNumber`), the files
+  panel shows `+N -M` per file (`showNumstatInFilesView`), and an editor or
+  custom command returns straight to lazygit without the "press enter" pause
+  (`promptToReturnFromSubprocess: false`).
+- **lazydocker logs from quiet containers**: `logs.since: ''` and
+  `logs.tail: '300'` in `lazydocker/config.yml`. The default shows only the
+  last hour, so a container quiet for longer opened on an empty pane.
+- **mise activates uv project venvs**: `python.uv_venv_auto=source` in
+  `mise/settings.conf`. cd'ing into a project with a `uv.lock` activates its
+  `.venv`; `uv sync` still creates it.
+
+### Changed
+
+- **atuin preview keeps one height**: `[preview] strategy = "fixed"` in
+  `atuin/config.toml`. atuin's default, `auto`, resizes the preview to the
+  selected command, so moving the selection between a short command and a long
+  one made the Ctrl-R list jump. It now stays at `max_preview_height` (4
+  lines).
+
+### Fixed
+
+- **lazygit no longer rewrites its config on every start.** `authorColors`
+  sat under `gui:`; lazygit 0.66 moved it to `gui.theme:` itself and rewrote
+  `config.yml`, which the next run then reported as drift and put back. It now
+  lives under `gui.theme` in `lazygit/config.yml`.
 
 ## [1.51.0]
 

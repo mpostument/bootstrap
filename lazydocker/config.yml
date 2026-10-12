@@ -18,3 +18,10 @@ gui:
       - '#313244'
     optionsTextColor:
       - '#89b4fa'
+
+# lazydocker shows only the last hour of logs by default, so a container that
+# has been quiet longer opens on an empty logs pane. Its last 300 lines instead,
+# however old.
+logs:
+  since: ''
+  tail: '300'
