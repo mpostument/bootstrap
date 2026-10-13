@@ -15,6 +15,17 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.52.1]
+
+### Fixed
+
+- **azure-cli is a cask now.** Homebrew moved it out of homebrew-core, so the
+  manifest listed a formula that no longer exists and the Verify manifests
+  workflow failed. It moves to `GROUP_cloud_CASK`. On a machine that still has
+  the old formula, the cask is reported as `present` and not installed over it,
+  because the formula's `az` link would collide with the cask's. `brew upgrade`
+  migrates the formula to the cask.
+
 ## [1.52.0]
 
 ### Added

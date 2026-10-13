@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.52.0'
+BOOTSTRAP_VERSION='1.52.1'
 BOOTSTRAP_PLATFORM='macos'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -2274,6 +2274,13 @@ install_cask() {
     else
       result 'current' "$token" "$version"
     fi
+    return
+  fi
+  # A formula that left homebrew-core for a cask of the same name (azure-cli)
+  # is still installed as the formula on older machines, and its links would
+  # collide with the cask's. brew upgrade migrates it; don't install over it.
+  if brew_formula_installed "$token"; then
+    result 'present' "$token" "$(brew_formula_version "$token") as a formula - brew upgrade migrates it to the cask"
     return
   fi
 
