@@ -24,8 +24,6 @@
     Skip the mpv phase.
 .PARAMETER SkipSchedule
     Skip the schedule phase and leave Task Scheduler alone.
-.PARAMETER SkipVsCode
-    Skip installing VS Code extensions from the manifest.
 .PARAMETER SkipUpdateCheck
     Don't check the GitHub origin for a newer release tag.
 .PARAMETER IncludeUnknown
@@ -65,7 +63,6 @@ param(
     [switch]$SkipShell,
     [switch]$SkipMpv,
     [switch]$SkipSchedule,
-    [switch]$SkipVsCode,
     [switch]$SkipUpdateCheck,
     [switch]$IncludeUnknown,
     [switch]$Silent,
@@ -92,7 +89,7 @@ function Invoke-Native {
 # The parameters as given, for the rerun after an update.
 $script:BoundParams = @{} + $PSBoundParameters
 
-$script:BootstrapVersion = '1.56.0'
+$script:BootstrapVersion = '2.0.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -2351,8 +2348,7 @@ if ($History) { Show-RunHistory; exit 0 }
 if (-not (Test-Path $ManifestPath)) { throw "Manifest not found: $ManifestPath" }
 $manifest = Import-PowerShellDataFile -Path $ManifestPath
 
-$required = @('Groups', 'Pins', 'Managed', 'Shell', 'Mpv', 'Schedule', 'Housekeeping', 'Git',
-    'VsCodeExtensions')
+$required = @('Groups', 'Pins', 'Managed', 'Shell', 'Mpv', 'Schedule', 'Housekeeping', 'Git')
 $missing = @($required | Where-Object { -not $manifest.Contains($_) })
 if ($missing.Count -gt 0) {
     throw ("Manifest is missing required section(s): {0}. Found: {1}. See {2}." -f
@@ -3452,36 +3448,6 @@ if ($SkipSchedule) {
                     -Detail ('daily at {0}, logs in {1}' -f $schedule.Time, $logDir)
             } catch {
                 Add-Result -Group 'schedule' -Id $schedule.TaskName -Action 'failed' -Detail $_.Exception.Message
-            }
-        }
-    }
-}
-
-# Phase 7 - VS Code extensions
-
-if ($SkipVsCode) {
-    Write-Phase 'VS Code extensions - skipped (-SkipVsCode)'
-} else {
-    $codeExe = Get-Command code -ErrorAction SilentlyContinue
-    if (-not $codeExe) {
-        Write-Phase 'VS Code extensions - code CLI not on PATH, skipping'
-        Add-Result -Group 'vscode' -Id 'vscode extensions' -Action 'missing' `
-            -Detail 'code CLI not found - install VS Code, then "Shell Command: Install code command in PATH"'
-    } else {
-        Write-Phase 'VS Code extensions - install what is missing, never remove'
-        $installed = @(Invoke-Native { & code --list-extensions 2>$null })
-        foreach ($extId in $manifest.VsCodeExtensions) {
-            if ($installed -contains $extId) {
-                Add-Result -Group 'vscode' -Id $extId -Action 'present'
-            } elseif (-not $PSCmdlet.ShouldProcess($extId, 'code --install-extension')) {
-                Add-Result -Group 'vscode' -Id $extId -Action 'would-install'
-            } else {
-                Invoke-Native { & code --install-extension $extId *> $null }
-                if ($LASTEXITCODE -eq 0) {
-                    Add-Result -Group 'vscode' -Id $extId -Action 'installed'
-                } else {
-                    Add-Result -Group 'vscode' -Id $extId -Action 'failed' -Detail 'code --install-extension failed'
-                }
             }
         }
     }

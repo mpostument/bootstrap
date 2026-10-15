@@ -25,13 +25,11 @@ which reports `x86_64` on Apple silicon under Rosetta.
    would take, reported and not taken.
 6. **zsh** — Starship, completion and the Homebrew zsh plugins, plus a
    managed `~/.zshrc.bootstrap` sourced from your own `.zshrc`.
-7. **VS Code extensions** — `VSCODE_EXTENSIONS`, installed with
-   `code --install-extension`; never removes one that isn't listed.
-8. **Prompt config** — `starship.toml` from the repo root to
+7. **Prompt config** — `starship.toml` from the repo root to
    `~/.config/starship.toml`, the same file all three platforms deploy.
-9. **bat config** — `bat/config` and the Catppuccin Mocha theme from the repo
+8. **bat config** — `bat/config` and the Catppuccin Mocha theme from the repo
    root, the palette starship, ghostty, atuin and delta all render in.
-10. **Schedule** — a launchd agent that re-runs all of the above daily.
+9. **Schedule** — a launchd agent that re-runs all of the above daily.
     Skip with `--skip-schedule`.
 
 `pyenv`, `pyenv-virtualenv`, `tofuenv`, `nvm`, `dotnet-sdk`, `claude-code` and
@@ -55,8 +53,6 @@ which reports `x86_64` on Apple silicon under Rosetta.
                    Upgrade formulae but not casks.
 --skip-cleanup     Leave stale downloads and superseded versions on disk.
 --skip-schedule    Leave the launchd agent alone.
---skip-vscode-extensions
-                   Install none of the VS Code extensions in the manifest.
 --skip-update-check
                    Don't check the GitHub origin for a newer release tag.
 --gui / --no-gui   Whether to install groups that need a desktop. Default --gui.

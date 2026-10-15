@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='1.49.0'
+BOOTSTRAP_VERSION='2.0.0'
 BOOTSTRAP_PLATFORM='linux'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,7 +13,6 @@ SKIP_UPGRADE=no
 SKIP_CLEANUP=no
 SKIP_SCHEDULE=no
 SKIP_REPOS=no
-SKIP_VSCODE_EXT=no
 SKIP_UPDATE_CHECK=no
 ASSUME_YES=no
 GUI_OVERRIDE=auto
@@ -635,8 +634,6 @@ Usage: bootstrap.sh [options]
   --skip-repos       Add no third-party apt sources and install none of
                      their packages. For a host where something else
                      already owns those repositories.
-  --skip-vscode-extensions
-                     Install none of the VS Code extensions in the manifest.
   --skip-update-check
                      Don't check the GitHub origin for a newer release tag.
   --gui / --no-gui   Override desktop detection instead of probing for it.
@@ -669,7 +666,6 @@ while [[ $# -gt 0 ]]; do
     --history)       HISTORY_ONLY=yes ;;
     --history=*)     HISTORY_ONLY=yes; HISTORY_LINES="${1#*=}" ;;
     --skip-repos)    SKIP_REPOS=yes ;;
-    --skip-vscode-extensions) SKIP_VSCODE_EXT=yes ;;
     --skip-update-check) SKIP_UPDATE_CHECK=yes ;;
     --yes|-y)        ASSUME_YES=yes ;;
     --scheduled)     RUN_SCHEDULED=yes; ASSUME_YES=yes ;;
@@ -1058,7 +1054,7 @@ source "$MANIFEST"
 
 for required in PKG_GROUPS MANUAL HELD TOOLS REPOS RELEASES ZSH_PLUGIN_REPOS \
                 DOTNET_ENABLED ZSH_ENABLED NERD_FONT_ENABLED CLAUDE_CODE_ENABLED \
-                ANTIGRAVITY_CLI_ENABLED MISE_ENABLED VSCODE_EXTENSIONS \
+                ANTIGRAVITY_CLI_ENABLED MISE_ENABLED \
                 AWSCLI_ENABLED GHOSTTY_ENABLED SCHEDULE_ENABLED HISTORY_SIZE HISTORY_FILE_SIZE; do
   declare -p "$required" >/dev/null 2>&1 || die "manifest is missing \$$required: $MANIFEST"
 done
@@ -1153,13 +1149,6 @@ if [[ "${LIST_PACKAGES:-no}" == "yes" ]]; then
   fi
   if [[ "${GHOSTTY_ENABLED:-no}" == "yes" && -n "${GHOSTTY_DEB_REPO:-}" ]]; then
     printf '  %scommunity .deb%s\n    %sghostty%s\n' "$C_CYAN" "$C_RESET" "$C_DIM" "$C_RESET"
-  fi
-  if [[ "${#VSCODE_EXTENSIONS[@]}" -gt 0 ]]; then
-    printf '  %sVS Code extensions%s\n' "$C_CYAN" "$C_RESET"
-    for ext in "${VSCODE_EXTENSIONS[@]:-}"; do
-      [[ -z "$ext" ]] && continue
-      printf '    %s%s%s\n' "$C_DIM" "$ext" "$C_RESET"
-    done
   fi
   echo
   exit 0
@@ -3282,35 +3271,6 @@ else
       fi
       rm -f "$ollama_script"
     fi
-  fi
-fi
-
-# VS Code extensions
-
-if [[ "${#VSCODE_EXTENSIONS[@]}" -gt 0 ]]; then
-  if [[ "$SKIP_VSCODE_EXT" == "yes" ]]; then
-    phase 'VS Code extensions - skipped (--skip-vscode-extensions)'
-  elif [[ "$HAS_GUI" != "yes" ]]; then
-    phase 'VS Code extensions - no desktop, skipping'
-    result 'no-gui' 'vscode extensions' 'needs a desktop, none detected'
-  elif ! command -v code >/dev/null 2>&1; then
-    phase 'VS Code extensions - code CLI not on PATH, skipping'
-    result 'missing' 'vscode extensions' 'code CLI not found - install the vscode repo package first'
-  else
-    phase 'VS Code extensions - install what is missing, never remove'
-    vscode_installed="$(code --list-extensions 2>/dev/null || true)"
-    for ext in "${VSCODE_EXTENSIONS[@]}"; do
-      [[ -z "$ext" ]] && continue
-      if grep -qiFx "$ext" <<<"$vscode_installed"; then
-        result 'present' "$ext"
-      elif [[ "$DRY_RUN" == "yes" ]]; then
-        result 'would-install' "$ext"
-      elif code --install-extension "$ext" >/dev/null 2>&1; then
-        result 'installed' "$ext"
-      else
-        result 'failed' "$ext" 'code --install-extension failed'
-      fi
-    done
   fi
 fi
 

@@ -68,9 +68,8 @@
                 # platforms share.
                 'jdx.mise'
                 'astral-sh.uv'
-                # Anthropic.Claude below (in apps) is the desktop chat app,
-                # and VsCodeExtensions has the editor extension - this is the
-                # terminal agent itself, a portable winget package landing
+                # Anthropic.Claude below (in apps) is the desktop chat app;
+                # this is the terminal agent itself, a portable winget package landing
                 # claude.exe. Google's Antigravity CLI is the same shape.
                 'Anthropic.ClaudeCode'
                 'Google.AntigravityCLI'
@@ -204,45 +203,6 @@
             Detect = 'JetBrains Toolbox (Rider)*'
             Note   = 'Toolbox self-updates it; winget also publishes JetBrains.Rider, which would fight it'
         }
-    )
-
-    # Curated from `code --list-extensions` on this machine, minus duplicates
-    # (docker.docker over the two ms-azuretools Docker/Container Tools
-    # extensions, GitLens over donjayamanne.githistory, hashicorp.terraform
-    # already bundles HCL, the python extension pack over its loose parts).
-    # Install-only: never uninstalls an extension that isn't listed here.
-    VsCodeExtensions = @(
-        'aaron-bond.better-comments'
-        'anthropic.claude-code'
-        'christian-kohler.path-intellisense'
-        'codezombiech.gitignore'
-        'davidanson.vscode-markdownlint'
-        'docker.docker'
-        'eamodio.gitlens'
-        'github.vscode-pull-request-github'
-        'golang.go'
-        'hashicorp.terraform'
-        'ms-azuretools.vscode-azureterraform'
-        'ms-dotnettools.csdevkit'
-        'ms-dotnettools.csharp'
-        'ms-dotnettools.vscode-dotnet-runtime'
-        'ms-kubernetes-tools.vscode-kubernetes-tools'
-        'ms-python.debugpy'
-        'ms-python.python'
-        'ms-python.vscode-pylance'
-        'ms-vscode-remote.remote-containers'
-        'ms-vscode-remote.remote-ssh'
-        'ms-vscode-remote.remote-ssh-edit'
-        'ms-vscode-remote.remote-wsl'
-        'ms-vscode-remote.vscode-remote-extensionpack'
-        'ms-vscode.powershell'
-        'ms-vscode.remote-explorer'
-        'ms-vscode.remote-server'
-        'redhat.vscode-commons'
-        'redhat.vscode-yaml'
-        'visualstudiotoolsforunity.vstuc'
-        'vscode-icons-team.vscode-icons'
-        'yzhang.markdown-all-in-one'
     )
 
     Schedule = @{

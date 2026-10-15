@@ -47,15 +47,13 @@ none. Override with `--gui` or `--no-gui`.
 14. **Ollama** — with the dev group, ollama.com's script into `/usr/local`,
     with an `ollama.service` that starts at boot. Rerun only for a newer
     release, because each install downloads about 1.4 GB.
-15. **VS Code extensions** — `VSCODE_EXTENSIONS`, installed with
-    `code --install-extension`; never removes one that isn't listed.
-16. **zsh** — Starship, completion and the `ZSH_PLUGIN_REPOS` checkouts,
+15. **zsh** — Starship, completion and the `ZSH_PLUGIN_REPOS` checkouts,
     plus a managed `~/.zshrc.bootstrap` sourced from your own `.zshrc`.
-17. **Prompt config** — `starship.toml` from the repo root to
+16. **Prompt config** — `starship.toml` from the repo root to
     `~/.config/starship.toml`, the same file all three platforms deploy.
-18. **bat config** — `bat/config` and the Catppuccin Mocha theme from the repo
+17. **bat config** — `bat/config` and the Catppuccin Mocha theme from the repo
     root, the palette starship, ghostty, atuin and delta all render in.
-19. **Schedule** — a systemd system timer that re-runs this script daily.
+18. **Schedule** — a systemd system timer that re-runs this script daily.
 
 ## Options
 
@@ -73,8 +71,6 @@ none. Override with `--gui` or `--no-gui`.
 --skip-upgrade     Install what is missing, leave installed versions alone.
 --skip-cleanup     Leave cached .deb downloads on disk.
 --skip-schedule    Leave the systemd timer alone.
---skip-vscode-extensions
-                   Install none of the VS Code extensions in the manifest.
 --skip-update-check
                    Don't check the GitHub origin for a newer release tag.
 --gui / --no-gui   Override desktop detection instead of probing for it.

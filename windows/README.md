@@ -45,8 +45,6 @@ once running, but cannot clear it from the file you are starting.
    Windows Terminal settings merge that patches keys instead of overwriting.
 6. **mpv** — config, UI and scripts. Skip with `-SkipMpv`.
 7. **Schedule** — a daily unattended run. Skip with `-SkipSchedule`.
-8. **VS Code extensions** — installs what's missing from `packages.psd1`,
-   never removes one that isn't listed. Skip with `-SkipVsCode`.
 
 ## mpv
 

@@ -20,6 +20,17 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [2.0.0]
+
+### Removed
+
+- **VS Code extensions.** `VsCodeExtensions` is gone from `packages.psd1`,
+  along with Phase 7 that installed them and the `-SkipVsCode` switch, which
+  an invocation can no longer pass. Extensions already installed are left
+  alone; VS Code itself still comes from the manifest. A hand-edited
+  `packages.psd1` that still has a `VsCodeExtensions` key loads fine - the key
+  is just ignored.
+
 ## [1.56.0]
 
 ### Added

@@ -15,6 +15,17 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0]
+
+### Removed
+
+- **VS Code extensions.** `VSCODE_EXTENSIONS` is gone from `packages.conf`,
+  along with the phase that installed them and the `--skip-vscode-extensions`
+  flag, which is now an unknown option. Extensions already installed are left
+  alone; VS Code itself still comes from the manifest. A hand-edited
+  `packages.conf` that still defines `VSCODE_EXTENSIONS` loads fine - the
+  array is just ignored.
+
 ## [1.52.1]
 
 ### Fixed
