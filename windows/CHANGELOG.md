@@ -20,6 +20,16 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [2.0.1]
+
+### Fixed
+
+- **`cat` prints the file and nothing else.** The `cat` function ran `bat --paging=never`,
+  which keeps bat's default style: a line-number gutter and a grid. Selecting
+  the output in the terminal copied the numbers and `│` along with the text.
+  It now passes `--style=plain` too, so syntax highlighting stays and the
+  decorations go. `bat` itself is unchanged.
+
 ## [2.0.0]
 
 ### Removed

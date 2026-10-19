@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='2.0.0'
+BOOTSTRAP_VERSION='2.0.1'
 BOOTSTRAP_PLATFORM='linux'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -3687,8 +3687,8 @@ FZF_FILES
         echo "alias ....='cd ../../..'"
         echo "alias -- -='cd -'"
         echo
-        echo 'command -v batcat >/dev/null && alias cat="batcat --paging=never"'
-        echo 'command -v bat    >/dev/null && alias cat="bat --paging=never"'
+        echo 'command -v batcat >/dev/null && alias cat="batcat --paging=never --style=plain"'
+        echo 'command -v bat    >/dev/null && alias cat="bat --paging=never --style=plain"'
         # man pages in bat's theme. col -bx strips the overstrike backspaces
         # groff emits for bold and underline, which bat would render literally.
         # batcat first, bat second, so bat wins where both exist.

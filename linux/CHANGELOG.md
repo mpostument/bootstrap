@@ -15,6 +15,16 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1]
+
+### Fixed
+
+- **`cat` prints the file and nothing else.** The `cat` alias ran `bat --paging=never`,
+  which keeps bat's default style: a line-number gutter and a grid. Selecting
+  the output in the terminal copied the numbers and `│` along with the text.
+  It now passes `--style=plain` too, so syntax highlighting stays and the
+  decorations go. `bat` itself is unchanged.
+
 ## [2.0.0]
 
 ### Removed

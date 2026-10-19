@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='2.0.0'
+BOOTSTRAP_VERSION='2.0.1'
 BOOTSTRAP_PLATFORM='macos'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -2843,7 +2843,7 @@ FZF_FILES
     echo "alias ....='cd ../../..'"
     echo "alias -- -='cd -'"
     echo
-    echo 'command -v bat    >/dev/null && alias cat="bat --paging=never"'
+    echo 'command -v bat    >/dev/null && alias cat="bat --paging=never --style=plain"'
     # man pages in bat's theme. col -bx strips the overstrike backspaces
     # groff emits for bold and underline, which bat would render literally.
     echo 'command -v bat    >/dev/null && export MANPAGER="sh -c '"'"'col -bx | bat -l man -p'"'"'" MANROFFOPT="-c"'

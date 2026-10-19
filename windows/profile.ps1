@@ -120,8 +120,8 @@ if (Get-Command bat -ErrorAction SilentlyContinue) {
     # command's stdin, so `... | cat` would wait on the keyboard without
     # passing it on. Same for grep and http below.
     function cat {
-        if ($MyInvocation.ExpectingInput) { $input | bat --paging=never @args }
-        else { bat --paging=never @args }
+        if ($MyInvocation.ExpectingInput) { $input | bat --paging=never --style=plain @args }
+        else { bat --paging=never --style=plain @args }
     }
 }
 if (Get-Command eza -ErrorAction SilentlyContinue) {
