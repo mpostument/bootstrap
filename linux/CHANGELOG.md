@@ -15,6 +15,57 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0]
+
+### Added
+
+- **Neovim with LazyVim in place of vim.** Neovim and the tree-sitter CLI are
+  release binaries - Ubuntu 24.04's neovim is 0.9.5, and LazyVim needs 0.11.2 -
+  and the vim apt package is gone. Neovim's tarball is a whole install, so
+  `RELEASE_<name>_TREE=yes` is new: the archive's top directory is kept in
+  `RELEASE_TREE_DIR` (`~/.local/opt`) and its binaries are linked into
+  `~/.local/bin`. A new `Neovim config` phase deploys LazyVim's starter with
+  Catppuccin Mocha to `~/.config/nvim`: `init.lua`, `lua/config/lazy.lua` and
+  `lua/plugins/colorscheme.lua` are the repo's, the rest is yours. An
+  `init.vim` of yours is left alone. The first launch of `nvim` installs
+  LazyVim and its plugins; tree-sitter and build-essential's compiler build the
+  parsers. The zsh fragment aliases `vim` and `vi` to `nvim` and exports
+  `EDITOR` and `VISUAL`.
+
+### Changed
+
+- **prek in place of pre-commit.** prek is a Rust rewrite that reads the same
+  `.pre-commit-config.yaml` and runs the same hooks, from one binary and faster.
+  It is upstream's release binary in `~/.local/bin`, not a `uv tool` as
+  pre-commit was. A repo whose hooks came from `pre-commit install` keeps
+  calling pre-commit until `prek install` rewrites them - pre-commit itself is
+  not uninstalled.
+
+- **`tree` is eza.** A `tree` alias runs `eza --tree` with the same icons and
+  directories-first order as `ls`, in place of the tree package.
+
+### Removed
+
+- **The vim config and theme.** `vim/vimrc` and the Catppuccin colour scheme
+  are gone, with the `vim config` phase and its doctor checks. Copies already
+  in `~/.vim` are left alone; delete `~/.vim` to clean up.
+
+- **xh.** curl does the job in practice. The release binary, the `http` and
+  `https` aliases, the `xh config` phase, its doctor check and
+  `xh/config.json` went with it.
+
+- **difftastic, procs, jnv, gping and tree.** Unused: delta already renders
+  every diff, btop covers processes, fx covers interactive JSON, trippy
+  graphs latency, and `eza --tree` draws trees. The release binaries and the
+  tree apt package are gone from `packages.conf`, the `procs config` and `jnv
+  config` phases and doctor checks went with them, and so did the difftastic
+  git settings (`diff.tool`, `difftool.*`, `pager.difftool`).
+  Everything already installed is left alone - the bootstrap never
+  uninstalls - and so are configs it deployed earlier and the git aliases
+  `dft`, `ddiff`, `dshow` and `dlog`, which now point at a missing `difft`.
+  Deleting `difft`, `procs`, `jnv`, `gping` and `xh` from `~/.local/bin` and
+  `sudo apt remove tree` clean up a machine.
+
 ## [2.0.1]
 
 ### Fixed

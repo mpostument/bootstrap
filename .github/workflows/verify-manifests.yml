@@ -199,7 +199,7 @@ jobs:
               continue
             fi
             version="${tag#v}"
-            # jq-1.8.2, gping-v1.21.0: read the number out, as install_release does
+            # jq-1.8.2: read the number out, as install_release does
             case "$version" in [0-9]*) ;; *) version="$(printf '%s' "$tag" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)" ;; esac
 
             # Both architectures the script installs for, as dpkg, uname and

@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='2.0.1'
+BOOTSTRAP_VERSION='2.1.0'
 BOOTSTRAP_PLATFORM='linux'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -1039,7 +1039,11 @@ uninstall_item() {   # uninstall_item <catalog index>
       bin_var="RELEASE_${id}_BIN"; bins_var="RELEASE_${id}_BINS"
       for b in ${!bins_var:-${!bin_var:-$id}}; do
         rm -f "${RELEASE_BIN_DIR:?}/$b" || { ok=no why="could not remove ${RELEASE_BIN_DIR}/$b"; }
-      done ;;
+      done
+      tree_var="RELEASE_${id}_TREE"
+      if [[ "${!tree_var:-}" == yes ]]; then
+        rm -rf "${RELEASE_TREE_DIR:-$HOME/.local/opt}/${id:?}" || { ok=no why="could not remove the ${id} tree"; }
+      fi ;;
   esac
   if [[ "$ok" == yes ]]; then result 'removed' "$id" "$kind"; else result 'failed' "$id" "$why"; fi
   return 0
@@ -1634,20 +1638,10 @@ tool_has_config() {
   esac
 }
 
-# The file procs or trippy would read instead of the one the bootstrap deploys.
-# Both look in several places and take the first file that exists, and both
-# check the deployed path last - so a file of yours higher up the list means
-# the deployed one is never read. Prints that file, or nothing.
-procs_config_shadow() {   # procs: src/main.rs get_config
-  local f
-  # procs' own ~/.config/procs is hard-coded; the ProjectDirs one before it
-  # follows XDG_CONFIG_HOME, so it is a different file only when that is set.
-  for f in "${HOME}/.procs.toml" "${XDG_CONFIG_HOME:-$HOME/.config}/procs/config.toml"; do
-    [[ "$f" == "${HOME}/.config/procs/config.toml" ]] && continue
-    [[ -f "$f" ]] && { printf '%s\n' "$f"; return 0; }
-  done
-  return 0
-}
+# The file trippy would read instead of the one the bootstrap deploys. It
+# looks in several places and takes the first file that exists, checking the
+# deployed path last - so a file of yours higher up the list means the
+# deployed one is never read. Prints that file, or nothing.
 trippy_config_shadow() {  # trippy: crates/trippy-tui/src/config/file.rs
   local d f
   for d in "$HOME" "${XDG_CONFIG_HOME:-$HOME/.config}"; do
@@ -1658,18 +1652,10 @@ trippy_config_shadow() {  # trippy: crates/trippy-tui/src/config/file.rs
   return 0
 }
 
-# Where xh reads config.json (src/utils.rs config_dir): $XH_CONFIG_DIR wins,
-# then xh/ under the config home.
-xh_config_file() {
-  if [[ -n "${XH_CONFIG_DIR:-}" ]]; then
-    echo "${XH_CONFIG_DIR}/config.json"
-  else
-    echo "${XDG_CONFIG_HOME:-$HOME/.config}/xh/config.json"
-  fi
-}
-
-# Where jnv reads config.toml: jnv/ under the config home.
-jnv_config_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/jnv/config.toml"; }
+# Neovim's config directory, and the files in it the repo owns - the rest of
+# the directory is yours.
+nvim_config_dir() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/nvim"; }
+NVIM_MANAGED='init.lua lua/config/lazy.lua lua/plugins/colorscheme.lua'
 
 doctor_config() {   # doctor_config <label> <repo copy> <deployed path>
   local label="$1" src="$2" dst="$3"
@@ -1780,7 +1766,7 @@ eza_theme_file() {
 }
 
 # The themes added after yazi, the same three shapes: a file the repo owns
-# (eza, vim), a file plus a key that names it (glow, lnav), and a file the
+# (eza, nvim), a file plus a key that names it (glow, lnav), and a file the
 # shell has to source (zsh-syntax-highlighting), whose proof is a style that
 # is actually in effect in a login shell.
 doctor_check_more_themes() {
@@ -1840,13 +1826,13 @@ doctor_check_more_themes() {
     fi
   fi
 
-  if command -v vim >/dev/null 2>&1; then
-    doctor_config 'vim colours' "${SCRIPT_DIR}/../vim/colors/catppuccin_mocha.vim" \
-                  "${HOME}/.vim/colors/catppuccin_mocha.vim"
-    if [[ -e "${HOME}/.vimrc" ]]; then
-      doctor_note 'vimrc' "${HOME}/.vimrc is yours, and vim reads it instead of ~/.vim/vimrc"
+  if command -v nvim >/dev/null 2>&1; then
+    if [[ -e "$(nvim_config_dir)/init.vim" ]]; then
+      doctor_note 'nvim config' "$(nvim_config_dir)/init.vim is yours, and LazyVim is not set up beside it"
     else
-      doctor_config 'vimrc' "${SCRIPT_DIR}/../vim/vimrc" "${HOME}/.vim/vimrc"
+      for f in $NVIM_MANAGED; do
+        doctor_config "nvim ${f}" "${SCRIPT_DIR}/../nvim/${f}" "$(nvim_config_dir)/${f}"
+      done
     fi
   fi
 }
@@ -1882,15 +1868,6 @@ doctor_check_configs() {
                   "${XDG_CONFIG_HOME:-$HOME/.config}/yt-dlp/config"
   fi
 
-  if command -v procs >/dev/null 2>&1; then
-    shadow="$(procs_config_shadow)"
-    if [[ -n "$shadow" ]]; then
-      doctor_note 'procs config' "${shadow} is yours and procs reads it first"
-    else
-      doctor_config 'procs config' "${SCRIPT_DIR}/../procs/config.toml" \
-                    "${HOME}/.config/procs/config.toml"
-    fi
-  fi
   if command -v trip >/dev/null 2>&1; then
     shadow="$(trippy_config_shadow)"
     if [[ -n "$shadow" ]]; then
@@ -1901,12 +1878,6 @@ doctor_check_configs() {
     fi
   fi
 
-  if command -v xh >/dev/null 2>&1; then
-    doctor_config 'xh config' "${SCRIPT_DIR}/../xh/config.json" "$(xh_config_file)"
-  fi
-  if command -v jnv >/dev/null 2>&1; then
-    doctor_config 'jnv config' "${SCRIPT_DIR}/../jnv/config.toml" "$(jnv_config_file)"
-  fi
 
   if command -v rg >/dev/null 2>&1; then
     doctor_config 'ripgrep config' "${SCRIPT_DIR}/../ripgrep/config" \
@@ -2795,6 +2766,24 @@ install_release_bins() {
   done
 }
 
+# RELEASE_<name>_TREE=yes: the archive is a whole install - bin/ beside the
+# lib/ and share/ the binary reads at run time - so its one top directory is
+# kept as RELEASE_TREE_DIR/<name> and each binary is linked into
+# RELEASE_BIN_DIR. The new tree goes in beside the old one first, so a failed
+# copy leaves the old install working.
+install_release_tree() {   # install_release_tree <name> <bins>
+  local top b dest="${RELEASE_TREE_DIR:-$HOME/.local/opt}/$1"
+  top="$(find . -mindepth 1 -maxdepth 1 -type d -print -quit)"
+  [[ -n "$top" && -d "$top/bin" ]] || return 1
+  mkdir -p "$(dirname "$dest")" || return 1
+  rm -rf "${dest}.new" && mv "$top" "${dest}.new" || return 1
+  rm -rf "$dest" && mv "${dest}.new" "$dest" || return 1
+  for b in $2; do
+    [[ -x "${dest}/bin/$b" ]] || return 1
+    ln -sfn "${dest}/bin/$b" "${RELEASE_BIN_DIR}/$b" || return 1
+  done
+}
+
 unpack_asset() {
   local url="$1" file="$2" binname="$3"
   case "$url" in
@@ -2816,6 +2805,7 @@ install_release() {
   local bins="${!bins_var:-$binname}"
   local verargs_var="RELEASE_${name}_VERSION_ARGS"
   local verargs="${!verargs_var:-}"
+  local tree_var="RELEASE_${name}_TREE"
   local target="${RELEASE_BIN_DIR}/${binname}"
 
   local have=""
@@ -2845,8 +2835,8 @@ install_release() {
     fi
     return
   fi
-  # Most tags are v1.2.3 or 1.2.3; a few carry the project name (jq-1.8.2,
-  # gping-v1.21.0), and the binary reports only the number.
+  # Most tags are v1.2.3 or 1.2.3; a few carry the project name (jq-1.8.2),
+  # and the binary reports only the number.
   want="${tag#v}"
   [[ "$want" =~ ^[0-9] ]] || want="$(printf '%s' "$tag" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
 
@@ -2891,7 +2881,11 @@ install_release() {
     curl -fsSL -o asset "$url" 2>curl.err &&
     unpack_asset "$url" asset "$binname" &&
     mkdir -p "$RELEASE_BIN_DIR" &&
-    install_release_bins "$bins"
+    if [[ "${!tree_var:-}" == yes ]]; then
+      install_release_tree "$name" "$bins"
+    else
+      install_release_bins "$bins"
+    fi
   ); then
     local now
     now="$(binary_version "$target" "$verargs")"
@@ -3695,6 +3689,8 @@ FZF_FILES
         echo 'command -v batcat >/dev/null && export MANPAGER="sh -c '"'"'col -bx | batcat -l man -p'"'"'" MANROFFOPT="-c"'
         echo 'command -v bat    >/dev/null && export MANPAGER="sh -c '"'"'col -bx | bat -l man -p'"'"'" MANROFFOPT="-c"'
         echo 'command -v eza    >/dev/null && alias ls="eza --icons=auto --group-directories-first"'
+        # eza draws trees too, so the tree package is not installed.
+        echo 'command -v eza    >/dev/null && alias tree="eza --tree --icons=auto --group-directories-first"'
         echo 'command -v fdfind >/dev/null && alias find="fdfind"'
         echo 'command -v fd     >/dev/null && alias find="fd"'
         # Only where no real fd exists: an apt fd-find left from before the
@@ -3711,12 +3707,14 @@ FZF_FILES
         # doggo answers the same questions as dig and prints them as a table.
         # Debian has no dnsutils here, so on a fresh box this is the only one.
         echo 'command -v doggo  >/dev/null && alias dig="doggo"'
-        # xh is curl for JSON APIs. Upstream ships xhs (xh --https) as a symlink
-        # inside the tarball, which install_release_bins does not copy.
-        echo 'command -v xh     >/dev/null && alias http="xh"'
-        echo 'command -v xh     >/dev/null && alias https="xh --https"'
         echo 'command -v lazygit >/dev/null && alias lg="lazygit"'
         echo 'command -v lazydocker >/dev/null && alias lzd="lazydocker"'
+        # Neovim with LazyVim is the editor: vim and vi open it, and so does
+        # anything that asks $EDITOR - git, Ctrl-X Ctrl-E.
+        echo 'if command -v nvim >/dev/null; then'
+        echo '  alias vim="nvim" vi="nvim"'
+        echo '  export EDITOR="nvim" VISUAL="nvim"'
+        echo 'fi'
         # sd deliberately gets no `sed` alias: its pattern and replacement syntax
         # is not sed's, so anything pasted from a script would quietly do
         # something else. It is called as sd.
@@ -4343,24 +4341,10 @@ else
                       "${XDG_CONFIG_HOME:-$HOME/.config}/yt-dlp/config" 'yt-dlp config'
 fi
 
-# procs config - the busiest process first, and the columns every platform has.
-# procs ignores XDG_CONFIG_HOME for this path: ~/.config/procs is hard-coded,
-# and it is the last place procs looks. A file of yours in an earlier one is
-# left alone, since a deployed copy would never be read.
-phase 'procs config'
-if ! command -v procs >/dev/null 2>&1; then
-  result 'missing' 'procs config' 'procs is not installed'
-elif _shadow="$(procs_config_shadow)" && [[ -n "$_shadow" ]]; then
-  result 'present' 'procs config' "${_shadow} - yours, read before ~/.config/procs, left alone"
-else
-  deploy_owned_config "${SCRIPT_DIR}/../procs/config.toml" \
-                      "${HOME}/.config/procs/config.toml" 'procs config'
-fi
-
 # trippy config - AS names per hop, hostname and IP together, and Catppuccin
-# Mocha. The same shadowing rule as procs: trippy reads trippy.toml from ~ and
-# ~/.config before ~/.config/trippy. trip runs under sudo here, whose HOME is
-# root's, so the zsh alias hands it this file with -c.
+# Mocha. trippy reads trippy.toml from ~ and ~/.config before ~/.config/trippy.
+# trip runs under sudo here, whose HOME is root's, so the zsh alias hands it
+# this file with -c.
 phase 'trippy config'
 if ! command -v trip >/dev/null 2>&1; then
   result 'missing' 'trippy config' 'trippy is not installed'
@@ -4369,27 +4353,6 @@ elif _shadow="$(trippy_config_shadow)" && [[ -n "$_shadow" ]]; then
 else
   deploy_owned_config "${SCRIPT_DIR}/../trippy/trippy.toml" \
                       "${XDG_CONFIG_HOME:-$HOME/.config}/trippy/trippy.toml" 'trippy config'
-fi
-
-# xh config - default options for every request: follow redirects and exit
-# non-zero on a 4xx or 5xx. `--no-follow` or `--no-check-status` undoes one for
-# a run. No --timeout: xh's bounds the whole wait for a response, so a slow
-# endpoint (a non-streaming ollama call) would fail, not just a dead host.
-# Colours stay `auto`, the terminal's own palette, which is Catppuccin.
-phase 'xh config'
-if ! command -v xh >/dev/null 2>&1; then
-  result 'missing' 'xh config' 'xh is not installed'
-else
-  deploy_owned_config "${SCRIPT_DIR}/../xh/config.json" "$(xh_config_file)" 'xh config'
-fi
-
-# jnv config - Catppuccin Mocha. jnv writes its own defaults to this path the
-# first time it runs, so that copy is the .bak the first replacement keeps.
-phase 'jnv config'
-if ! command -v jnv >/dev/null 2>&1; then
-  result 'missing' 'jnv config' 'jnv is not installed'
-else
-  deploy_owned_config "${SCRIPT_DIR}/../jnv/config.toml" "$(jnv_config_file)" 'jnv config'
 fi
 
 # lazygit config. Its colours live in the one config file, so there is no theme
@@ -4561,20 +4524,20 @@ else
   fi
 fi
 
-# vim. ~/.vim/vimrc is the repo's, but vim reads it only when there is no
-# ~/.vimrc - so a ~/.vimrc of yours wins and is left alone, the same rule as
-# every key above. The colours are deployed either way, for `:colorscheme`.
-phase 'vim config'
-if ! command -v vim >/dev/null 2>&1; then
-  result 'missing' 'vim config' 'vim is not installed'
+# Neovim - LazyVim with Catppuccin Mocha. The repo's files are replaced every
+# run, and the first replacement of one that was not ours is kept as .bak. An
+# init.vim of yours is left alone: nvim refuses to start with both it and
+# init.lua. The first launch of nvim installs LazyVim and its plugins, and
+# tree-sitter with the C compiler builds the parsers.
+phase 'Neovim config'
+if ! command -v nvim >/dev/null 2>&1; then
+  result 'missing' 'nvim config' 'neovim is not installed'
+elif [[ -e "$(nvim_config_dir)/init.vim" ]]; then
+  result 'skipped' 'nvim config' "$(nvim_config_dir)/init.vim is yours - LazyVim needs init.lua in its place"
 else
-  deploy_config "${SCRIPT_DIR}/../vim/colors/catppuccin_mocha.vim" \
-                "${HOME}/.vim/colors/catppuccin_mocha.vim" 'vim colours'
-  if [[ -e "${HOME}/.vimrc" ]]; then
-    result 'skipped' 'vimrc' "${HOME}/.vimrc is yours - add 'source ~/.vim/vimrc' to it to use the repo's"
-  else
-    deploy_config "${SCRIPT_DIR}/../vim/vimrc" "${HOME}/.vim/vimrc" 'vimrc'
-  fi
+  for _f in $NVIM_MANAGED; do
+    deploy_owned_config "${SCRIPT_DIR}/../nvim/${_f}" "$(nvim_config_dir)/${_f}" "nvim ${_f}"
+  done
 fi
 
 # Git config
@@ -4594,7 +4557,7 @@ else
     # completion stops offering months of dead origin/* names.
     'fetch.prune=true'
     # histogram reads better than the default myers on moved and reindented
-    # code; delta and difftastic render whatever this produces.
+    # code; delta renders whatever this produces.
     'diff.algorithm=histogram'
     # `git pull` on a branch that has diverged from its upstream rebases your
     # commits onto it, instead of stopping with "Need to specify how to
@@ -4648,23 +4611,6 @@ else
     )
   else
     result 'missing' 'delta' 'delta is not installed'
-  fi
-  # difftastic compares syntax, not lines, and is asked for per command - never
-  # diff.external globally, whose output is not a patch `git apply` can read.
-  # delta passes its output through untouched, so the pager needs no exception.
-  if command -v difft >/dev/null 2>&1; then
-    GIT_WANT+=(
-      'diff.tool=difftastic'
-      'difftool.prompt=false'
-      'difftool.difftastic.cmd=difft "$LOCAL" "$REMOTE"'
-      'pager.difftool=true'
-      'alias.dft=difftool'
-      'alias.ddiff=-c diff.external=difft diff'
-      'alias.dshow=-c diff.external=difft show --ext-diff'
-      'alias.dlog=-c diff.external=difft log -p --ext-diff'
-    )
-  else
-    result 'missing' 'difftastic' 'difft is not installed'
   fi
   for _kv in ${GIT_WANT[@]+"${GIT_WANT[@]}"}; do
     _key="${_kv%%=*}"

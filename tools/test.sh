@@ -410,8 +410,8 @@ DRIVER
 
   is 'a release binary is expected in ~/.local/bin' 'bat=bat/release' \
      "$(bash "$TMP/cmdmap-linux.sh" bat)"
-  is 'an apt package is expected in /usr/bin' 'tree=tree/apt' \
-     "$(bash "$TMP/cmdmap-linux.sh" tree)"
+  is 'an apt package is expected in /usr/bin' 'unzip=unzip/apt' \
+     "$(bash "$TMP/cmdmap-linux.sh" unzip)"
   is 'cifs-utils names no binary of its own' 'cifs-utils=none/none' \
      "$(bash "$TMP/cmdmap-linux.sh" cifs-utils)"
   is 'nor does exfatprogs' 'exfatprogs=none/none' \
@@ -1250,24 +1250,14 @@ if section 'yt-dlp config'; then
   fi
 fi
 
-# ------------------------------------------------ procs and trippy configs ----
+# -------------------------------------------------------------- trippy config ----
 #
-# Both tools refuse to start on a config they cannot read - procs on a column
-# kind the OS lacks, trippy on a bad value or a key combination it rejects (AS
-# lookups through the system resolver) - so each file is fed to the real tool.
-# trippy is given a target that cannot resolve: it reads and validates the
-# config, then stops at the lookup, before a single probe is sent.
+# trippy refuses to start on a config it cannot read - a bad value or a key
+# combination it rejects (AS lookups through the system resolver) - so the file
+# is fed to the real tool, given a target that cannot resolve: it reads and
+# validates the config, then stops at the lookup, before a single probe is sent.
 
-if section 'procs and trippy configs'; then
-  if command -v procs >/dev/null 2>&1; then
-    if out="$(procs --load-config "${ROOT}/procs/config.toml" --color disable "$$" 2>&1)"; then
-      contains 'procs loads the config' 'Command' "$out"
-    else
-      bad 'procs loads the config' 'a process table' "$out"
-    fi
-  else
-    skip 'procs loads the config' 'procs is not installed'
-  fi
+if section 'trippy config'; then
   if command -v trip >/dev/null 2>&1; then
     out="$(command trip -c "${ROOT}/trippy/trippy.toml" -m silent -C 1 -u 256.0.0.1 2>&1 || true)"
     contains 'trippy accepts the config and gets as far as the lookup' 'failed to resolve target' "$out"
@@ -1276,89 +1266,23 @@ if section 'procs and trippy configs'; then
   fi
 fi
 
-# --------------------------------------------------- xh and jnv configs ----
+# ---------------------------------------------------------------- nvim config ----
 #
-# xh refuses an unknown option in default_options and only warns on a file it
-# cannot parse, so the config is fed to the real xh with --offline: it prints
-# the request it would send and sends nothing. jnv is quieter still - a config
-# it cannot read is swapped for its defaults without a word - so it is started
-# on a pseudo-terminal and its first frame must carry the Mocha blue the file
-# sets as truecolor; jnv's defaults are ANSI names and never emit one.
+# Each Lua file must at least parse - one that does not stops LazyVim at the
+# first launch. Only parsed, never run: lazy.lua would clone lazy.nvim.
 
-if section 'xh and jnv configs'; then
-  if command -v xh >/dev/null 2>&1; then
-    if out="$(XH_CONFIG_DIR="${ROOT}/xh" xh --offline --ignore-stdin example.org </dev/null 2>&1)" \
-       && [[ "$out" != *warning* ]]; then
-      contains 'xh takes the default options' 'GET / HTTP/1.1' "$out"
-    else
-      bad 'xh takes the default options' 'a printed request' "$out"
-    fi
-  else
-    skip 'xh takes the default options' 'xh is not installed'
-  fi
-  if ! command -v jnv >/dev/null 2>&1; then
-    skip 'jnv draws with the config' 'jnv is not installed'
-  elif ! "${PYTHON[@]}" -c 'import pty' >/dev/null 2>&1; then
-    skip 'jnv draws with the config' 'no python with a pty module'
-  else
-    out="$(printf '{"key":"value","n":1}\n' > "${TMP}/jnv.json"
-           "${PYTHON[@]}" - "${ROOT}/jnv/config.toml" "${TMP}/jnv.json" <<'PY' 2>&1
-import os, pty, select, signal, struct, sys, time, fcntl, termios
-pid, fd = pty.fork()
-if pid == 0:
-    os.execvp('jnv', ['jnv', '-c', sys.argv[1], sys.argv[2]])
-fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
-out, asked, end = b'', 0, time.time() + 3
-while time.time() < end and b'38;2;137;180;250' not in out:
-    if select.select([fd], [], [], 0.2)[0]:
-        try:
-            out += os.read(fd, 65536)
-        except OSError:
-            break
-        # jnv asks where the cursor is (ESC[6n) and gives up without a reply.
-        while out.count(b'\x1b[6n') > asked:
-            asked += 1
-            os.write(fd, b'\x1b[1;1R')
-try:
-    os.kill(pid, signal.SIGKILL)
-except ProcessLookupError:
-    pass
-sys.stdout.write(out.decode('utf-8', 'replace'))
-PY
-)"
-    contains 'jnv draws with the config' '38;2;137;180;250' "$out"
-  fi
-fi
-
-# ----------------------------------------------------------------- vimrc ----
-#
-# vim reports every error in the vimrc at start-up and waits for Enter, so a
-# line that fails anywhere - rvim and vim -Z refuse mkdir() and shell
-# commands - makes every launch there stop on a prompt. Run against an empty
-# HOME, the state of a machine the vimrc has just landed on.
-
-if section 'vimrc'; then
-  if command -v vim >/dev/null 2>&1; then
-    # -es, Ex silent mode: an error in the vimrc makes vim exit 1 instead of
-    # stopping on "Press ENTER", which would hang the test.
-    for mode in normal restricted; do
-      flag=''; [[ "$mode" == restricted ]] && flag='-Z'
-      vhome="$TMP/vim-home-$mode"
-      mkdir -p "$vhome"
-      # shellcheck disable=SC2086
-      if HOME="$vhome" vim $flag -es -u "${ROOT}/vim/vimrc" -c 'qa!' </dev/null >/dev/null 2>&1; then
-        ok "vimrc: $mode vim starts without an error"
+if section 'nvim config'; then
+  if command -v nvim >/dev/null 2>&1; then
+    printf '%s\n' 'for _, f in ipairs(arg) do assert(loadfile(f)) end' > "$TMP/nvim-parse.lua"
+    while IFS= read -r f; do
+      if out="$(nvim --clean --headless -l "$TMP/nvim-parse.lua" "$f" 2>&1)"; then
+        ok "nvim: ${f#"${ROOT}/"} parses"
       else
-        bad "vimrc: $mode vim starts without an error" 'exit 0' "exit $?"
+        bad "nvim: ${f#"${ROOT}/"} parses" 'no error' "$out"
       fi
-    done
-    if [[ -d "$TMP/vim-home-normal/.vim/undo" ]]; then
-      ok 'vimrc: a normal vim creates the undo directory'
-    else
-      bad 'vimrc: a normal vim creates the undo directory' '.vim/undo under HOME' 'missing'
-    fi
+    done < <(find "${ROOT}/nvim" -name '*.lua' | sort)
   else
-    skip 'the vimrc starts clean' 'vim is not installed'
+    skip 'the nvim config parses' 'neovim is not installed'
   fi
 fi
 

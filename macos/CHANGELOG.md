@@ -15,6 +15,50 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0]
+
+### Added
+
+- **Neovim with LazyVim in place of vim.** The `neovim` and `tree-sitter-cli`
+  formulae replace `vim`, and a new `Neovim config` phase deploys LazyVim's
+  starter with Catppuccin Mocha to `~/.config/nvim`: `init.lua`,
+  `lua/config/lazy.lua` and `lua/plugins/colorscheme.lua` are the repo's, the
+  rest of the directory is yours. An `init.vim` of yours is left alone. The
+  first launch of `nvim` installs LazyVim and its plugins; tree-sitter and the
+  Xcode compiler build the parsers. The zsh fragment aliases `vim` and `vi` to
+  `nvim` and exports `EDITOR` and `VISUAL`.
+
+### Changed
+
+- **prek in place of pre-commit.** prek is a Rust rewrite that reads the same
+  `.pre-commit-config.yaml` and runs the same hooks, from one binary and faster.
+  It comes from Homebrew. A repo whose hooks came from `pre-commit install`
+  keeps calling pre-commit until `prek install` rewrites them - pre-commit
+  itself is not uninstalled.
+
+- **`tree` is eza.** A `tree` alias runs `eza --tree` with the same icons and
+  directories-first order as `ls`, in place of the tree package.
+
+### Removed
+
+- **The vim config and theme.** `vim/vimrc` and the Catppuccin colour scheme
+  are gone, with the `vim config` phase and its doctor checks. Copies already
+  in `~/.vim` are left alone; delete `~/.vim` to clean up.
+
+- **xh.** curl does the job in practice. The `http` and `https` aliases, the
+  `xh config` phase, its doctor check and `xh/config.json` went with it.
+
+- **difftastic, procs, jnv, gping and tree.** Unused: delta already renders
+  every diff, btop covers processes, fx covers interactive JSON, trippy
+  graphs latency, and `eza --tree` draws trees. The `procs config` and `jnv
+  config` phases and doctor checks went with them, and so did the difftastic
+  git settings (`diff.tool`, `difftool.*`, `pager.difftool`).
+  Everything already installed is left alone - the bootstrap never
+  uninstalls - and so are configs it deployed earlier and the git aliases
+  `dft`, `ddiff`, `dshow` and `dlog`, which now point at a missing `difft`.
+  `brew uninstall difftastic procs jnv gping tree xh` and
+  `git config --global --remove-section difftool.difftastic` clean up a machine.
+
 ## [2.0.1]
 
 ### Fixed

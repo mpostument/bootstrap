@@ -20,7 +20,6 @@
             Packages    = @(
                 'sharkdp.bat'
                 'dandavison.delta'
-                'Wilfred.difftastic'
                 'eza-community.eza'
                 'sharkdp.fd'
                 'BurntSushi.ripgrep.MSVC'
@@ -31,18 +30,18 @@
                 '7zip.7zip'
                 'yt-dlp.yt-dlp'
                 'yt-dlp.FFmpeg'
-                'dalance.procs'
                 'bootandy.dust'
                 'muesli.duf'
                 'charmbracelet.glow'
                 'tstack.lnav'
                 'chmln.sd'
-                'ducaale.xh'
                 'MrKaran.Doggo'
                 'JesseDuffield.lazygit'
                 'JesseDuffield.Lazydocker'
                 'sxyazi.yazi'
                 'dbrgn.tealdeer'
+                'Neovim.Neovim'
+                'tree-sitter.tree-sitter-cli'
             )
         }
 
@@ -86,6 +85,7 @@
             Packages    = @(
                 'TerraformLinters.tflint'
                 'Terraform-docs.Terraform-docs'
+                'j178.Prek'
             )
             # Python CLIs, each in its own environment through `uv tool`, the
             # same shape as GROUP_infra_UV in linux/packages.conf. None of these
@@ -94,7 +94,6 @@
             # ansible and ansible-lint stay off: ansible-core does not run on
             # Windows natively, and ansible-lint stands on it.
             UvTools     = @(
-                'pre-commit'
                 'yamllint'
             )
         }
@@ -121,7 +120,6 @@
             Description = 'Network diagnostics - route and latency'
             Packages    = @(
                 'FujiApple.Trippy'
-                'orf.gping'
                 'Insecure.Nmap'
                 'ffuf.ffuf'
             )
@@ -232,8 +230,6 @@
         LfsEnabled = $true
 
         DeltaEnabled = $true
-
-        DifftasticEnabled = $true
 
         UnityMergeEnabled = $true
         UnityEditorRoot   = 'C:\Program Files\Unity\Hub\Editor'

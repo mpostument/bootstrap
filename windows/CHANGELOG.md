@@ -20,6 +20,48 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [2.1.0]
+
+### Added
+
+- **Neovim with LazyVim.** `Neovim.Neovim` and `tree-sitter.tree-sitter-cli`
+  join the cli group, and a Neovim config step deploys LazyVim's starter with
+  Catppuccin Mocha to `%LOCALAPPDATA%\nvim`: `init.lua`, `lua\config\lazy.lua`
+  and `lua\plugins\colorscheme.lua` are the repo's, the rest is yours. An
+  `init.vim` of yours is left alone. The first launch of `nvim` installs
+  LazyVim and its plugins. Parsers also need MSVC, which nothing installs - the
+  step reports `C compiler` missing when no Visual Studio C++ tools are found.
+  The profile maps `vim` and `vi` to `nvim` and sets `EDITOR` and `VISUAL`.
+
+### Changed
+
+- **prek in place of pre-commit.** prek is a Rust rewrite that reads the same
+  `.pre-commit-config.yaml` and runs the same hooks, from one binary and faster.
+  It comes from winget (`j178.Prek`), not as a `uv tool` as pre-commit did. A
+  repo whose hooks came from `pre-commit install` keeps calling pre-commit until
+  `prek install` rewrites them - pre-commit itself is not uninstalled.
+
+- **`tree` is eza.** A `tree` function in the profile runs `eza --tree` with
+  the same icons and directories-first order as `ls`, in place of `tree.com`.
+
+### Removed
+
+- **xh.** curl does the job in practice. The `http` and `https` profile
+  functions, the `xh config` step, its doctor check and `xh/config.json` went
+  with it.
+
+- **difftastic, procs and gping.** Unused: delta already renders every diff,
+  trippy graphs latency, and the process view is left to Task Manager - btop
+  has no winget package. The `procs config` step and doctor check went with
+  them, and so did the difftastic git settings and the `Git.DifftasticEnabled`
+  key; a hand-edited `packages.psd1` that still sets it loads fine, the key is
+  just ignored.
+  Everything already installed is left alone - the bootstrap never
+  uninstalls - and so are configs it deployed earlier and the git aliases
+  `dft`, `ddiff`, `dshow` and `dlog`, which now point at a missing `difft`.
+  `winget uninstall Wilfred.difftastic dalance.procs orf.gping ducaale.xh`
+  cleans up a machine.
+
 ## [2.0.1]
 
 ### Fixed

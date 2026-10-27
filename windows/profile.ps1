@@ -118,7 +118,7 @@ if (Get-Command bat -ErrorAction SilentlyContinue) {
     Remove-Item Alias:cat -Force -ErrorAction SilentlyContinue
     # A function's pipeline input arrives in $input, not on the native
     # command's stdin, so `... | cat` would wait on the keyboard without
-    # passing it on. Same for grep and http below.
+    # passing it on. Same for grep below.
     function cat {
         if ($MyInvocation.ExpectingInput) { $input | bat --paging=never --style=plain @args }
         else { bat --paging=never --style=plain @args }
@@ -130,6 +130,8 @@ if (Get-Command eza -ErrorAction SilentlyContinue) {
         if ($args.Count -eq 0) { eza --icons=auto --group-directories-first . }
         else { eza --icons=auto --group-directories-first @args }
     }
+    # In place of tree.com, which draws plain ASCII and lists no files without /f.
+    function tree { eza --tree --icons=auto --group-directories-first @args }
 }
 if (Get-Command fd -ErrorAction SilentlyContinue) {
     function find { fd @args }
@@ -163,18 +165,6 @@ if (Get-Command doggo -ErrorAction SilentlyContinue) {
     function dig { doggo @args }
 }
 
-# xh -- HTTP from the terminal. The tarball's `xhs` (xh --https) is a symlink
-# upstream, so it is a function here instead. https://github.com/ducaale/xh
-if (Get-Command xh -ErrorAction SilentlyContinue) {
-    # Piped input is the request body: `'{...}' | http POST url`.
-    function http {
-        if ($MyInvocation.ExpectingInput) { $input | xh @args } else { xh @args }
-    }
-    function https {
-        if ($MyInvocation.ExpectingInput) { $input | xh --https @args } else { xh --https @args }
-    }
-}
-
 # lazygit -- git TUI; lg is the name its own README suggests.
 # https://github.com/jesseduffield/lazygit
 if (Get-Command lazygit -ErrorAction SilentlyContinue) {
@@ -185,6 +175,15 @@ if (Get-Command lazygit -ErrorAction SilentlyContinue) {
 # https://github.com/jesseduffield/lazydocker
 if (Get-Command lazydocker -ErrorAction SilentlyContinue) {
     function lzd { lazydocker @args }
+}
+
+# Neovim with LazyVim is the editor: vim and vi open it, and so does anything
+# that asks $env:EDITOR - git among them. https://www.lazyvim.org
+if (Get-Command nvim -ErrorAction SilentlyContinue) {
+    function vim { nvim @args }
+    function vi { nvim @args }
+    $env:EDITOR = 'nvim'
+    $env:VISUAL = 'nvim'
 }
 
 # Workflow pickers: fzf over git branches, stashes and the tools list. Each one

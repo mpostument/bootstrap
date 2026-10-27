@@ -89,7 +89,7 @@ function Invoke-Native {
 # The parameters as given, for the rerun after an update.
 $script:BoundParams = @{} + $PSBoundParameters
 
-$script:BootstrapVersion = '2.0.1'
+$script:BootstrapVersion = '2.1.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -115,9 +115,11 @@ $script:YaziSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'yazi'
 $script:EzaSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'eza'
 $script:GlowSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'glow'
 $script:LnavSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'lnav'
-$script:ProcsSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'procs'
 $script:TrippySource = Join-Path (Split-Path $script:ToolRoot -Parent) 'trippy'
-$script:XhSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'xh'
+$script:NvimSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'nvim'
+# The Neovim config files the repo owns, relative to the nvim directory; the
+# rest of %LOCALAPPDATA%\nvim is yours.
+$script:NvimManaged = @('init.lua', 'lua\config\lazy.lua', 'lua\plugins\colorscheme.lua')
 $script:MergeScript = Join-Path $script:ToolRoot 'merge-terminal-settings.ps1'
 $script:MpvSource = Join-Path $script:ToolRoot 'mpv'
 
@@ -927,6 +929,12 @@ function Test-DoctorConfig {
         Test-DoctorFile -Label 'yt-dlp config' -Source (Join-Path $script:YtDlpSource 'config') `
             -Target (Join-Path $env:APPDATA 'yt-dlp\config')
     }
+    if (Get-Command nvim -ErrorAction SilentlyContinue) {
+        foreach ($f in $script:NvimManaged) {
+            Test-DoctorFile -Label "nvim $f" -Source (Join-Path $script:NvimSource $f) `
+                -Target (Join-Path $env:LOCALAPPDATA "nvim\$f")
+        }
+    }
     if (Get-Command rg -ErrorAction SilentlyContinue) {
         $rgConfig = Join-Path $env:APPDATA 'ripgrep\config'
         Test-DoctorFile -Label 'ripgrep config' -Source (Join-Path $script:RipgrepSource 'config') -Target $rgConfig
@@ -941,11 +949,7 @@ function Test-DoctorConfig {
             Add-DoctorNote 'RIPGREP_CONFIG_PATH' ("{0} - not the repo's config, which may be deliberate" -f $rgEnv)
         }
     }
-    if (Get-Command xh -ErrorAction SilentlyContinue) {
-        Test-DoctorFile -Label 'xh config' -Source (Join-Path $script:XhSource 'config.json') -Target (Get-XhConfigFile)
-    }
     foreach ($tool in @(
-            @{ Name = 'procs'; Command = 'procs'; Source = (Join-Path $script:ProcsSource 'config.toml') }
             @{ Name = 'trippy'; Command = 'trip'; Source = (Join-Path $script:TrippySource 'trippy.toml') }
         )) {
         if (-not (Get-Command $tool.Command -ErrorAction SilentlyContinue)) { continue }
@@ -1376,32 +1380,14 @@ function Deploy-ManagedFile {
     Add-Result -Group $Group -Id $Label -Action 'installed' -Detail $detail
 }
 
-# Get-XhConfigFile - where xh reads config.json (src/utils.rs config_dir):
-# %XH_CONFIG_DIR% when set, else %APPDATA%\xh.
-function Get-XhConfigFile {
-    $dir = if ($env:XH_CONFIG_DIR) { $env:XH_CONFIG_DIR } else { Join-Path $env:APPDATA 'xh' }
-    Join-Path $dir 'config.json'
-}
-
-# Get-ToolConfigPaths <tool> - where the repo deploys procs' and trippy's config,
-# and the files each tool reads before it. Both stop at the first file they
-# find, so one of those earlier files means ours is never read.
-#   procs:  ~\.procs.toml, then %APPDATA%\dalance\procs\config\config.toml
-#           (its ProjectDirs preference dir), then ~\.config\procs\config.toml.
+# Get-ToolConfigPaths <tool> - where the repo deploys trippy's config, and the
+# files trippy reads before it. It stops at the first file it finds, so one of
+# those earlier files means ours is never read.
 #   trippy: trippy.toml or .trippy.toml in the current directory, then in ~,
 #           then in %APPDATA%, then %APPDATA%\trippy\. The current directory is
 #           not checked here - it differs per shell.
 function Get-ToolConfigPaths {
-    param([ValidateSet('procs', 'trippy')][string]$Tool)
-    if ($Tool -eq 'procs') {
-        return @{
-            Target  = Join-Path $env:USERPROFILE '.config\procs\config.toml'
-            Earlier = @(
-                (Join-Path $env:USERPROFILE '.procs.toml')
-                (Join-Path $env:APPDATA 'dalance\procs\config\config.toml')
-            )
-        }
-    }
+    param([ValidateSet('trippy')][string]$Tool)
     $earlier = foreach ($dir in $env:USERPROFILE, $env:APPDATA) {
         Join-Path $dir 'trippy.toml'
         Join-Path $dir '.trippy.toml'
@@ -2957,26 +2943,34 @@ if ($SkipShell) {
         Add-Result -Group 'shell' -Id 'ripgrep config' -Action 'missing' -Detail 'ripgrep is not installed'
     }
 
-    # procs config: CPU-sorted, Catppuccin through the terminal's palette, and
-    # only columns that exist on Windows - procs rejects a kind the OS lacks.
-    # procs reads ~\.config\procs on Windows too, and ignores XDG_CONFIG_HOME.
-    if (Get-Command procs -ErrorAction SilentlyContinue) {
-        Deploy-ShadowableFile -Tool 'procs' -Source (Join-Path $script:ProcsSource 'config.toml') `
-            -Group 'shell' -Label 'procs config'
+    # Neovim config: LazyVim with Catppuccin Mocha, in %LOCALAPPDATA%\nvim. The
+    # repo's files are replaced every run; the first replacement of one that
+    # was not ours is kept as .bak. An init.vim of yours is left alone: nvim
+    # refuses to start with both it and init.lua. The first launch of nvim
+    # installs LazyVim and its plugins.
+    $nvimDir = Join-Path $env:LOCALAPPDATA 'nvim'
+    if (-not (Get-Command nvim -ErrorAction SilentlyContinue)) {
+        Add-Result -Group 'shell' -Id 'nvim config' -Action 'missing' -Detail 'neovim is not installed'
+    } elseif (Test-Path -LiteralPath (Join-Path $nvimDir 'init.vim')) {
+        Add-Result -Group 'shell' -Id 'nvim config' -Action 'skipped' -Detail "$nvimDir\init.vim is yours - LazyVim needs init.lua in its place"
     } else {
-        Add-Result -Group 'shell' -Id 'procs config' -Action 'missing' -Detail 'procs is not installed'
+        foreach ($f in $script:NvimManaged) {
+            Deploy-ManagedFile -Source (Join-Path $script:NvimSource $f) -Target (Join-Path $nvimDir $f) `
+                -Group 'shell' -Label "nvim $f" -Marker 'managed by the bootstrap'
+        }
+        # nvim-treesitter builds each parser with tree-sitter and a C compiler,
+        # which here means MSVC - tree-sitter finds it through the Visual Studio
+        # installer even off PATH. Nothing installs it: the Build Tools are a
+        # multi-gigabyte choice, so its absence is reported, not fixed.
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+        $msvc = (Get-Command cl -ErrorAction SilentlyContinue) -or ((Test-Path -LiteralPath $vswhere) -and
+            (& $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath))
+        if (-not $msvc) {
+            Add-Result -Group 'shell' -Id 'C compiler' -Action 'missing' `
+                -Detail 'no MSVC for tree-sitter parsers - add the Build Tools C++ workload'
+        }
     }
-
-    # xh config: follow redirects and a non-zero exit on a 4xx or 5xx;
-    # --no-follow or --no-check-status undoes one for a run. No --timeout: xh's
-    # bounds the whole wait for a response, not only the connection. JSON has no comments, so the marker is a "//" key,
-    # which xh ignores.
-    if (Get-Command xh -ErrorAction SilentlyContinue) {
-        Deploy-ManagedFile -Source (Join-Path $script:XhSource 'config.json') -Target (Get-XhConfigFile) `
-            -Group 'shell' -Label 'xh config' -Marker 'managed by the bootstrap'
-    } else {
-        Add-Result -Group 'shell' -Id 'xh config' -Action 'missing' -Detail 'xh is not installed'
-    }
+    Remove-Variable nvimDir
 
     # trippy config: AS names per hop, Catppuccin Mocha. trip traces only from
     # an elevated shell here, and a UAC prompt elevates the same account, so it
@@ -3457,7 +3451,7 @@ if ($SkipSchedule) {
 
 # Windows PowerShell 5.1, and 7.0-7.2, hand a native program the double quotes
 # inside an argument unescaped, so its parser eats them: git stored
-# `difft "$LOCAL" "$REMOTE"` as `difft $LOCAL $REMOTE`. 7.3+ escapes them itself,
+# `merge "$BASE" "$LOCAL"` as `merge $BASE $LOCAL`. 7.3+ escapes them itself,
 # unless $PSNativeCommandArgumentPassing is set back to Legacy.
 function ConvertTo-NativeArgument {
     param([string]$Value)
@@ -3554,7 +3548,7 @@ if ($SkipShell) {
         # fetch.prune: drops remote-tracking refs for branches deleted
         #   upstream, so completion stops offering dead origin/* names.
         # diff.algorithm: histogram reads better than myers on moved and
-        #   reindented code; delta and difftastic render what it produces.
+        #   reindented code; delta renders what it produces.
         # pull.rebase: `git pull` on a branch that has diverged from its
         #   upstream rebases your commits onto it, instead of stopping with
         #   "Need to specify how to reconcile divergent branches".
@@ -3613,25 +3607,6 @@ if ($SkipShell) {
             # drive letter, not a slash, hence vscode://file/{path}.
             $gitWant.Add(@{ Key = 'delta.hyperlinks';                  Value = 'true' })
             $gitWant.Add(@{ Key = 'delta.hyperlinks-file-link-format'; Value = 'vscode://file/{path}:{line}' })
-        }
-
-        # difftastic compares syntax, not lines, and is asked for per command -
-        # never diff.external globally, whose output is not a patch `git apply`
-        # can read. delta passes its output through untouched, so the pager
-        # needs no exception.
-        if (-not $git.DifftasticEnabled) {
-            Add-Result -Group 'git' -Id 'difftastic' -Action 'skipped' -Detail 'DifftasticEnabled is false'
-        } elseif (-not (Get-Command difft -ErrorAction SilentlyContinue)) {
-            Add-Result -Group 'git' -Id 'difftastic' -Action 'missing' -Detail 'difft is not installed'
-        } else {
-            $gitWant.Add(@{ Key = 'diff.tool';               Value = 'difftastic' })
-            $gitWant.Add(@{ Key = 'difftool.prompt';         Value = 'false' })
-            $gitWant.Add(@{ Key = 'difftool.difftastic.cmd'; Value = 'difft "$LOCAL" "$REMOTE"' })
-            $gitWant.Add(@{ Key = 'pager.difftool';          Value = 'true' })
-            $gitWant.Add(@{ Key = 'alias.dft';               Value = 'difftool' })
-            $gitWant.Add(@{ Key = 'alias.ddiff';             Value = '-c diff.external=difft diff' })
-            $gitWant.Add(@{ Key = 'alias.dshow';             Value = '-c diff.external=difft show --ext-diff' })
-            $gitWant.Add(@{ Key = 'alias.dlog';              Value = '-c diff.external=difft log -p --ext-diff' })
         }
 
         foreach ($pair in $gitWant) {
