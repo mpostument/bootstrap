@@ -72,7 +72,7 @@ what runs afterwards is an ordinary git or kill command.
 | `gb` | switch branch - local and remote, newest first, the log as the preview |
 | `gs` | browse stashes; Enter applies, ctrl-p pops, ctrl-x drops (not defined where Ghostscript owns `gs`) |
 | `fkill [signal]` | pick some of your own processes and signal them, TERM by default |
-| `cheat` | search the `tools` list, preview its tldr page, put the command on the prompt |
+| `cheat` | search the `tools` list, preview its `--help`, put the command on the prompt |
 
 `ports [filter] [signal]` is defined with or without fzf: listening TCP ports
 with their pid and process, filtered by a port number or a name. With fzf at a

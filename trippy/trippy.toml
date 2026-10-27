@@ -27,7 +27,7 @@ tui-as-mode = "name"
 # copied instead of vanishing with the alternate screen.
 tui-preserve-screen = true
 
-# Catppuccin Mocha, the palette ghostty, btop, k9s and yazi use. Hex values need
+# Catppuccin Mocha, the palette ghostty, k9s and nvim use. Hex values need
 # a truecolor terminal - Ghostty, Windows Terminal and every current Linux
 # terminal emulator are.
 [theme-colors]

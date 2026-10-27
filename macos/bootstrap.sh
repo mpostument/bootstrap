@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='2.1.0'
+BOOTSTRAP_VERSION='2.2.0'
 BOOTSTRAP_PLATFORM='macos'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -1225,7 +1225,6 @@ print -r -- "fn:gb=$(( $+functions[gb] ))"
 print -r -- "fn:gs=$(( $+functions[gs] ))"
 print -r -- "fn:fkill=$(( $+functions[fkill] ))"
 print -r -- "fn:cheat=$(( $+functions[cheat] ))"
-print -r -- "fn:y=$(( $+functions[y] ))"
 print -r -- "bind:tab=$(bindkey '^I' 2>/dev/null | head -1)"
 print -r -- "bind:up=$(bindkey '^[[A' 2>/dev/null | head -1)"
 print -r -- "alias:cat=${aliases[cat]:-}"
@@ -1349,14 +1348,6 @@ doctor_check_workflow() {
     fi
   fi
 
-  if [[ -z "$(probe_get 'resolve:yazi')" ]]; then
-    doctor_note 'y' 'yazi is not on PATH, so the y wrapper is not defined'
-  elif [[ "$(probe_get 'fn:y')" == '1' ]]; then
-    doctor_ok 'y' 'defined'
-  else
-    doctor_broken 'y' 'not defined in a login shell'
-  fi
-
   if [[ -z "$(probe_get 'resolve:fzf')" ]]; then
     doctor_note 'workflow pickers' 'fzf is not on PATH, so gb, gs, fkill and cheat are not defined'
     return 0
@@ -1374,33 +1365,6 @@ doctor_check_workflow() {
     doctor_ok 'gs' 'defined'
   else
     doctor_broken 'gs' 'not defined in a login shell'
-  fi
-}
-
-# tealdeer keeps its pages in a cache it fills on first use (auto_update in
-# tealdeer/config.toml), so an empty cache heals itself and is a note. What is
-# worth saying is when it is stale. The directory is read, never asked: even
-# `tldr --show-paths` downloads the pages when they are missing, and a doctor
-# that changes the machine is not one. The config moved to XDG on macOS in
-# tealdeer 1.9; the cache is where the OS convention puts it, so both are looked at.
-doctor_check_tldr_cache() {
-  local dir found='' count
-  command -v tldr >/dev/null 2>&1 || return 0   # the config check has said so
-  for dir in "${XDG_CACHE_HOME:-$HOME/.cache}/tealdeer/tldr-pages" \
-             "${HOME}/Library/Caches/tealdeer/tldr-pages"; do
-    if [[ -d "$dir" ]]; then found="$dir"; break; fi
-  done
-  if [[ -z "$found" ]]; then
-    doctor_note 'tldr pages' 'not downloaded yet - the first tldr fetches them'
-    return 0
-  fi
-  count="$(find "$found" -type f -name '*.md' 2>/dev/null | wc -l | tr -d '[:space:]')"
-  if [[ "${count:-0}" -eq 0 ]]; then
-    doctor_note 'tldr pages' "$found is empty - the next tldr fetches them"
-  elif [[ -z "$(find "$found" -type f -name '*.md' -mtime -30 -print -quit 2>/dev/null)" ]]; then
-    doctor_note 'tldr pages' "$count pages, none newer than 30 days - the next tldr refreshes them"
-  else
-    doctor_ok 'tldr pages' "$count pages in $found"
   fi
 }
 
@@ -1444,77 +1408,6 @@ doctor_check_runtimes() {
 
 # Config this script deploys by copying: if the copy has drifted, a later run
 # will replace it, so the honest verdict is "differs", not "broken".
-# btop_theme_of <btop.conf> - the theme named in it, empty when the file or the
-# key is absent. btop.conf is `key = "value"` lines, not YAML, so this is sed's
-# job rather than yq's. Read by the doctor as well as the phase that sets it.
-# btop_value_of <btop.conf> <key> - the value of one key, quotes stripped,
-# empty when the file or the key is absent.
-btop_value_of() {
-  [[ -f "$1" ]] || return 0
-  sed -n "s/^$2[[:space:]]*=[[:space:]]*\"\{0,1\}\([^\"]*\)\"\{0,1\}[[:space:]]*\$/\1/p" "$1" \
-    | tail -1
-}
-
-btop_theme_of() {
-  btop_value_of "$1" color_theme
-}
-
-# yazi_flavor_of <theme.toml> - the dark flavor named in it, empty when the
-# file, the table or the key is absent. theme.toml is TOML and there is no TOML
-# reader in the cli group, but the shape that matters is one key in one table,
-# which awk reads exactly. Both spellings count: the [flavor] table yazi's own
-# docs show, and the dotted flavor.dark a TOML writer may leave instead - miss
-# the second and the phase below would append a table that is already there,
-# which is a duplicate key and a config yazi refuses to load.
-yazi_flavor_of() {
-  [[ -f "$1" ]] || return 0
-  awk -v q="'" '
-    /^[[:space:]]*\[/ {
-      table = ($0 ~ /^[[:space:]]*\[flavor\][[:space:]]*(#.*)?$/)
-      top = 0
-      next
-    }
-    NR == 1 { top = 1 }
-    (table || top) && $0 ~ /^[[:space:]]*(flavor\.)?dark[[:space:]]*=/ {
-      if (top && $0 !~ /^[[:space:]]*flavor\.dark/) next
-      line = $0
-      sub(/^[^=]*=[[:space:]]*/, "", line)
-      sub(/[[:space:]]*#.*$/, "", line)
-      gsub(/[[:space:]]+$/, "", line)
-      gsub("^[\"" q "]|[\"" q "]$", "", line)
-      print line
-      exit
-    }
-  ' "$1"
-}
-
-# glow_config_file - the glow.yml glow reads, as glow itself names it in the
-# default of its --config flag. The flag's own value is no use: glow 3 parses
-# it and then reads the default file anyway. glow names the file only once it
-# exists, and any run creates the default one - style "auto" and nothing of
-# anybody's - so a first call that names nothing is followed by a second.
-glow_config_file() {
-  local f
-  f="$(glow --help 2>/dev/null | sed -n 's/.*--config string.*(default \(..*\))[[:space:]]*$/\1/p' | head -1)"
-  [[ -n "$f" ]] \
-    || f="$(glow --help 2>/dev/null | sed -n 's/.*--config string.*(default \(..*\))[[:space:]]*$/\1/p' | head -1)"
-  printf '%s' "$f"
-}
-
-# lnav_config_dir - where lnav keeps its config: ~/.lnav when that exists and
-# the XDG directory otherwise. lnav -h says which, on the line after the one
-# that introduces it, behind a folder glyph.
-lnav_config_dir() {
-  lnav -h 2>&1 | sed -n '/format files are stored in/{n;s|^[^/]*||;p;q;}'
-}
-
-# lnav_theme_of - the theme lnav is using, "default" when nobody chose one.
-# Asked of lnav rather than read from its config.json, which lnav writes itself
-# and fills with settings of its own.
-lnav_theme_of() {
-  lnav -nN -c ':config /ui/theme' 2>/dev/null | sed -n 's|^/ui/theme = "\(.*\)"[[:space:]]*$|\1|p' | head -1
-}
-
 # k9s_paths - the config file and skins directory, into _K9S_CFG and _K9S_SKINS.
 # `k9s info` is the only answer that is right everywhere: the directory moved
 # to XDG in 0.30 and differs by platform regardless. The output is coloured,
@@ -1534,15 +1427,13 @@ k9s_paths() {
   [[ -n "$_K9S_CFG" ]]
 }
 
-# tool_has_config <glow|lnav|k9s> - whether the tool has a config directory
-# yet, in any of the places it looks. Each of the three creates one the first
-# time it runs - --help, -h and `k9s info` included - so the doctor and the
-# dry run, which change nothing, ask the tool only once this says yes.
+# tool_has_config <k9s> - whether the tool has a config directory yet, in any
+# of the places it looks. k9s creates one the first time it runs - `k9s info`
+# included - so the doctor and the dry run, which change nothing, ask it only
+# once this says yes.
 tool_has_config() {
   local xdg="${XDG_CONFIG_HOME:-${HOME}/.config}"
   case "$1" in
-    glow) [[ -d "${HOME}/Library/Preferences/glow" || -d "${xdg}/glow" ]] ;;
-    lnav) [[ -d "${HOME}/.lnav" || -d "${xdg}/lnav" ]] ;;
     k9s)  [[ -d "${HOME}/Library/Application Support/k9s" || -d "${xdg}/k9s" ]] ;;
     *)    return 1 ;;
   esac
@@ -1595,11 +1486,12 @@ lazydocker_config_dir() {
   fi
 }
 
-# The three themes the bootstrap activates rather than owns. The failure worth
-# catching here is a theme file deployed with nothing naming it: every install
-# step says ok, and the colours never change.
+# k9s's skin, which the bootstrap activates rather than owns, and the TUI
+# configs it owns whole. The failure worth catching with the skin is a theme
+# file deployed with nothing naming it: every install step says ok, and the
+# colours never change.
 doctor_check_themes() {
-  local skin lazygit_dir theme flavor yazi_dir
+  local skin lazygit_dir
   if ! command -v k9s >/dev/null 2>&1; then
     :
   elif ! tool_has_config k9s; then
@@ -1636,35 +1528,6 @@ doctor_check_themes() {
                   "$(lazydocker_config_dir)/config.yml"
   fi
 
-  if command -v btop >/dev/null 2>&1; then
-    doctor_config 'btop theme' "${SCRIPT_DIR}/../btop/themes/catppuccin_mocha.theme" \
-                  "${XDG_CONFIG_HOME:-$HOME/.config}/btop/themes/catppuccin_mocha.theme"
-    theme="$(btop_theme_of "${XDG_CONFIG_HOME:-$HOME/.config}/btop/btop.conf")"
-    case "$theme" in
-      catppuccin_mocha) doctor_ok 'btop color_theme' 'catppuccin_mocha' ;;
-      ''|Default) doctor_broken 'btop color_theme' 'unset in btop.conf - nothing tells btop to use the theme' ;;
-      *) doctor_note 'btop color_theme' "$theme - yours, not the repo's" ;;
-    esac
-  fi
-
-  if command -v yazi >/dev/null 2>&1; then
-    yazi_dir="${YAZI_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/yazi}"
-    doctor_config 'yazi flavor' \
-      "${SCRIPT_DIR}/../yazi/flavors/catppuccin-mocha.yazi/flavor.toml" \
-      "${yazi_dir}/flavors/catppuccin-mocha.yazi/flavor.toml"
-    doctor_config 'yazi tmTheme' \
-      "${SCRIPT_DIR}/../yazi/flavors/catppuccin-mocha.yazi/tmtheme.xml" \
-      "${yazi_dir}/flavors/catppuccin-mocha.yazi/tmtheme.xml"
-    flavor="$(yazi_flavor_of "${yazi_dir}/theme.toml")"
-    case "$flavor" in
-      catppuccin-mocha) doctor_ok 'yazi dark flavor' 'catppuccin-mocha' ;;
-      '') doctor_broken 'yazi dark flavor' \
-            "unset in ${yazi_dir}/theme.toml - nothing tells yazi to use the flavor" ;;
-      *) doctor_note 'yazi dark flavor' "$flavor - yours, not the repo's" ;;
-    esac
-    doctor_config 'yazi config' "${SCRIPT_DIR}/../yazi/yazi.toml" "${yazi_dir}/yazi.toml"
-  fi
-
   doctor_check_more_themes
 }
 
@@ -1675,12 +1538,11 @@ eza_theme_file() {
   printf '%s/theme.yml' "${EZA_CONFIG_DIR:-${HOME}/Library/Application Support/eza}"
 }
 
-# The themes added after yazi, the same three shapes: a file the repo owns
-# (eza, nvim), a file plus a key that names it (glow, lnav), and a file the
-# shell has to source (zsh-syntax-highlighting), whose proof is a style that
-# is actually in effect in a login shell.
+# The rest of the themes, two shapes: a file the repo owns (eza, nvim), and a
+# file the shell has to source (zsh-syntax-highlighting), whose proof is a
+# style that is actually in effect in a login shell.
 doctor_check_more_themes() {
-  local glow_cfg style lnav_dir theme hl
+  local hl
   hl="$(probe_get 'hl:comment')"
   doctor_config 'syntax-highlighting theme' \
     "${SCRIPT_DIR}/../zsh-syntax-highlighting/catppuccin_mocha.zsh" \
@@ -1695,45 +1557,6 @@ doctor_check_more_themes() {
 
   if command -v eza >/dev/null 2>&1; then
     doctor_config 'eza theme' "${SCRIPT_DIR}/../eza/theme.yml" "$(eza_theme_file)"
-  fi
-
-  if command -v glow >/dev/null 2>&1; then
-    glow_cfg=''
-    tool_has_config glow && glow_cfg="$(glow_config_file)"
-    if ! tool_has_config glow; then
-      doctor_broken 'glow theme' 'not deployed - glow has no config directory yet'
-    elif [[ -z "$glow_cfg" ]]; then
-      doctor_broken 'glow style' 'glow --help named no config file'
-    else
-      doctor_config 'glow theme' "${SCRIPT_DIR}/../glow/catppuccin-mocha.json" \
-                    "$(dirname "$glow_cfg")/catppuccin-mocha.json"
-      style=''
-      command -v yq >/dev/null 2>&1 && style="$(yq '.style // ""' "$glow_cfg" 2>/dev/null || true)"
-      case "$style" in
-        "$(dirname "$glow_cfg")/catppuccin-mocha.json") doctor_ok 'glow style' 'catppuccin-mocha.json' ;;
-        ''|auto) doctor_broken 'glow style' "unset in ${glow_cfg} - nothing tells glow to use the theme" ;;
-        *) doctor_note 'glow style' "${style} - yours, not the repo's" ;;
-      esac
-    fi
-  fi
-
-  if command -v lnav >/dev/null 2>&1; then
-    lnav_dir=''
-    tool_has_config lnav && lnav_dir="$(lnav_config_dir)"
-    if ! tool_has_config lnav; then
-      doctor_broken 'lnav theme' 'not deployed - lnav has no config directory yet'
-    elif [[ -z "$lnav_dir" ]]; then
-      doctor_broken 'lnav theme' 'lnav -h named no config directory'
-    else
-      doctor_config 'lnav theme' "${SCRIPT_DIR}/../lnav/catppuccin-mocha.json" \
-                    "${lnav_dir}/configs/installed/catppuccin-mocha.json"
-      theme="$(lnav_theme_of)"
-      case "$theme" in
-        catppuccin-mocha) doctor_ok 'lnav /ui/theme' 'catppuccin-mocha' ;;
-        ''|default) doctor_broken 'lnav /ui/theme' 'default - nothing tells lnav to use the theme' ;;
-        *) doctor_note 'lnav /ui/theme' "${theme} - yours, not the repo's" ;;
-      esac
-    fi
   fi
 
   if command -v nvim >/dev/null 2>&1; then
@@ -1758,13 +1581,6 @@ doctor_check_configs() {
                   "${bat_cfg}/themes/Catppuccin Mocha.tmTheme"
   else
     doctor_broken 'bat config' 'bat is not installed, so nothing reads the theme'
-  fi
-
-  if command -v tldr >/dev/null 2>&1; then
-    doctor_config 'tealdeer config' "${SCRIPT_DIR}/../tealdeer/config.toml" \
-                  "${XDG_CONFIG_HOME:-$HOME/.config}/tealdeer/config.toml"
-  else
-    doctor_broken 'tealdeer config' 'tldr is not installed'
   fi
 
   if command -v kubecolor >/dev/null 2>&1; then
@@ -1800,7 +1616,6 @@ doctor_check_configs() {
       doctor_note 'RIPGREP_CONFIG_PATH' "$rg_cfg - not the repo's config, which may be deliberate"
     fi
   fi
-  doctor_check_tldr_cache
 
   if [[ "${GHOSTTY_ENABLED:-no}" == "yes" ]]; then
     [[ -r "${HOME}/.config/ghostty/config" ]] \
@@ -2936,8 +2751,8 @@ if (( $+commands[fzf] )); then
     kill -"$sig" "${pids[@]}"
   }
 
-  # cheat - search the list `tools` prints. The preview is the command's tldr
-  # page (its --help when there is none); Enter puts the command on the prompt.
+  # cheat - search the list `tools` prints. The preview is the command's
+  # --help; Enter puts the command on the prompt.
   cheat() {
     (( ${#_TOOLS_ROWS} )) || { print -u2 'cheat: the tools list is not loaded'; return 1; }
     local -a lines
@@ -2950,7 +2765,7 @@ if (( $+commands[fzf] )); then
     done
     pick=$(print -rl -- $lines \
       | fzf --delimiter=$'\t' --with-nth=1 --height=70% --reverse --prompt='tool> ' \
-            --preview 'tldr --color always {2} 2>/dev/null || {2} --help 2>&1 | head -40') || return
+            --preview '{2} --help 2>&1 | head -40') || return
     print -z -- "${pick##*$'\t'}"
   }
 fi
@@ -3021,22 +2836,6 @@ ports() {
   print -r -- "kill -$sig ${pids[*]}"
   kill -"$sig" "${pids[@]}"
 }
-
-# y - yazi, then cd to wherever you quit it. yazi writes that directory to the
-# file named by --cwd-file; without a wrapper you always come back to where you
-# started. Not inside the fzf guard above: yazi has a finder of its own.
-if (( $+commands[yazi] )); then
-  y() {
-    local tmp cwd
-    tmp=$(mktemp -t yazi-cwd.XXXXXX) || return
-    yazi "$@" --cwd-file="$tmp"
-    cwd=$(<"$tmp")
-    rm -f -- "$tmp"
-    if [[ -n "$cwd" && "$cwd" != "$PWD" ]]; then
-      builtin cd -- "$cwd"
-    fi
-  }
-fi
 WORKFLOW
     echo
     echo 'command -v gmake  >/dev/null && alias make="gmake"'
@@ -3147,20 +2946,6 @@ else
                 "${HOME}/.config/atuin/themes/catppuccin-mocha.toml" 'atuin theme'
 fi
 
-# tealdeer config - turns on auto_update: the tldr pages download on first use
-# and refresh themselves every 30 days. tldr itself is never run here; with
-# that key set, any tldr call can reach the network, a dry run's included.
-# Since tealdeer 1.9 the XDG path wins on macOS too; ~/Library/Application
-# Support/tealdeer is only read when the XDG one does not exist.
-TEALDEER_SOURCE="${SCRIPT_DIR}/../tealdeer"
-phase 'tealdeer config'
-if ! command -v tldr >/dev/null 2>&1; then
-  result 'missing' 'tealdeer config' 'tldr is not installed'
-else
-  deploy_config "${TEALDEER_SOURCE}/config.toml" \
-                "${XDG_CONFIG_HOME:-$HOME/.config}/tealdeer/config.toml" 'tealdeer config'
-fi
-
 # bat config - the theme bat, and through it delta, render with
 BAT_SOURCE="${SCRIPT_DIR}/../bat"
 phase 'bat config'
@@ -3212,20 +2997,20 @@ else
   done
 fi
 
-# Theme activation - k9s, lazygit and btop
+# Theme activation - k9s and lazygit
 #
 # The theme file is the repo's and is copied like every config above. The key
-# that *names* it is not: k9s rewrites its config.yaml on every quit and btop
-# rewrites btop.conf on every exit, so those two files cannot be owned here.
-# The key in them is set only when it is unset - a theme you picked is a
-# choice, the same rule the git config below follows. lazygit has no separate
-# theme file at all, so there the whole config.yml is the repo's.
+# that *names* it is not: k9s rewrites its config.yaml on every quit, so that
+# file cannot be owned here. The key in it is set only when it is unset - a
+# theme you picked is a choice, the same rule the git config below follows.
+# lazygit has no separate theme file at all, so there the whole config.yml is
+# the repo's.
 
 # set_yaml_key <file> <yq path> <value> <label> [default] - set one key, only
 # when unset. yq is in the cli group on all three platforms; without it the
 # step says so rather than guessing at somebody's YAML with sed. [default] is
-# a value that counts as unset, the way btop's "Default" does: glow writes
-# style "auto" into the glow.yml it creates, and nobody chose that.
+# a value that counts as unset: k9s writes every key at its default into the
+# config.yaml it creates, and nobody chose that.
 # yaml_scalar <value> - the value as yq should write it. true, false and plain
 # integers go in bare; anything else quoted. k9s refuses a config whose
 # boolean is the string "true".
@@ -3259,82 +3044,6 @@ set_yaml_key() {
   fi
 }
 
-# btop_set_theme <btop.conf> <theme> - the same rule as set_yaml_key, for a
-# file that is not YAML. "Default" counts as unset: it is btop's built-in.
-btop_set_key() {   # btop_set_key <btop.conf> <key> <value> <default>
-  local conf="$1" key="$2" want="$3" default="$4" have line
-  have="$(btop_value_of "$conf" "$key")"
-  # btop writes strings quoted and True, False and numbers bare.
-  line="${key} = \"${want}\""
-  [[ "$want" =~ ^(True|False|[0-9]+)$ ]] && line="${key} = ${want}"
-  if [[ "$have" == "$want" ]]; then
-    result 'current' "btop ${key}" "$want"
-  elif [[ -n "$have" && "$have" != "$default" ]]; then
-    result 'skipped' "btop ${key}" \
-           "yours is ${have} - set ${key} to ${want} by hand to switch"
-  elif [[ "$DRY_RUN" == "yes" ]]; then
-    result 'would-install' "btop ${key}" "${want} in ${conf}"
-  elif [[ -f "$conf" ]] && grep -q "^${key}[[:space:]]*=" "$conf"; then
-    if sed -i '' "s/^${key}[[:space:]]*=.*/${line}/" "$conf"; then
-      result 'upgraded' "btop ${key}" "$conf"
-    else
-      result 'failed' "btop ${key}" "sed could not rewrite $conf"
-    fi
-  else
-    mkdir -p "$(dirname "$conf")"
-    printf '%s\n' "$line" >> "$conf"
-    result 'installed' "btop ${key}" "$conf"
-  fi
-}
-
-# btop_set_theme <btop.conf> <theme> - "Default" is btop's built-in theme, so
-# it counts as unset.
-btop_set_theme() {
-  btop_set_key "$1" color_theme "$2" Default
-}
-
-# yazi_set_flavor <theme.toml> <flavor> - the same rule as set_yaml_key, for
-# TOML. Three shapes to land in: no file, a file with a [flavor] table the key
-# is missing from, and a file with no such table. awk writes a whole new file
-# rather than editing in place, because `sed -i` spells its backup argument
-# differently on macOS and Linux and this function is the same on both.
-yazi_set_flavor() {
-  local file="$1" want="$2" have tmp
-  have="$(yazi_flavor_of "$file")"
-  case "$have" in
-    "$want")
-      result 'current' 'yazi dark flavor' "$want" ;;
-    '')
-      if [[ "$DRY_RUN" == "yes" ]]; then
-        result 'would-install' 'yazi dark flavor' "${want} in ${file}"
-      elif [[ ! -f "$file" ]]; then
-        mkdir -p "$(dirname "$file")"
-        printf '[flavor]\ndark = "%s"\n' "$want" > "$file"
-        result 'installed' 'yazi dark flavor' "$file"
-      elif grep -q '^[[:space:]]*\[flavor\]' "$file"; then
-        tmp="${file}.bootstrap.$$"
-        if awk -v want="$want" '
-             { print }
-             !done && /^[[:space:]]*\[flavor\][[:space:]]*(#.*)?$/ {
-               printf "dark = \"%s\"\n", want
-               done = 1
-             }
-           ' "$file" > "$tmp" && mv "$tmp" "$file"; then
-          result 'upgraded' 'yazi dark flavor' "$file"
-        else
-          rm -f "$tmp"
-          result 'failed' 'yazi dark flavor' "could not rewrite $file"
-        fi
-      else
-        printf '\n[flavor]\ndark = "%s"\n' "$want" >> "$file"
-        result 'upgraded' 'yazi dark flavor' "$file"
-      fi ;;
-    *)
-      result 'skipped' 'yazi dark flavor' \
-             "yours is ${have} - set dark to ${want} by hand to switch" ;;
-  esac
-}
-
 # deploy_owned_config <source> <target> <label> - deploy_config for a file the
 # repo takes over whole, where one of your own may already be sitting. The
 # first replacement of a file that was not ours is kept as .bak - the courtesy
@@ -3362,8 +3071,8 @@ else
                 "${_K9S_SKINS}/catppuccin-mocha.yaml" 'k9s skin'
   set_yaml_key "$_K9S_CFG" '.k9s.ui.skin' 'catppuccin-mocha' 'k9s ui.skin'
   # Behaviour, not looks. k9s writes every key out at its default the first
-  # time it runs, so the default counts as unset here, as glow's "auto" does:
-  # a key you changed to anything else is left alone. No logo, which gives the
+  # time it runs, so the default counts as unset here: a key you changed to
+  # anything else is left alone. No logo, which gives the
   # table its rows back; live views (describe, YAML) that follow the resource;
   # skin and config edits that apply without a restart; and no check for a
   # newer k9s at start-up, since the bootstrap upgrades it.
@@ -3437,51 +3146,6 @@ else
                       "$(lazydocker_config_dir)/config.yml" 'lazydocker config'
 fi
 
-# btop theme. There is no btop on Windows - btop4win is a separate port, and
-# cli-parity.conf says so - which is why this step has no counterpart there.
-BTOP_SOURCE="${SCRIPT_DIR}/../btop"
-phase 'btop theme'
-if ! command -v btop >/dev/null 2>&1; then
-  result 'missing' 'btop theme' 'btop is not installed'
-else
-  _btop_dir="${XDG_CONFIG_HOME:-$HOME/.config}/btop"
-  _btop_conf="${_btop_dir}/btop.conf"
-  deploy_config "${BTOP_SOURCE}/themes/catppuccin_mocha.theme" \
-                "${_btop_dir}/themes/catppuccin_mocha.theme" 'btop theme'
-  btop_set_theme "$_btop_conf" 'catppuccin_mocha'
-  # btop rewrites btop.conf with every key on exit, so a key at btop's own
-  # default counts as unset. The process list as a tree, a refresh every
-  # second rather than two, and h/j/k/l to move (help and kill move to
-  # Shift-H and Shift-K).
-  btop_set_key "$_btop_conf" proc_tree True False
-  btop_set_key "$_btop_conf" update_ms 1000 2000
-  btop_set_key "$_btop_conf" vim_keys True False
-fi
-
-# yazi flavor. A flavor is a directory, not a file - flavor.toml and the
-# tmTheme the preview pane highlights code with - so the package is copied
-# piece by piece. It is self-contained on purpose: the theme.toml catppuccin
-# publishes instead names a .tmTheme by absolute path, which one file shared by
-# three platforms cannot carry. theme.toml here is yours, not the repo's, so
-# the key naming the flavor is set only when unset, as with k9s and btop.
-YAZI_SOURCE="${SCRIPT_DIR}/../yazi"
-phase 'yazi flavor'
-if ! command -v yazi >/dev/null 2>&1; then
-  result 'missing' 'yazi flavor' 'yazi is not installed'
-else
-  _yazi_dir="${YAZI_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/yazi}"
-  _yazi_pkg="${_yazi_dir}/flavors/catppuccin-mocha.yazi"
-  deploy_config "${YAZI_SOURCE}/flavors/catppuccin-mocha.yazi/flavor.toml" \
-                "${_yazi_pkg}/flavor.toml" 'yazi flavor'
-  deploy_config "${YAZI_SOURCE}/flavors/catppuccin-mocha.yazi/tmtheme.xml" \
-                "${_yazi_pkg}/tmtheme.xml" 'yazi tmTheme'
-  yazi_set_flavor "${_yazi_dir}/theme.toml" 'catppuccin-mocha'
-  # yazi.toml is the repo's whole, the way lazygit's config.yml is: yazi
-  # never writes to it, and it carries only the keys that differ from the
-  # preset.
-  deploy_owned_config "${YAZI_SOURCE}/yazi.toml" "${_yazi_dir}/yazi.toml" 'yazi config'
-fi
-
 # zsh-syntax-highlighting theme. The file only sets ZSH_HIGHLIGHT_STYLES; the
 # zsh fragment sources it just before the plugin, which keeps any style that
 # is already set. Deployed even while the fragment is off, so turning ZSH_ENABLED
@@ -3502,80 +3166,6 @@ if ! command -v eza >/dev/null 2>&1; then
   result 'missing' 'eza theme' 'eza is not installed'
 else
   deploy_owned_config "${SCRIPT_DIR}/../eza/theme.yml" "$(eza_theme_file)" 'eza theme'
-fi
-
-# glow theme. The JSON is the repo's and goes beside glow.yml; the style key in
-# glow.yml is yours, and set only when it is unset - "auto", which glow writes
-# into the file it creates, counts as unset. The key holds an absolute path,
-# which is fine here: glow.yml is per machine, only the JSON is shared.
-#
-# A dry run does not ask glow where its config is: asking is a run, and glow's
-# first run creates glow.yml.
-phase 'glow theme'
-if ! command -v glow >/dev/null 2>&1; then
-  result 'missing' 'glow theme' 'glow is not installed'
-elif [[ "$DRY_RUN" == "yes" ]]; then
-  result 'would-install' 'glow theme' 'catppuccin-mocha.json beside glow.yml; style, pager and width set if unset'
-else
-  _glow_cfg="$(glow_config_file)"
-  if [[ -z "$_glow_cfg" ]]; then
-    result 'failed' 'glow theme' 'glow --help named no config file'
-  else
-    _glow_theme="$(dirname "$_glow_cfg")/catppuccin-mocha.json"
-    deploy_config "${SCRIPT_DIR}/../glow/catppuccin-mocha.json" "$_glow_theme" 'glow theme'
-    set_yaml_key "$_glow_cfg" '.style' "$_glow_theme" 'glow style' 'auto'
-    # glow writes pager: false and width: 80 into the glow.yml it creates, so
-    # those count as unset, as "auto" does for style. The pager is $PAGER, or
-    # less -r. With it on, `glow -t` needs -p=false: glow refuses both at once.
-    set_yaml_key "$_glow_cfg" '.pager' 'true' 'glow pager' 'false'
-    set_yaml_key "$_glow_cfg" '.width' '100' 'glow width' '80'
-  fi
-fi
-
-# lnav theme. The theme goes where lnav loads installed config from, and lnav
-# sets the key itself: `:config` writes its own config.json, which is lnav's to
-# lay out. "default" is lnav's built-in and counts as unset. lnav exits 0 even
-# when it rejects a theme, so the result is read back rather than trusted.
-lnav_set_theme() {   # lnav_set_theme <theme>
-  local want="$1" have
-  have="$(lnav_theme_of)"
-  case "$have" in
-    "$want")
-      result 'current' 'lnav /ui/theme' "$want" ;;
-    ''|default)
-      if [[ "$DRY_RUN" == "yes" ]]; then
-        result 'would-install' 'lnav /ui/theme' "$want"
-      else
-        lnav -nN -c ":config /ui/theme ${want}" >/dev/null 2>&1 || true
-        have="$(lnav_theme_of)"
-        if [[ "$have" == "$want" ]]; then
-          result 'installed' 'lnav /ui/theme' "$want"
-        else
-          result 'failed' 'lnav /ui/theme' "lnav did not take ${want} - still ${have:-unset}"
-        fi
-      fi ;;
-    *)
-      result 'skipped' 'lnav /ui/theme' \
-             "yours is ${have} - run lnav -nN -c ':config /ui/theme ${want}' to switch" ;;
-  esac
-}
-
-# Nor does it ask lnav, for the same reason: any lnav run, -h included, lays
-# out its config directory first.
-phase 'lnav theme'
-if ! command -v lnav >/dev/null 2>&1; then
-  result 'missing' 'lnav theme' 'lnav is not installed'
-elif [[ "$DRY_RUN" == "yes" ]]; then
-  result 'would-install' 'lnav theme' 'catppuccin-mocha.json in configs/installed, and /ui/theme set if default'
-else
-  _lnav_dir="$(lnav_config_dir)"
-  if [[ -z "$_lnav_dir" ]]; then
-    result 'failed' 'lnav theme' 'lnav -h named no config directory'
-  else
-    deploy_config "${SCRIPT_DIR}/../lnav/catppuccin-mocha.json" \
-                  "${_lnav_dir}/configs/installed/catppuccin-mocha.json" 'lnav theme'
-    lnav_set_theme 'catppuccin-mocha'
-  fi
 fi
 
 # Neovim - LazyVim with Catppuccin Mocha. The repo's files are replaced every

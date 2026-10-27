@@ -20,6 +20,19 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [2.2.0]
+
+### Removed
+
+- **lnav, glow, tealdeer and yazi.** Unused. Their configs went with them -
+  `lnav/`, `glow/`, `tealdeer/` and `yazi/` - along with the steps that
+  deployed and activated them, their doctor checks (the tldr page cache among
+  them), the `y` yazi wrapper and their tests. `cheat` now shows a tool's
+  `--help` instead of its tldr page. btop was never installed here. Everything
+  already installed is left alone - the bootstrap never uninstalls - and so are
+  the configs it deployed earlier. `winget uninstall charmbracelet.glow
+  tstack.lnav sxyazi.yazi dbrgn.tealdeer` cleans up a machine.
+
 ## [2.1.0]
 
 ### Added

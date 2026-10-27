@@ -419,13 +419,12 @@ DRIVER
   fi
 fi
 
-# ------------------------------------------------- doctor: launch and cache --
+# ----------------------------------------------------------- doctor: launch --
 #
-# Both checks answer questions about the machine, so the tests build the
-# machine: fake binaries that exit the way a broken one does, and a cache
-# directory in each state tealdeer can leave it in.
+# The check answers a question about the machine, so the test builds the
+# machine: fake binaries that exit the way a broken one does.
 
-if section 'doctor launch and tldr cache'; then
+if section 'doctor launch'; then
   if [[ "${BASH_VERSINFO[0]:-3}" -lt 4 ]]; then
     skip 'the linux doctor checks' "needs bash 4, this is ${BASH_VERSION%%(*}"
   else
@@ -466,39 +465,6 @@ STUBS
     else
       skip 'the summary counts what launched' 'no timeout(1) on this machine'
     fi
-
-    # The cache check reads a directory, so build one in each state. Both
-    # platforms have the check; macOS's also looks in ~/Library/Caches.
-    cache_case() {   # cache_case <platform> <state> - the check's output for that cache
-      local root="$TMP/cache-$1-$2"
-      mkdir -p "$TMP/tbin" "$root/tealdeer/tldr-pages"
-      printf '#!/bin/sh
-exit 0
-' > "$TMP/tbin/tldr"; chmod +x "$TMP/tbin/tldr"
-      case "$2" in
-        none)  rm -rf "$root/tealdeer" ;;
-        empty) ;;
-        fresh) echo x > "$root/tealdeer/tldr-pages/a.md" ;;
-        stale) echo x > "$root/tealdeer/tldr-pages/a.md"; touch -d '90 days ago' "$root/tealdeer/tldr-pages/a.md" 2>/dev/null || touch -t 202001010000 "$root/tealdeer/tldr-pages/a.md" ;;
-      esac
-      {
-        printf 'doctor_ok() { echo "ok|$1"; }
-doctor_note() { echo "note|$1|$2"; }
-'
-        # HOME is the scratch root, so ~/Library/Caches cannot be a real one.
-        printf 'export PATH=%s:$PATH XDG_CACHE_HOME=%s HOME=%s
-' "$TMP/tbin" "$root" "$root/home"
-        extract_func "${ROOT}/$1/bootstrap.sh" doctor_check_tldr_cache
-        echo 'doctor_check_tldr_cache'
-      } > "$TMP/cache-$1-$2.sh"
-      bash "$TMP/cache-$1-$2.sh" 2>&1
-    }
-    for plat in linux macos; do
-      contains "$plat: no cache is a note, since the first tldr fills it" 'note|tldr pages|not downloaded' "$(cache_case $plat none)"
-      contains "$plat: an empty cache is a note"                          'note|tldr pages|'                 "$(cache_case $plat empty)"
-      contains "$plat: a fresh cache is ok"                               'ok|tldr pages'                    "$(cache_case $plat fresh)"
-      contains "$plat: nothing under 30 days old is a note"               'none newer than 30 days'          "$(cache_case $plat stale)"
-    done
   fi
 fi
 
@@ -789,7 +755,7 @@ if section 'workflow pickers'; then
   fi
 
   printf '%s\n' "$wf_linux" | sed '1d;$d' > "$TMP/pickers.zsh"
-  for fn in gb gs fkill cheat y; do
+  for fn in gb gs fkill cheat; do
     contains "the picker block defines $fn" "$fn() {" "$(cat "$TMP/pickers.zsh")"
   done
   if command -v zsh >/dev/null 2>&1; then
@@ -810,7 +776,7 @@ foreach ($n in 'gb', 'gs', 'cheat') {
     if (-not $f) { throw "no function $n in profile.ps1" }
     Invoke-Expression $f.Extent.Text
 }
-function tldr { "TLDR:$($args -join ' ')" }
+function rg { "HELP:$($args -join ' ')" }
 git init -q "$env:T_TMP/repo" | Out-Null
 Set-Location "$env:T_TMP/repo"
 git config user.email t@example.com; git config user.name t
@@ -835,22 +801,21 @@ PWSH
     contains 'windows: gb switches to the picked branch'    'branch=feature/login' "$win_wf"
     contains 'windows: gs applies the picked stash'         'applied=b' "$win_wf"
     contains 'windows: gs applies and does not drop'        'kept=1' "$win_wf"
-    contains 'windows: cheat opens the page of the pick'    'cheat=TLDR:rg' "$win_wf"
+    contains 'windows: cheat shows the --help of the pick'  'cheat=HELP:--help' "$win_wf"
 
     # The doctor's verdicts on those facts. Get-ProbeValue and the Add-Doctor*
     # reporters are stubbed, so each case is only a hashtable of what a probe
     # would have said.
     cat > "$TMP/doctor-win.ps1" <<'PWSH'
 $src = Get-Content -Raw "$env:T_ROOT/windows/bootstrap.ps1"
-$start = $src.IndexOf('function Test-DoctorWorkflow'); $end = $src.IndexOf('# tealdeer fills its page cache')
+$start = $src.IndexOf('function Test-DoctorWorkflow'); $end = $src.IndexOf('function Get-LazydockerConfigDir')
 Invoke-Expression $src.Substring($start, $end - $start)
 $script:seen = @()
 function Add-DoctorOk     { param($Id, $Detail) $script:seen += "ok:$Id" }
 function Add-DoctorBroken { param($Id, $Detail) $script:seen += "broken:$Id" }
 function Add-DoctorNote   { param($Id, $Detail) $script:seen += "note:$Id" }
 function Get-ProbeValue   { param($Key) if ($script:facts.ContainsKey($Key)) { $script:facts[$Key] } else { '' } }
-$healthy = @{ 'cmd:tools' = '1'; 'tools:rows' = '12'; 'resolve:fzf' = 'C:\fzf.exe'
-              'resolve:yazi' = 'C:\yazi.exe'; 'cmd:y' = '1'
+$healthy = @{ 'cmd:tools' = '1'; 'tools:rows' = '12'; 'resolve:fzf' = 'C:\fzf.exe'; 'cmd:ports' = '1'
               'cmd:gb' = '1'; 'cmd:gs' = '1'; 'cmd:fkill' = '1'; 'cmd:cheat' = '1' }
 # `+` on hashtables throws on a repeated key rather than overriding it.
 function With([hashtable]$base, [hashtable]$over) { $c = $base.Clone(); foreach ($k in $over.Keys) { $c[$k] = $over[$k] }; $c }
@@ -858,118 +823,41 @@ function Run([hashtable]$facts) { $script:facts = $facts; $script:seen = @(); Te
 "healthy=$(Run $healthy)"
 "noprofile=$(Run @{ 'resolve:fzf' = 'C:\fzf.exe' })"
 "emptylist=$(Run (With $healthy @{ 'tools:rows' = '0' }))"
-"nofzf=$(Run @{ 'cmd:tools' = '1'; 'tools:rows' = '3' })"
+"nofzf=$(Run @{ 'cmd:tools' = '1'; 'tools:rows' = '3'; 'cmd:ports' = '1' })"
 "ghostscript=$(Run (With $healthy @{ 'cmd:gs' = '0'; 'app:gs' = 'C:\gs\gs.exe' }))"
-"noyazi=$(Run (With $healthy @{ 'resolve:yazi' = ''; 'cmd:y' = '0' }))"
 PWSH
     win_doc="$(T_ROOT="$(native_path "$ROOT")" pwsh -NoProfile -File "$(native_path "$TMP")/doctor-win.ps1" 2>&1)"
-    contains 'windows doctor: a healthy shell is all ok' 'healthy=ok:tools,ok:y,ok:gb,ok:fkill,ok:cheat,ok:gs' "$win_doc"
+    contains 'windows doctor: a healthy shell is all ok' 'healthy=ok:tools,ok:ports,ok:gb,ok:fkill,ok:cheat,ok:gs' "$win_doc"
     contains 'windows doctor: no profile means no tools'  'broken:tools' "$win_doc"
     contains 'windows doctor: an empty list is broken'    'emptylist=broken:tools' "$win_doc"
-    contains 'windows doctor: no fzf is a note, not a failure' 'nofzf=ok:tools,note:y,note:workflow pickers' "$win_doc"
-    contains 'windows doctor: no yazi is a note, not a failure' 'noyazi=ok:tools,note:y,ok:gb' "$win_doc"
+    contains 'windows doctor: no fzf is a note, not a failure' 'nofzf=ok:tools,ok:ports,note:workflow pickers' "$win_doc"
     contains "windows doctor: Ghostscript's gs is a note" 'note:gs' "$win_doc"
   fi
 fi
 
 # ---------------------------------------------------------- theme activation --
 #
-# k9s, lazygit and btop are themed by deploying one file and setting one key.
+# k9s and lazygit are themed by deploying one file and, for k9s, setting one key.
 # The deploy is a copy like any other; the key is the part with a rule - set it
 # when it is unset, leave a choice of somebody's alone - so that is what is
 # driven here, with the real functions and scratch files.
 
 if section 'theme activation'; then
-  for f in k9s/skins/catppuccin-mocha.yaml lazygit/config.yml lazydocker/config.yml btop/themes/catppuccin_mocha.theme; do
+  for f in k9s/skins/catppuccin-mocha.yaml lazygit/config.yml lazydocker/config.yml; do
     [[ -s "${ROOT}/$f" ]] && ok "$f is in the repo" || bad "$f is in the repo" 'a non-empty file' 'missing or empty'
   done
 
-  # The skin file's name is what the ui.skin key has to say, and the theme
-  # file's is what color_theme has to say. A rename of either without the other
-  # leaves a theme nothing reads.
+  # The skin file's name is what the ui.skin key has to say. A rename of one
+  # without the other leaves a skin nothing reads.
   skin_key="$(sed -n "s/.*set_yaml_key .* '\.k9s\.ui\.skin' '\([^']*\)'.*/\1/p" \
               "${ROOT}/linux/bootstrap.sh" | head -1)"
   is 'the k9s skin file is the one ui.skin names' 'catppuccin-mocha' "$skin_key"
-  btop_key="$(sed -n "s/^ *btop_set_theme .* '\([^']*\)'.*/\1/p" \
-              "${ROOT}/linux/bootstrap.sh" | head -1)"
-  is 'the btop theme file is the one color_theme names' 'catppuccin_mocha' "$btop_key"
 
-  # sed -i takes a suffix argument on BSD and none on GNU, so the two scripts
-  # spell the rewrite differently. Drive the one that would really run here.
+  # Drive the script that would really run on this machine.
   theme_src="${ROOT}/linux/bootstrap.sh"
   [[ "$(uname -s)" == Darwin ]] && theme_src="${ROOT}/macos/bootstrap.sh"
 
-  # btop.conf is not YAML, so its reader and writer are plain sed. Every state
-  # a real btop.conf turns up in: absent, written before a theme was picked,
-  # holding the built-in default, already ours, and holding somebody else's.
-  {
-    printf 'DRY_RUN=no\n'
-    printf 'result() { printf "%%s %%s\\n" "$1" "$3"; }\n'
-    extract_func "$theme_src" btop_value_of
-    extract_func "$theme_src" btop_theme_of
-    extract_func "$theme_src" btop_set_key
-    extract_func "$theme_src" btop_set_theme
-    printf 'btop_set_theme "$1" catppuccin_mocha\n'
-    printf 'printf "now=%%s\\n" "$(btop_theme_of "$1")"\n'
-  } > "$TMP/btop.sh"
-
-  bt() { bash "$TMP/btop.sh" "$1" 2>&1; }
-
-  conf="$TMP/btop-absent.conf"
-  out="$(bt "$conf")"
-  contains 'btop: no btop.conf yet is written, not skipped' 'installed' "$out"
-  contains 'btop: and the theme takes'                      'now=catppuccin_mocha' "$out"
-
-  conf="$TMP/btop-default.conf"
-  printf '#comment\ncolor_theme = "Default"\nupdate_ms = 2000\n' > "$conf"
-  out="$(bt "$conf")"
-  contains 'btop: the built-in Default counts as unset' 'upgraded' "$out"
-  contains 'btop: and is replaced'                      'now=catppuccin_mocha' "$out"
-  is      'btop: the rest of btop.conf is untouched' 'update_ms = 2000' \
-          "$(grep '^update_ms' "$conf")"
-
-  conf="$TMP/btop-empty.conf"
-  printf 'color_theme = ""\n' > "$conf"
-  contains 'btop: an empty value counts as unset' 'now=catppuccin_mocha' "$(bt "$conf")"
-
-  conf="$TMP/btop-ours.conf"
-  printf 'color_theme = "catppuccin_mocha"\n' > "$conf"
-  contains 'btop: a second run changes nothing' 'current' "$(bt "$conf")"
-
-  conf="$TMP/btop-theirs.conf"
-  printf 'color_theme = "gruvbox_dark"\n' > "$conf"
-  out="$(bt "$conf")"
-  contains 'btop: a theme of your own is left alone' 'skipped' "$out"
-  contains 'btop: really left alone'                 'now=gruvbox_dark' "$out"
-
-  # The behaviour keys go through the same writer, bare rather than quoted:
-  # btop writes True, False and numbers that way and reads them back so.
-  {
-    printf 'DRY_RUN=no\n'
-    printf 'result() { printf "%%s %%s\\n" "$1" "$3"; }\n'
-    extract_func "$theme_src" btop_value_of
-    extract_func "$theme_src" btop_set_key
-    printf 'btop_set_key "$1" proc_tree True False\n'
-    printf 'btop_set_key "$1" update_ms 1000 2000\n'
-  } > "$TMP/btopkey.sh"
-
-  conf="$TMP/btop-keys.conf"
-  printf 'color_theme = "catppuccin_mocha"\nproc_tree = False\nupdate_ms = 2000\n' > "$conf"
-  bash "$TMP/btopkey.sh" "$conf" >/dev/null 2>&1
-  is 'btop: a key at its default is set, bare' 'proc_tree = True' "$(grep '^proc_tree' "$conf")"
-  is 'btop: a number is set bare too'          'update_ms = 1000' "$(grep '^update_ms' "$conf")"
-  is 'btop: the theme next to them is untouched' 'color_theme = "catppuccin_mocha"' \
-     "$(grep '^color_theme' "$conf")"
-  contains 'btop: a second run changes nothing' 'current' "$(bash "$TMP/btopkey.sh" "$conf" 2>&1)"
-
-  conf="$TMP/btop-keys-theirs.conf"
-  printf 'update_ms = 500\n' > "$conf"
-  out="$(bash "$TMP/btopkey.sh" "$conf" 2>&1)"
-  contains 'btop: a value of your own is left alone' 'skipped' "$out"
-  is 'btop: really left alone' 'update_ms = 500' "$(grep '^update_ms' "$conf")"
-  is 'btop: an absent key is appended' 'proc_tree = True' "$(grep '^proc_tree' "$conf")"
-
-  # The same rule over YAML, which is yq's job rather than sed's.
+  # Set the key only when it is unset, which over YAML is yq's job.
   if ! command -v yq >/dev/null 2>&1; then
     skip 'the k9s ui.skin key' 'yq is not installed'
   else
@@ -1049,146 +937,6 @@ if section 'theme activation'; then
     done
   else
     skip 'the deployed YAML parses' 'yq is not installed'
-  fi
-fi
-
-# ------------------------------------------------------------ yazi flavor ----
-#
-# The flavor package is copied like any other config, so what is worth testing
-# is the key that names it: theme.toml is the user's file, and the rule is the
-# one k9s and btop already follow - set it only when it is unset. The two
-# functions are lifted out of the scripts, so a stale copy cannot pass.
-
-if section 'yazi flavor'; then
-  yazi_flavor_src="${ROOT}/yazi/flavors/catppuccin-mocha.yazi"
-
-  for f in flavor.toml tmtheme.xml LICENSE LICENSE-tmtheme; do
-    if [[ -f "${yazi_flavor_src}/${f}" ]]; then ok "yazi flavor ships ${f}"
-    else bad "yazi flavor ships ${f}" 'the file' 'missing'; fi
-  done
-
-  # The directory name is the flavor name yazi looks up, so it has to be the
-  # one the scripts write into theme.toml.
-  if grep -q "yazi_set_flavor .*'catppuccin-mocha'" "${ROOT}/macos/bootstrap.sh" \
-     && [[ -d "${yazi_flavor_src}" ]]; then
-    ok 'the flavor directory is the one theme.toml names'
-  else
-    bad 'the flavor directory is the one theme.toml names' \
-        'catppuccin-mocha.yazi, named by the phase' 'they disagree'
-  fi
-
-  if [[ -n "${PYTHON[*]}" ]]; then
-    if "${PYTHON[@]}" -c "import tomllib,sys; tomllib.load(open(sys.argv[1],'rb'))" \
-         "${yazi_flavor_src}/flavor.toml" 2>/dev/null; then
-      ok 'flavor.toml is valid TOML'
-    else
-      bad 'flavor.toml is valid TOML' 'parses' 'it does not'
-    fi
-    # yazi refuses to start on a yazi.toml that does not parse, and a key
-    # outside [mgr] would be silently ignored.
-    if "${PYTHON[@]}" -c "
-import tomllib, sys
-d = tomllib.load(open(sys.argv[1], 'rb'))
-assert set(d) == {'mgr'}, d" "${ROOT}/yazi/yazi.toml" 2>/dev/null; then
-      ok 'yazi.toml is valid TOML, all under [mgr]'
-    else
-      bad 'yazi.toml is valid TOML, all under [mgr]' 'parses' 'it does not'
-    fi
-    if "${PYTHON[@]}" -c "
-import sys, xml.etree.ElementTree as ET
-ET.parse(sys.argv[1])" "${yazi_flavor_src}/tmtheme.xml" 2>/dev/null; then
-      ok 'tmtheme.xml is valid XML'
-    else
-      bad 'tmtheme.xml is valid XML' 'parses' 'it does not'
-    fi
-  else
-    skip 'the flavor files parse' 'no python3 with tomllib'
-  fi
-
-  # linux and macos run the same two functions; a fix to one that misses the
-  # other is the failure this catches.
-  yazi_funcs_of() {
-    extract_func "$1" yazi_flavor_of
-    extract_func "$1" yazi_set_flavor
-  }
-  yz_linux="$(yazi_funcs_of "${ROOT}/linux/bootstrap.sh")"
-  yz_macos="$(yazi_funcs_of "${ROOT}/macos/bootstrap.sh")"
-  if [[ -n "$yz_linux" && "$yz_linux" == "$yz_macos" ]]; then
-    ok 'linux and macos share the yazi functions'
-  else
-    bad 'linux and macos share the yazi functions' 'identical, non-empty' 'they differ or are missing'
-  fi
-
-  # The reader, against the shapes a theme.toml comes in.
-  {
-    echo 'yazi_flavor_of_probe() { yazi_flavor_of "$1"; }'
-    printf '%s\n' "$yz_macos"
-  } > "$TMP/yazi-read.sh"
-
-  read_case() {   # read_case <label> <want> <file contents>
-    printf '%b' "$3" > "$TMP/theme.toml"
-    is "$1" "$2" "$(bash -c ". '$TMP/yazi-read.sh'; yazi_flavor_of '$TMP/theme.toml'")"
-  }
-  read_case 'reads the [flavor] table'        'catppuccin-mocha' '[flavor]\ndark = "catppuccin-mocha"\n'
-  read_case 'reads a dotted flavor.dark'      'catppuccin-mocha' 'flavor.dark = "catppuccin-mocha"\n'
-  read_case 'reads a single-quoted value'     'dracula'          "[flavor]\ndark = 'dracula'  # mine\n"
-  read_case 'ignores dark in another table'   ''                 '[mgr]\ndark = "notthis"\n'
-  read_case 'a table with only light is unset' ''                '[flavor]\nlight = "catppuccin-latte"\n'
-  read_case 'a file with no flavor is unset'  ''                 '[mgr]\ncwd = { fg = "#94e2d5" }\n'
-  is 'a theme.toml that is not there is unset' '' \
-     "$(bash -c ". '$TMP/yazi-read.sh'; yazi_flavor_of '$TMP/no-such-theme.toml'")"
-
-  # The writer. DRY_RUN and result() are the script's, so they are stubbed the
-  # way the btop tests above stub them.
-  {
-    echo 'DRY_RUN="${DRY_RUN:-no}"'
-    printf 'result() { printf "%%s\\n" "$1"; }\n'
-    printf '%s\n' "$yz_macos"
-  } > "$TMP/yazi-set.sh"
-  set_case() {   # set_case <file> [assignment] - prints the action, leaves the file
-    # The assignment goes on the call, not on the `.`: bash keeps a prefix
-    # assignment to a special builtin only in POSIX mode, and this is not it.
-    bash -c ". '$TMP/yazi-set.sh'; ${2:-} yazi_set_flavor '$1' catppuccin-mocha"
-  }
-
-  cfg="$TMP/yazi-new.toml"
-  is 'no theme.toml yet is written, not skipped' 'installed' "$(set_case "$cfg")"
-  is 'and the flavor takes' 'catppuccin-mocha' \
-     "$(bash -c ". '$TMP/yazi-read.sh'; yazi_flavor_of '$cfg'")"
-  is 'a second run changes nothing' 'current' "$(set_case "$cfg")"
-
-  cfg="$TMP/yazi-notable.toml"
-  printf '[mgr]\ncwd = { fg = "#94e2d5" }\n' > "$cfg"
-  is 'a theme.toml with no [flavor] table gains one' 'upgraded' "$(set_case "$cfg")"
-  is 'and the flavor takes' 'catppuccin-mocha' \
-     "$(bash -c ". '$TMP/yazi-read.sh'; yazi_flavor_of '$cfg'")"
-  contains 'and the rest of the file is untouched' 'cwd = { fg = "#94e2d5" }' "$(cat "$cfg")"
-
-  cfg="$TMP/yazi-light.toml"
-  printf '[flavor]\nlight = "catppuccin-latte"\n' > "$cfg"
-  is 'a [flavor] table without dark gains the key' 'upgraded' "$(set_case "$cfg")"
-  contains 'and light is left alone' 'light = "catppuccin-latte"' "$(cat "$cfg")"
-
-  cfg="$TMP/yazi-theirs.toml"
-  printf '[flavor]\ndark = "dracula"\n' > "$cfg"
-  is 'a flavor of your own is left alone' 'skipped' "$(set_case "$cfg")"
-  is 'really left alone' 'dracula' \
-     "$(bash -c ". '$TMP/yazi-read.sh'; yazi_flavor_of '$cfg'")"
-
-  cfg="$TMP/yazi-dry.toml"
-  is '--dry-run says what it would do' 'would-install' "$(set_case "$cfg" 'DRY_RUN=yes')"
-  [[ -e "$cfg" ]] && bad '--dry-run writes no theme.toml' 'no file' 'it made one' \
-                  || ok '--dry-run writes no theme.toml'
-
-  # Every file the writer produces has to be TOML yazi will load.
-  if [[ -n "${PYTHON[*]}" ]]; then
-    for f in "$TMP"/yazi-new.toml "$TMP"/yazi-notable.toml "$TMP"/yazi-light.toml; do
-      if "${PYTHON[@]}" -c "import tomllib,sys; tomllib.load(open(sys.argv[1],'rb'))" "$f" 2>/dev/null; then
-        ok "$(basename "$f") is still valid TOML"
-      else
-        bad "$(basename "$f") is still valid TOML" 'parses' "$(cat "$f")"
-      fi
-    done
   fi
 fi
 

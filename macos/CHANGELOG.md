@@ -15,6 +15,19 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0]
+
+### Removed
+
+- **lnav, btop, glow, tealdeer and yazi.** Unused. Their configs went with
+  them - `lnav/`, `btop/`, `glow/`, `tealdeer/` and `yazi/` - along with the
+  phases that deployed and activated them, their doctor checks (the tldr page
+  cache among them), the `y` yazi wrapper and their tests. `cheat` now previews
+  a tool's `--help` instead of its tldr page. Everything already installed is
+  left alone - the bootstrap never uninstalls - and so are the configs it
+  deployed earlier. `brew uninstall lnav btop glow tealdeer yazi` cleans up a
+  machine.
+
 ## [2.1.0]
 
 ### Added

@@ -91,7 +91,7 @@ Each only picks; what runs afterwards is an ordinary git or kill command.
 | `gb` | switch branch - local and remote, newest first, the log as the preview |
 | `gs` | browse stashes; Enter applies, ctrl-p pops, ctrl-x drops (not defined where Ghostscript owns `gs`) |
 | `fkill [signal]` | pick some of your own processes and signal them, TERM by default |
-| `cheat` | search the `tools` list, preview its tldr page, put the command on the prompt |
+| `cheat` | search the `tools` list, preview its `--help`, put the command on the prompt |
 | `ports [filter] [signal]` | listening TCP ports and who owns them - a number filters by port, a word by process name; with fzf, Enter signals the picked owners, TERM by default. `lsof` where installed, else `ss`; without sudo only your own processes are named |
 
 ## Choosing packages

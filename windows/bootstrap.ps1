@@ -89,7 +89,7 @@ function Invoke-Native {
 # The parameters as given, for the rerun after an update.
 $script:BoundParams = @{} + $PSBoundParameters
 
-$script:BootstrapVersion = '2.1.0'
+$script:BootstrapVersion = '2.2.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -106,15 +106,11 @@ $script:BatSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'bat'
 $script:RipgrepSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'ripgrep'
 $script:KubecolorSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'kubecolor'
 $script:YtDlpSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'yt-dlp'
-$script:TealdeerSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'tealdeer'
 $script:CarapaceSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'carapace'
 $script:K9sSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'k9s'
 $script:LazygitSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'lazygit'
 $script:LazydockerSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'lazydocker'
-$script:YaziSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'yazi'
 $script:EzaSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'eza'
-$script:GlowSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'glow'
-$script:LnavSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'lnav'
 $script:TrippySource = Join-Path (Split-Path $script:ToolRoot -Parent) 'trippy'
 $script:NvimSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'nvim'
 # The Neovim config files the repo owns, relative to the nvim directory; the
@@ -571,7 +567,7 @@ foreach (`$c in @($list)) {
 `$out += "env:RIPGREP_CONFIG_PATH=`$env:RIPGREP_CONFIG_PATH"
 `$prompt = Get-Command prompt -CommandType Function -ErrorAction SilentlyContinue
 `$out += "fn:prompt=`$(if (`$prompt) { `$prompt.Definition -replace '\s+', ' ' } else { '' })"
-foreach (`$n in 'tools', 'gb', 'gs', 'fkill', 'cheat', 'y', 'ports') {
+foreach (`$n in 'tools', 'gb', 'gs', 'fkill', 'cheat', 'ports') {
     `$out += "cmd:`$n=`$(if (Get-Command `$n -ErrorAction SilentlyContinue) { 1 } else { 0 })"
 }
 `$out += "tools:rows=`$(if (`$global:ToolsRows) { @(`$global:ToolsRows).Count } else { 0 })"
@@ -706,14 +702,6 @@ function Test-DoctorWorkflow {
         else { Add-DoctorBroken 'tools' 'defined, but its list is empty' }
     }
 
-    if (-not (Get-ProbeValue 'resolve:yazi')) {
-        Add-DoctorNote 'y' 'yazi is not on PATH, so the y wrapper is not defined'
-    } elseif ((Get-ProbeValue 'cmd:y') -eq '1') {
-        Add-DoctorOk 'y' 'defined'
-    } else {
-        Add-DoctorBroken 'y' 'not defined in a profile-loaded shell'
-    }
-
     # ports needs nothing on PATH: without fzf it prints the table.
     if ((Get-ProbeValue 'cmd:ports') -eq '1') { Add-DoctorOk 'ports' 'defined' }
     else { Add-DoctorBroken 'ports' 'not defined in a profile-loaded shell' }
@@ -733,27 +721,6 @@ function Test-DoctorWorkflow {
         Add-DoctorOk 'gs' 'defined'
     } else {
         Add-DoctorBroken 'gs' 'not defined in a profile-loaded shell'
-    }
-}
-
-# tealdeer fills its page cache on first use (auto_update in tealdeer/config.toml),
-# so an empty cache heals itself and is a note; staleness is worth saying. The
-# directory is read, never asked: even `tldr --show-paths` downloads the pages
-# when they are missing, and a doctor that changes the machine is not one.
-function Test-DoctorTldrCache {
-    if (-not (Get-Command tldr -ErrorAction SilentlyContinue)) { return }
-    $dir = Join-Path $env:LOCALAPPDATA 'tealdeer\cache\tldr-pages'
-    if (-not (Test-Path -LiteralPath $dir)) {
-        Add-DoctorNote 'tldr pages' 'not downloaded yet - the first tldr fetches them'
-        return
-    }
-    $pages = @(Get-ChildItem -LiteralPath $dir -Filter '*.md' -Recurse -File -ErrorAction SilentlyContinue)
-    if ($pages.Count -eq 0) {
-        Add-DoctorNote 'tldr pages' "$dir is empty - the next tldr fetches them"
-    } elseif (-not ($pages | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-30) } | Select-Object -First 1)) {
-        Add-DoctorNote 'tldr pages' ('{0} pages, none newer than 30 days - the next tldr refreshes them' -f $pages.Count)
-    } else {
-        Add-DoctorOk 'tldr pages' ('{0} pages in {1}' -f $pages.Count, $dir)
     }
 }
 
@@ -836,76 +803,8 @@ function Test-DoctorThemes {
             -Target (Join-Path (Get-LazydockerConfigDir) 'config.yml')
     }
 
-    if (Get-Command yazi -ErrorAction SilentlyContinue) {
-        $yaziHome = Get-YaziConfigHome
-        $pkg = Join-Path $yaziHome 'flavors\catppuccin-mocha.yazi'
-        Test-DoctorFile -Label 'yazi flavor' `
-            -Source (Join-Path $script:YaziSource 'flavors\catppuccin-mocha.yazi\flavor.toml') `
-            -Target (Join-Path $pkg 'flavor.toml')
-        Test-DoctorFile -Label 'yazi tmTheme' `
-            -Source (Join-Path $script:YaziSource 'flavors\catppuccin-mocha.yazi\tmtheme.xml') `
-            -Target (Join-Path $pkg 'tmtheme.xml')
-        $themeFile = Join-Path $yaziHome 'theme.toml'
-        $flavor = Get-YaziFlavor -File $themeFile
-        if ($flavor -eq 'catppuccin-mocha') {
-            Add-DoctorOk 'yazi dark flavor' 'catppuccin-mocha'
-        } elseif (-not $flavor) {
-            Add-DoctorBroken 'yazi dark flavor' ('unset in {0} - nothing tells yazi to use the flavor' -f $themeFile)
-        } else {
-            Add-DoctorNote 'yazi dark flavor' ("{0} - yours, not the repo's" -f $flavor)
-        }
-        Test-DoctorFile -Label 'yazi config' -Source (Join-Path $script:YaziSource 'yazi.toml') `
-            -Target (Join-Path $yaziHome 'yazi.toml')
-    }
-
     if (Get-Command eza -ErrorAction SilentlyContinue) {
         Test-DoctorFile -Label 'eza theme' -Source (Join-Path $script:EzaSource 'theme.yml') -Target (Get-EzaThemeFile)
-    }
-
-    if (Get-Command glow -ErrorAction SilentlyContinue) {
-        $hasConfig = Test-ToolHasConfig 'glow'
-        $glowCfg = if ($hasConfig) { Get-GlowConfigFile } else { '' }
-        if (-not $hasConfig) {
-            Add-DoctorBroken 'glow theme' 'not deployed - glow has no config directory yet'
-        } elseif (-not $glowCfg) {
-            Add-DoctorBroken 'glow style' 'glow --help named no config file'
-        } else {
-            $glowTheme = Join-Path (Split-Path $glowCfg -Parent) 'catppuccin-mocha.json'
-            Test-DoctorFile -Label 'glow theme' -Source (Join-Path $script:GlowSource 'catppuccin-mocha.json') -Target $glowTheme
-            $style = ''
-            if ((Test-Path -LiteralPath $glowCfg) -and (Get-Command yq -ErrorAction SilentlyContinue)) {
-                $style = (Invoke-Native { & yq '.style' $glowCfg 2>$null } | Select-Object -First 1)
-                if ($null -eq $style -or $style -eq 'null') { $style = '' }
-            }
-            if ($style -eq $glowTheme) {
-                Add-DoctorOk 'glow style' 'catppuccin-mocha.json'
-            } elseif (-not $style -or $style -eq 'auto') {
-                Add-DoctorBroken 'glow style' ('unset in {0} - nothing tells glow to use the theme' -f $glowCfg)
-            } else {
-                Add-DoctorNote 'glow style' ("{0} - yours, not the repo's" -f $style)
-            }
-        }
-    }
-
-    if (Get-Command lnav -ErrorAction SilentlyContinue) {
-        $hasConfig = Test-ToolHasConfig 'lnav'
-        $lnavDir = if ($hasConfig) { Get-LnavConfigDir } else { '' }
-        if (-not $hasConfig) {
-            Add-DoctorBroken 'lnav theme' 'not deployed - lnav has no config directory yet'
-        } elseif (-not $lnavDir) {
-            Add-DoctorBroken 'lnav theme' 'lnav -h named no config directory'
-        } else {
-            Test-DoctorFile -Label 'lnav theme' -Source (Join-Path $script:LnavSource 'catppuccin-mocha.json') `
-                -Target (Join-Path $lnavDir 'configs\installed\catppuccin-mocha.json')
-            $theme = Get-LnavTheme
-            if ($theme -eq 'catppuccin-mocha') {
-                Add-DoctorOk 'lnav /ui/theme' 'catppuccin-mocha'
-            } elseif (-not $theme -or $theme -eq 'default') {
-                Add-DoctorBroken 'lnav /ui/theme' 'default - nothing tells lnav to use the theme'
-            } else {
-                Add-DoctorNote 'lnav /ui/theme' ("{0} - yours, not the repo's" -f $theme)
-            }
-        }
     }
 }
 
@@ -915,8 +814,6 @@ function Test-DoctorConfig {
            Target = (Join-Path $env:USERPROFILE '.config\starship.toml') }
         @{ Label = 'atuin config'; Source = (Join-Path $script:AtuinSource 'config.toml')
            Target = (Join-Path $env:USERPROFILE '.config\atuin\config.toml') }
-        @{ Label = 'tealdeer config'; Source = (Join-Path $script:TealdeerSource 'config.toml')
-           Target = (Join-Path $env:APPDATA 'tealdeer\config\config.toml') }
     )
     foreach ($pair in $pairs) {
         Test-DoctorFile -Label $pair.Label -Source $pair.Source -Target $pair.Target
@@ -962,7 +859,6 @@ function Test-DoctorConfig {
             Test-DoctorFile -Label $label -Source $tool.Source -Target $paths.Target
         }
     }
-    Test-DoctorTldrCache
 }
 
 function Test-DoctorSchedule {
@@ -1492,8 +1388,8 @@ function Set-YamlKey {
     # PowerShell before 7.3 mangles embedded quotes on their way to a native
     # command, and ConvertTo-NativeArgument is not defined this early.
     #
-    # -Default is a value that counts as unset: glow writes style "auto" into
-    # the glow.yml it creates, and nobody chose that.
+    # -Default is a value that counts as unset: k9s writes every key at its
+    # default into the config.yaml it creates, and nobody chose that.
     param(
         [string]$File,
         [string]$Key,
@@ -1548,13 +1444,6 @@ function Get-KubecolorConfigFile {
     return (Join-Path $env:USERPROFILE '.kube\color.yaml')
 }
 
-function Get-YaziConfigHome {
-    # Yazi's own order: YAZI_CONFIG_HOME wins, otherwise %APPDATA%\yazi\config.
-    # Not the XDG path the zsh platforms use - on Windows yazi does not read it.
-    if ($env:YAZI_CONFIG_HOME) { return $env:YAZI_CONFIG_HOME }
-    return (Join-Path $env:APPDATA 'yazi\config')
-}
-
 function Get-EzaThemeFile {
     # eza has no key naming a theme: it reads theme.yml whenever the file is
     # there. EZA_CONFIG_DIR wins, otherwise Rust's config dir, which on Windows
@@ -1563,52 +1452,14 @@ function Get-EzaThemeFile {
     return (Join-Path $env:APPDATA 'eza\theme.yml')
 }
 
-function Get-GlowConfigFile {
-    # The glow.yml glow reads, as glow names it in the default of its --config
-    # flag. glow names the file only once it exists, and any run creates the
-    # default one - style "auto" and nothing of anybody's - so a first call
-    # that names nothing is followed by a second.
-    foreach ($attempt in 1, 2) {
-        $line = @(Invoke-Native { & glow --help 2>$null }) | Where-Object { $_ -match '--config string.*\(default (.+)\)\s*$' } |
-            Select-Object -First 1
-        if ($line -and $line -match '\(default (.+)\)\s*$') { return $matches[1].Trim() }
-    }
-    return ''
-}
-
-function Get-LnavConfigDir {
-    # Where lnav keeps its config, from lnav -h: the line after the one that
-    # introduces it, behind a folder glyph. The Windows lnav is an MSYS2 build
-    # and names the place as it sees it, /cygdrive/c/Users/...; Join-Path
-    # would hang that off the root of the current drive.
-    $lines = @(Invoke-Native { & lnav -h 2>&1 } | ForEach-Object { "$_" })
-    for ($i = 0; $i -lt $lines.Count - 1; $i++) {
-        if ($lines[$i] -match 'format files are stored in') {
-            $dir = ($lines[$i + 1] -replace '^[^A-Za-z\\/]*', '').Trim()
-            if ($dir -match '^/(?:cygdrive/)?([A-Za-z])(/.*)?$') {
-                $dir = '{0}:{1}' -f $matches[1].ToUpper(), ($(if ($matches[2]) { $matches[2] } else { '/' }) -replace '/', '\')
-            }
-            return $dir
-        }
-    }
-    return ''
-}
-
 function Test-ToolHasConfig {
-    # Whether glow, lnav or k9s has a config directory yet, in any of the
-    # places it looks. Each creates one the first time it runs - --help, -h and
-    # `k9s info` included - so the doctor, which changes nothing, asks the tool
-    # only once this says yes. The places are the tools' own on Windows: glow's
-    # go-app-paths, lnav's APPDATA branch, and k9s's adrg/xdg.
+    # Whether k9s has a config directory yet, in any of the places it looks.
+    # It creates one the first time it runs - `k9s info` included - so the
+    # doctor, which changes nothing, asks it only once this says yes. The
+    # places are k9s's own on Windows, from adrg/xdg.
     param([string]$Tool)
     $xdg = $env:XDG_CONFIG_HOME
     $dirs = switch ($Tool) {
-        'glow' {
-            $env:GLOW_CONFIG_HOME
-            if ($xdg) { Join-Path $xdg 'glow' }
-            Join-Path $env:LOCALAPPDATA 'glow\Config'
-        }
-        'lnav' { Join-Path $env:APPDATA 'lnav' }
         'k9s' {
             $env:K9S_CONFIG_DIR
             if ($xdg) { Join-Path $xdg 'k9s' }
@@ -1619,122 +1470,6 @@ function Test-ToolHasConfig {
         if ($dir -and (Test-Path -LiteralPath $dir -PathType Container)) { return $true }
     }
     return $false
-}
-
-function Get-LnavTheme {
-    # The theme lnav is using, "default" when nobody chose one. Asked of lnav
-    # rather than read from its config.json, which lnav writes itself.
-    $line = @(Invoke-Native { & lnav -nN -c ':config /ui/theme' 2>$null }) | Where-Object { $_ -match '^/ui/theme = "(.*)"' } |
-        Select-Object -First 1
-    if ($line -and $line -match '^/ui/theme = "(.*)"') { return $matches[1] }
-    return ''
-}
-
-function Set-LnavTheme {
-    # The same rule as Set-YamlKey, with lnav as the writer: `:config` saves
-    # its own config.json. "default" is lnav's built-in and counts as unset.
-    # lnav exits 0 even when it rejects a theme, so the result is read back.
-    param([string]$Value)
-    $have = Get-LnavTheme
-    if ($have -eq $Value) {
-        Add-Result -Group 'shell' -Id 'lnav /ui/theme' -Action 'current' -Detail $Value
-        return
-    }
-    if ($have -and $have -ne 'default') {
-        Add-Result -Group 'shell' -Id 'lnav /ui/theme' -Action 'skipped' `
-            -Detail ("yours is {0} - run lnav -nN -c ':config /ui/theme {1}' to switch" -f $have, $Value)
-        return
-    }
-    if (-not $PSCmdlet.ShouldProcess('lnav', "set /ui/theme to $Value")) {
-        Add-Result -Group 'shell' -Id 'lnav /ui/theme' -Action 'would-install' -Detail $Value
-        return
-    }
-    Invoke-Native { & lnav -nN -c ":config /ui/theme $Value" *> $null }
-    $have = Get-LnavTheme
-    if ($have -eq $Value) {
-        Add-Result -Group 'shell' -Id 'lnav /ui/theme' -Action 'installed' -Detail $Value
-    } else {
-        Add-Result -Group 'shell' -Id 'lnav /ui/theme' -Action 'failed' `
-            -Detail ('lnav did not take {0} - still {1}' -f $Value, $(if ($have) { $have } else { 'unset' }))
-    }
-}
-
-function Get-YaziFlavor {
-    # The dark flavor named in theme.toml, '' when the file, the table or the
-    # key is absent. The same two spellings the zsh platforms read: the
-    # [flavor] table yazi documents, and a dotted flavor.dark before any table
-    # - miss the second and Set-YaziFlavor would append a table that is
-    # already there, which is a duplicate key and a file yazi refuses to load.
-    param([string]$File)
-    if (-not (Test-Path -LiteralPath $File)) { return '' }
-    $table = $false
-    $top = $true
-    foreach ($line in @(Get-Content -LiteralPath $File)) {
-        if ($line -match '^\s*\[') {
-            $table = ($line -match '^\s*\[flavor\]\s*(#.*)?$')
-            $top = $false
-            continue
-        }
-        $raw = ''
-        if ($top -and $line -match '^\s*flavor\.dark\s*=\s*(.+)$') { $raw = $matches[1] }
-        elseif ($table -and $line -match '^\s*dark\s*=\s*(.+)$') { $raw = $matches[1] }
-        if ($raw) { return ($raw -replace '\s*#.*$', '').Trim().Trim('"', "'") }
-    }
-    return ''
-}
-
-function Set-YaziFlavor {
-    # The same rule as Set-YamlKey, for TOML: set the key only when it is
-    # unset. Three shapes to land in - no file, a [flavor] table the key is
-    # missing from, and a file with no such table.
-    param(
-        [string]$File,
-        [string]$Value,
-        [string]$Label
-    )
-    $have = Get-YaziFlavor -File $File
-    if ($have -eq $Value) {
-        Add-Result -Group 'shell' -Id $Label -Action 'current' -Detail $Value
-        return
-    }
-    if ($have) {
-        Add-Result -Group 'shell' -Id $Label -Action 'skipped' `
-            -Detail ('yours is {0} - set dark to {1} by hand to switch' -f $have, $Value)
-        return
-    }
-    $detail = 'dark = {0} in {1}' -f $Value, $File
-    if (-not $PSCmdlet.ShouldProcess($File, 'set the dark flavor')) {
-        Add-Result -Group 'shell' -Id $Label -Action 'would-install' -Detail $detail
-        return
-    }
-    New-Item -ItemType Directory -Path (Split-Path $File -Parent) -Force | Out-Null
-    $key = 'dark = "{0}"' -f $Value
-    $action = 'upgraded'
-    if (-not (Test-Path -LiteralPath $File)) {
-        $out = @('[flavor]', $key)
-        $action = 'installed'
-    } else {
-        $out = New-Object System.Collections.Generic.List[string]
-        $inserted = $false
-        foreach ($line in @(Get-Content -LiteralPath $File)) {
-            $out.Add($line)
-            if (-not $inserted -and $line -match '^\s*\[flavor\]\s*(#.*)?$') {
-                $out.Add($key)
-                $inserted = $true
-            }
-        }
-        if (-not $inserted) {
-            $out.Add('')
-            $out.Add('[flavor]')
-            $out.Add($key)
-        }
-        $out = $out.ToArray()
-    }
-    # WriteAllLines rather than Set-Content: -Encoding UTF8 writes a BOM under
-    # PowerShell 5.1, and a BOM is not something a TOML reader has to accept.
-    $full = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($File)
-    [System.IO.File]::WriteAllLines($full, [string[]]$out, (New-Object System.Text.UTF8Encoding($false)))
-    Add-Result -Group 'shell' -Id $Label -Action $action -Detail $detail
 }
 
 function Get-K9sPaths {
@@ -2921,18 +2656,6 @@ if ($SkipShell) {
         -Target (Join-Path $env:USERPROFILE '.config\atuin\themes\catppuccin-mocha.toml') `
         -Group 'shell' -Label 'atuin theme'
 
-    # tealdeer config: turns on auto_update, so the tldr pages download on first
-    # use and refresh themselves every 30 days. tldr itself is never run here -
-    # with that key set, even `tldr --show-paths` can reach the network, so the
-    # path is tealdeer's own rule: %APPDATA%\tealdeer\config.
-    if (Get-Command tldr -ErrorAction SilentlyContinue) {
-        Deploy-ManagedFile -Source (Join-Path $script:TealdeerSource 'config.toml') `
-            -Target (Join-Path $env:APPDATA 'tealdeer\config\config.toml') `
-            -Group 'shell' -Label 'tealdeer config'
-    } else {
-        Add-Result -Group 'shell' -Id 'tealdeer config' -Action 'missing' -Detail 'tldr is not installed'
-    }
-
     # ripgrep config: smart-case, dotfiles searched, .git left out. rg reads it
     # through RIPGREP_CONFIG_PATH, which profile.ps1 sets when the file exists.
     if (Get-Command rg -ErrorAction SilentlyContinue) {
@@ -3036,7 +2759,7 @@ if ($SkipShell) {
 
 
     # k9s skin, and lazygit's config. The two themes this platform shares with
-    # Linux and macOS - there is no btop here, so no btop theme either.
+    # Linux and macOS.
     #
     # The skin file is the repo's; the key that names it is not, because k9s
     # rewrites config.yaml on every quit. lazygit has no separate theme file at
@@ -3115,30 +2838,6 @@ if ($SkipShell) {
         Add-Result -Group 'shell' -Id 'lazydocker config' -Action 'missing' -Detail 'lazydocker is not installed'
     }
 
-    # yazi's flavor. A flavor is a directory, not a file - flavor.toml and the
-    # tmTheme the preview pane highlights code with - so the package is copied
-    # piece by piece. theme.toml is not the repo's: it is where your own
-    # overrides live, so the key naming the flavor is set only when unset.
-    if (Get-Command yazi -ErrorAction SilentlyContinue) {
-        $yaziHome = Get-YaziConfigHome
-        $yaziPkg = Join-Path $yaziHome 'flavors\catppuccin-mocha.yazi'
-        Deploy-ManagedFile -Source (Join-Path $script:YaziSource 'flavors\catppuccin-mocha.yazi\flavor.toml') `
-            -Target (Join-Path $yaziPkg 'flavor.toml') `
-            -Group 'shell' -Label 'yazi flavor' -Marker 'managed by the bootstrap'
-        Deploy-ManagedFile -Source (Join-Path $script:YaziSource 'flavors\catppuccin-mocha.yazi\tmtheme.xml') `
-            -Target (Join-Path $yaziPkg 'tmtheme.xml') `
-            -Group 'shell' -Label 'yazi tmTheme' -Marker 'managed by the bootstrap'
-        Set-YaziFlavor -File (Join-Path $yaziHome 'theme.toml') -Value 'catppuccin-mocha' -Label 'yazi dark flavor'
-        # yazi.toml is the repo's whole, the way lazygit's config.yml is: yazi
-        # never writes to it, and it carries only the keys that differ from
-        # the preset.
-        Deploy-ManagedFile -Source (Join-Path $script:YaziSource 'yazi.toml') `
-            -Target (Join-Path $yaziHome 'yazi.toml') `
-            -Group 'shell' -Label 'yazi config' -Marker 'managed by the bootstrap'
-    } else {
-        Add-Result -Group 'shell' -Id 'yazi flavor' -Action 'missing' -Detail 'yazi is not installed'
-    }
-
     # eza's theme. There is no key that names it, so theme.yml is the repo's,
     # as lazygit's config.yml is, and the usual .bak keeps what was there.
     if (Get-Command eza -ErrorAction SilentlyContinue) {
@@ -3146,47 +2845,6 @@ if ($SkipShell) {
             -Group 'shell' -Label 'eza theme' -Marker 'managed by the bootstrap'
     } else {
         Add-Result -Group 'shell' -Id 'eza theme' -Action 'missing' -Detail 'eza is not installed'
-    }
-
-    # glow's theme and lnav's. The JSON is the repo's; the key naming it is
-    # not, and is set only when unset. -WhatIf asks neither tool anything: any
-    # glow or lnav run, --help included, writes its default config first.
-    if (-not (Get-Command glow -ErrorAction SilentlyContinue)) {
-        Add-Result -Group 'shell' -Id 'glow theme' -Action 'missing' -Detail 'glow is not installed'
-    } elseif ($WhatIfPreference) {
-        Add-Result -Group 'shell' -Id 'glow theme' -Action 'would-install' `
-            -Detail 'catppuccin-mocha.json beside glow.yml; style and width set if unset'
-    } else {
-        $glowCfg = Get-GlowConfigFile
-        if (-not $glowCfg) {
-            Add-Result -Group 'shell' -Id 'glow theme' -Action 'failed' -Detail 'glow --help named no config file'
-        } else {
-            $glowTheme = Join-Path (Split-Path $glowCfg -Parent) 'catppuccin-mocha.json'
-            Deploy-ManagedFile -Source (Join-Path $script:GlowSource 'catppuccin-mocha.json') -Target $glowTheme `
-                -Group 'shell' -Label 'glow theme' -Marker 'managed by the bootstrap'
-            Set-YamlKey -File $glowCfg -Key '.style' -Value $glowTheme -Label 'glow style' -Default 'auto'
-            # glow writes width: 80 into the glow.yml it creates, so that
-            # counts as unset. pager stays off here, unlike Linux and macOS:
-            # glow pages through less, which Windows does not have on PATH.
-            Set-YamlKey -File $glowCfg -Key '.width' -Value '100' -Label 'glow width' -Default '80'
-        }
-    }
-
-    if (-not (Get-Command lnav -ErrorAction SilentlyContinue)) {
-        Add-Result -Group 'shell' -Id 'lnav theme' -Action 'missing' -Detail 'lnav is not installed'
-    } elseif ($WhatIfPreference) {
-        Add-Result -Group 'shell' -Id 'lnav theme' -Action 'would-install' `
-            -Detail 'catppuccin-mocha.json in configs\installed, and /ui/theme set if default'
-    } else {
-        $lnavDir = Get-LnavConfigDir
-        if (-not $lnavDir) {
-            Add-Result -Group 'shell' -Id 'lnav theme' -Action 'failed' -Detail 'lnav -h named no config directory'
-        } else {
-            Deploy-ManagedFile -Source (Join-Path $script:LnavSource 'catppuccin-mocha.json') `
-                -Target (Join-Path $lnavDir 'configs\installed\catppuccin-mocha.json') `
-                -Group 'shell' -Label 'lnav theme' -Marker 'managed by the bootstrap'
-            Set-LnavTheme -Value 'catppuccin-mocha'
-        }
     }
 
     $editions = @(
