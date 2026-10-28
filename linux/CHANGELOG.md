@@ -15,6 +15,32 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0]
+
+### Removed
+
+- **The libraries for building Python.** `libssl-dev`, `zlib1g-dev`,
+  `libbz2-dev`, `libreadline-dev`, `libsqlite3-dev`, `llvm`, `libncurses-dev`,
+  `tk-dev`, `libffi-dev` and `liblzma-dev` were there for pyenv to compile
+  CPython. mise, which replaced pyenv, installs prebuilt CPython, so nothing
+  builds one. `build-essential`, `xz-utils` and `zstd` stay. Installed
+  packages are left alone - the bootstrap never uninstalls - and
+  `sudo apt-mark auto <those packages> && sudo apt autoremove` cleans up a
+  machine.
+
+### Changed
+
+- **Ghostty's scrollback key is `scrollback-limit-bytes` on 1.4 and later.**
+  Ghostty 1.4 renamed `scrollback-limit`; the old name still works but is
+  deprecated. The community .deb is still on 1.3, which does not know the new
+  name, so the bootstrap reads `ghostty +version` and writes whichever key the
+  installed Ghostty understands. The value is unchanged.
+- **`copy-on-select` is `both`.** Ghostty 1.4 narrowed `clipboard` to the
+  system clipboard only, so selecting text would stop filling the primary
+  selection that middle-click pastes. `both` keeps both. Ghostty before 1.4
+  has no `both`, so there the bootstrap writes `clipboard`, which meant the
+  same thing.
+
 ## [2.2.0]
 
 ### Removed

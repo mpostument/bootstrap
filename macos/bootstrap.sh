@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='2.2.0'
+BOOTSTRAP_VERSION='2.3.0'
 BOOTSTRAP_PLATFORM='macos'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -2157,10 +2157,24 @@ else
     result 'skipped' 'brew casks' "$n_casks outdated - --skip-cask-upgrade"
   elif [[ "$DRY_RUN" == "yes" ]]; then
     result 'would-upgrade' 'brew casks' "$n_casks outdated: $(tr '\n' ' ' <<< "$outdated_casks")"
-  elif "$BREW" upgrade --cask $outdated_casks >"$BREW_LOG" 2>&1; then
-    result 'upgraded' 'brew casks' "$n_casks app(s)"
   else
-    result 'failed' 'brew casks' "brew upgrade --cask: $(brew_error "$BREW_LOG")"
+    # One cask at a time, each named before brew starts. A cask whose
+    # installer needs root makes sudo ask for the macOS password, and with
+    # brew's output in the log that prompt is a bare "Password:" - several of
+    # them, since sudo cannot reuse a ticket across brew's tty-less installer
+    # runs. The line above each says which app is asking. It also keeps one
+    # failing cask from failing the rest.
+    for cask in $outdated_casks; do
+      if [[ "$RUN_INTERACTIVE" == yes ]]; then
+        printf '  %s%-14s%s%-42s %s%s%s\n' "$C_DIM" 'upgrading' "$C_RESET" "$cask" \
+          "$C_DIM" 'its installer may ask for your macOS password' "$C_RESET"
+      fi
+      if "$BREW" upgrade --cask "$cask" >"$BREW_LOG" 2>&1; then
+        result 'upgraded' "$cask" 'cask'
+      else
+        result 'failed' "$cask" "brew upgrade --cask: $(brew_error "$BREW_LOG")"
+      fi
+    done
   fi
 
   self_updating="$(comm -13 \
@@ -3291,7 +3305,7 @@ else
   chmod 0644 "$NEW_GHOSTTY"
   {
     echo
-    echo "scrollback-limit = ${GHOSTTY_SCROLLBACK_BYTES}"
+    echo "scrollback-limit-bytes = ${GHOSTTY_SCROLLBACK_BYTES}"
     echo
     echo "theme = ${GHOSTTY_THEME}"
     echo

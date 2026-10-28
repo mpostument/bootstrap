@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='2.2.0'
+BOOTSTRAP_VERSION='2.3.0'
 BOOTSTRAP_PLATFORM='linux'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -4242,16 +4242,26 @@ else
     mkdir -p "$GHOSTTY_DIR"
     mktemp_tracked NEW_GHOSTTY "${GHOSTTY_CONF}.XXXXXX"
     chmod 0644 "$NEW_GHOSTTY"
+    # 1.4 renamed scrollback-limit and added copy-on-select = both, which is
+    # what clipboard meant before it. The community .deb can lag behind 1.4.
+    ghostty_ver="$(ghostty +version 2>/dev/null | sed -n 's/^Ghostty \([0-9.]*\).*/\1/p')"
+    ghostty_copy_on_select="$GHOSTTY_COPY_ON_SELECT"
+    if printf '%s\n' 1.4.0 "$ghostty_ver" | sort -V -C; then
+      ghostty_scrollback_key='scrollback-limit-bytes'
+    else
+      ghostty_scrollback_key='scrollback-limit'
+      if [[ "$ghostty_copy_on_select" == "both" ]]; then ghostty_copy_on_select='clipboard'; fi
+    fi
     {
       echo
-      echo "scrollback-limit = ${GHOSTTY_SCROLLBACK_BYTES}"
+      echo "${ghostty_scrollback_key} = ${GHOSTTY_SCROLLBACK_BYTES}"
       echo
       echo "theme = ${GHOSTTY_THEME}"
       echo
       [[ -n "${GHOSTTY_FONT_FAMILY:-}" ]] && echo "font-family = ${GHOSTTY_FONT_FAMILY}"
       echo "font-size = ${GHOSTTY_FONT_SIZE}"
       echo
-      echo "copy-on-select = ${GHOSTTY_COPY_ON_SELECT}"
+      echo "copy-on-select = ${ghostty_copy_on_select}"
       echo
       echo "shell-integration-features = ${GHOSTTY_SHELL_INTEGRATION_FEATURES}"
       echo

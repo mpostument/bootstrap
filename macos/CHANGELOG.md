@@ -15,6 +15,35 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0]
+
+### Removed
+
+- **The libraries for building Python.** `openssl@3`, `readline`, `sqlite3`,
+  `zlib`, `tcl-tk` and `libffi` were there for pyenv to compile CPython. mise,
+  which replaced pyenv, installs prebuilt CPython, so nothing builds one. `xz`
+  stays, as a command. Formulae that need these libraries still pull them in
+  as dependencies. Installed ones are left alone - the bootstrap never
+  uninstalls - and
+  `brew tab --no-installed-on-request openssl@3 readline sqlite zlib tcl-tk libffi && brew autoremove`
+  cleans up a machine: it drops the ones nothing else depends on.
+
+### Fixed
+
+- **Cask upgrades say which app wants your password.** All outdated casks
+  were upgraded in one `brew upgrade --cask` with its output in the log, so a
+  cask whose installer needs root showed a bare `Password:` - once per such
+  cask, since sudo cannot reuse its ticket across brew's installer runs - and
+  nothing said what was asking. Casks now upgrade one at a time, each named on
+  an `upgrading` line before brew starts, and each gets its own result, so one
+  failing cask no longer marks the rest failed.
+
+### Changed
+
+- **Ghostty's scrollback key is `scrollback-limit-bytes`.** Ghostty 1.4
+  renamed `scrollback-limit`; the old name still works but is deprecated. The
+  value is unchanged.
+
 ## [2.2.0]
 
 ### Removed
