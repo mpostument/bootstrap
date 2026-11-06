@@ -20,6 +20,37 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [2.3.0]
+
+### Removed
+
+- **ripgrep.** The `grep` function no longer calls rg. Windows has no grep of
+  its own, so it now runs the GNU grep Git for Windows ships in `usr\bin`,
+  with `--color=auto`, and is defined only when no `grep.exe` is on PATH
+  already. The `ripgrep/` config went with it, along with its deploy step,
+  the `RIPGREP_CONFIG_PATH` setting and doctor check, and their tests.
+  ripgrep and `%APPDATA%\ripgrep` are left alone - the bootstrap never
+  uninstalls - and `winget uninstall BurntSushi.ripgrep.MSVC` then deleting
+  `%APPDATA%\ripgrep` cleans up a machine.
+- **sd.** Use `sed`: a new `sed` function runs the GNU sed from Git for
+  Windows' `usr\bin`, the same way `grep` does, when no `sed.exe` is on
+  PATH. `winget uninstall chmln.sd` cleans up a machine.
+- **memo.** mpv has kept its own watch history since 0.40, so the
+  recently-played menu on `h` now comes from `save-watch-history=yes` in
+  `mpv.conf` and mpv's `select/select-watch-history`. The installed script
+  keeps running until it is removed: delete `memo.lua` and `.memo-version`
+  from `%APPDATA%\mpv\scripts` and `%APPDATA%\mpv` respectively. Its old
+  history does not carry over.
+
+### Added
+
+- **Always on top for mpv.** A pin button on the uosc control bar, from a new
+  managed `script-opts/uosc.conf`, toggles mpv's `ontop` property so the window
+  stays above the others. `Shift+T` - mpv's own default key for it - now also
+  has a menu entry, "Always on top". The `ontop-playback` script from mpv's
+  own `TOOLS/lua` comes with it: while paused, a pinned window stops covering
+  the others, and it is pinned again when playback resumes.
+
 ## [2.2.0]
 
 ### Removed

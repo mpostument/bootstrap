@@ -15,6 +15,20 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0]
+
+### Removed
+
+- **ripgrep.** `grep` is plain GNU grep again, aliased to
+  `grep --color=auto`. The release binary and the `ripgrep/` config went with
+  it, along with its deploy phase, the `RIPGREP_CONFIG_PATH` export and doctor
+  check, and their tests. Both are left alone on a machine - the bootstrap
+  never uninstalls - and `rm ~/.local/bin/rg && rm -r ~/.config/ripgrep`
+  cleans one up.
+- **sd.** `sed` does the same job and is already on every machine. The
+  release binary is left in place; deleting `~/.local/bin/sd` cleans up a
+  machine.
+
 ## [2.3.0]
 
 ### Removed

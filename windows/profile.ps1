@@ -112,7 +112,7 @@ if (Get-Command atuin -ErrorAction SilentlyContinue) {
     Set-PSReadLineKeyHandler -Key DownArrow -Function HistorySearchForward
 }
 
-# Modern CLI bundle -- nicer cat/ls/find/grep
+# Modern CLI bundle -- nicer cat/ls/find
 # bat: https://github.com/sharkdp/bat | eza: https://github.com/eza-community/eza
 if (Get-Command bat -ErrorAction SilentlyContinue) {
     Remove-Item Alias:cat -Force -ErrorAction SilentlyContinue
@@ -136,20 +136,30 @@ if (Get-Command eza -ErrorAction SilentlyContinue) {
 if (Get-Command fd -ErrorAction SilentlyContinue) {
     function find { fd @args }
 }
-if (Get-Command rg -ErrorAction SilentlyContinue) {
-    # Without the $input hand-off, `kubectl get pods | grep x` searches the
-    # current directory instead of the piped text.
+# Windows has no grep or sed; Git for Windows ships the GNU ones in usr\bin,
+# which is not on PATH unless Git was installed with its Unix tools there.
+$GitUsrBin = Get-Command git -CommandType Application -ErrorAction SilentlyContinue |
+    Select-Object -First 1 |
+    ForEach-Object { Join-Path (Split-Path (Split-Path $_.Source -Parent) -Parent) 'usr\bin' }
+if ($GitUsrBin -and -not (Get-Command grep -CommandType Application -ErrorAction SilentlyContinue) -and
+    (Test-Path -LiteralPath (Join-Path $GitUsrBin 'grep.exe'))) {
+    $GitGrep = Join-Path $GitUsrBin 'grep.exe'
+    # Without the $input hand-off, `kubectl get pods | grep x` waits for a
+    # file instead of reading the piped text. Same for sed below.
     function grep {
-        if ($MyInvocation.ExpectingInput) { $input | rg --max-columns=0 @args }
-        else { rg --max-columns=0 @args }
+        if ($MyInvocation.ExpectingInput) { $input | & $GitGrep --color=auto @args }
+        else { & $GitGrep --color=auto @args }
     }
-    # ripgrep reads a config file only when this names one; bootstrap.ps1
-    # deploys ripgrep/config there. Set per session, not as a user variable:
-    # an editor's own bundled rg would read that one too.
-    $rgConfig = Join-Path $env:APPDATA 'ripgrep\config'
-    if (Test-Path -LiteralPath $rgConfig) { $env:RIPGREP_CONFIG_PATH = $rgConfig }
-    Remove-Variable rgConfig
 }
+if ($GitUsrBin -and -not (Get-Command sed -CommandType Application -ErrorAction SilentlyContinue) -and
+    (Test-Path -LiteralPath (Join-Path $GitUsrBin 'sed.exe'))) {
+    $GitSed = Join-Path $GitUsrBin 'sed.exe'
+    function sed {
+        if ($MyInvocation.ExpectingInput) { $input | & $GitSed @args }
+        else { & $GitSed @args }
+    }
+}
+Remove-Variable GitUsrBin -ErrorAction SilentlyContinue
 
 if (Get-Command dust -ErrorAction SilentlyContinue) {
     function du { dust @args }
@@ -283,10 +293,6 @@ function ports {
     Write-Host ('Stop-Process -Id {0}' -f ($ids -join ','))
     Stop-Process -Id $ids
 }
-
-# sd deliberately gets no `sed` alias: its pattern and replacement syntax is not
-# sed's, so anything pasted from a script or a README would silently do
-# something else. Call it as sd. https://github.com/chmln/sd
 
 # mise -- one version manager for Python, Node, Go, Java and the Terraform
 # family, driven by a per-project .mise.toml. https://mise.jdx.dev

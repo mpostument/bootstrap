@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='2.3.0'
+BOOTSTRAP_VERSION='2.4.0'
 BOOTSTRAP_PLATFORM='macos'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -722,7 +722,7 @@ parity_row() {    # parity_row <package>
 # printf reuses its format for as many arguments as it is given, so one format
 # over a flat array of triples is the whole table. Package dimmed, command
 # green, description plain - and no escapes when the output is piped, so
-# `tools | rg fd` stays text. Every value is single-quoted, a ' inside one
+# `tools | grep fd` stays text. Every value is single-quoted, a ' inside one
 # included. The replacement goes through a quoted variable: written inline,
 # bash's handling of backslashes there garbles it, and 5.2+ would also expand
 # an & in it.
@@ -1211,7 +1211,6 @@ doctor_probe() {
     cat <<'PROBE'
 print -r -- "env:starship=${STARSHIP_SESSION_KEY:+yes}"
 print -r -- "env:JAVA_HOME=${JAVA_HOME:-}"
-print -r -- "env:RIPGREP_CONFIG_PATH=${RIPGREP_CONFIG_PATH:-}"
 print -r -- "env:PATH=${PATH}"
 print -r -- "widget:atuin=$(( $+widgets[atuin-search] ))"
 print -r -- "widget:hss=$(( $+widgets[history-substring-search-up] ))"
@@ -1601,21 +1600,6 @@ doctor_check_configs() {
     fi
   fi
 
-
-  if command -v rg >/dev/null 2>&1; then
-    doctor_config 'ripgrep config' "${SCRIPT_DIR}/../ripgrep/config" \
-                  "${XDG_CONFIG_HOME:-$HOME/.config}/ripgrep/config"
-    # rg finds no config file by itself: without the variable the file above
-    # is never read.
-    rg_cfg="$(probe_get 'env:RIPGREP_CONFIG_PATH')"
-    if [[ -z "$rg_cfg" ]]; then
-      doctor_broken 'RIPGREP_CONFIG_PATH' 'unset in a login shell, so rg reads no config'
-    elif [[ "$rg_cfg" == "${XDG_CONFIG_HOME:-$HOME/.config}/ripgrep/config" ]]; then
-      doctor_ok 'RIPGREP_CONFIG_PATH' "$rg_cfg"
-    else
-      doctor_note 'RIPGREP_CONFIG_PATH' "$rg_cfg - not the repo's config, which may be deliberate"
-    fi
-  fi
 
   if [[ "${GHOSTTY_ENABLED:-no}" == "yes" ]]; then
     [[ -r "${HOME}/.config/ghostty/config" ]] \
@@ -2642,11 +2626,7 @@ FZF_FILES
     echo 'command -v eza    >/dev/null && alias ls="eza --icons=auto --group-directories-first"'
     # eza draws trees too, so the tree package is not installed.
     echo 'command -v eza    >/dev/null && alias tree="eza --tree --icons=auto --group-directories-first"'
-    echo 'command -v rg     >/dev/null && alias grep="rg --max-columns=0"'
-    # ripgrep reads a config file only when this names one; the bootstrap
-    # deploys ripgrep/config there. Checked when the shell starts, so a
-    # missing file leaves rg on its defaults rather than warning every search.
-    echo '[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/ripgrep/config" ] && export RIPGREP_CONFIG_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/ripgrep/config"'
+    echo 'alias grep="grep --color=auto"'
     echo 'command -v fd     >/dev/null && alias find="fd"'
     echo 'command -v dust   >/dev/null && alias du="dust"'
     echo 'command -v duf    >/dev/null && alias df="duf"'
@@ -2660,9 +2640,6 @@ FZF_FILES
     echo '  alias vim="nvim" vi="nvim"'
     echo '  export EDITOR="nvim" VISUAL="nvim"'
     echo 'fi'
-    # sd deliberately gets no `sed` alias: its pattern and replacement syntax
-    # is not sed's, so anything pasted from a script would quietly do
-    # something else. It is called as sd.
     echo 'command -v zoxide >/dev/null && eval "$(zoxide init zsh)"'
     # Last binding wins, so atuin goes after fzf/fzf-tab to take Ctrl+R.
     # --disable-up-arrow keeps Up on history-substring-search, bound above.
@@ -2712,8 +2689,8 @@ FZF_FILES
 if (( $+commands[fzf] )); then
   # gb - switch branch. Local and remote, newest commit first, log as preview.
   # A remote branch is checked out with --track, which makes the local branch.
-  # `command grep`: grep is an alias for rg in this file, and aliases expand in
-  # a function body when it is defined.
+  # `command grep`: grep is an alias in this file, and aliases expand in a
+  # function body when it is defined.
   gb() {
     git rev-parse --git-dir >/dev/null 2>&1 || { print -u2 'gb: not a git repository'; return 1; }
     local pick
@@ -2982,16 +2959,6 @@ else
   else
     result 'failed' 'bat cache' 'run by hand: bat cache --build'
   fi
-fi
-
-# ripgrep config - smart-case, dotfiles searched, .git left out. rg reads it
-# through RIPGREP_CONFIG_PATH, which the zsh fragment exports.
-phase 'ripgrep config'
-if ! command -v rg >/dev/null 2>&1; then
-  result 'missing' 'ripgrep config' 'ripgrep is not installed'
-else
-  deploy_config "${SCRIPT_DIR}/../ripgrep/config" \
-                "${XDG_CONFIG_HOME:-$HOME/.config}/ripgrep/config" 'ripgrep config'
 fi
 
 # Carapace specs - completion for CLIs carapace has no completer of its own for

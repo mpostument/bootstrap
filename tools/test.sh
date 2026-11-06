@@ -301,7 +301,7 @@ if section 'snapshots survive a broken package manager'; then
   cat > "$TMP/brew-half-broken" <<'STUB'
 #!/usr/bin/env bash
 case "$*" in
-  *--formula*) printf 'git 2.55.0\nripgrep 14.1.1\n'; exit 0 ;;
+  *--formula*) printf 'git 2.55.0\njq 1.8.1\n'; exit 0 ;;
   *--cask*)    printf "Error: Cask 'gone' is not installed.\n" >&2; exit 1 ;;
 esac
 exit 0
@@ -322,7 +322,7 @@ DRIVER
 
   out="$(bash "$TMP/snap.sh" "$TMP/snap.out" 2>/dev/null)"
   is 'a failing cask listing does not end the run' 'survived rc=0' "$out"
-  is 'and the formulae are still recorded' 'git 2.55.0 ripgrep 14.1.1' \
+  is 'and the formulae are still recorded' 'git 2.55.0 jq 1.8.1' \
      "$(tr '\n' ' ' < "$TMP/snap.out" | sed 's/ $//')"
 
   # And the whole thing failing is still not fatal.
@@ -386,7 +386,6 @@ DRIVER
   } > "$TMP/cmdmap.sh"
 
   is 'a package whose binary shares its name' 'bat' "$(bash "$TMP/cmdmap.sh" bat)"
-  is 'ripgrep is rg'                          'rg'  "$(bash "$TMP/cmdmap.sh" ripgrep)"
   is 'git-delta is delta'                     'delta' "$(bash "$TMP/cmdmap.sh" git-delta)"
   is "zoxide's binary, not the z it defines"  'zoxide' "$(bash "$TMP/cmdmap.sh" zoxide)"
   is "7zip's macOS binary is 7zz"             '7zz' "$(bash "$TMP/cmdmap.sh" sevenzip)"
@@ -691,7 +690,7 @@ if section 'tools function'; then
     fi
     is "$plat: an empty table still generates" 'yes' "$empty_ok"
 
-    # Run it with stdout not a terminal, as `tools | rg fd` would.
+    # Run it with stdout not a terminal, as `tools | grep fd` would.
     out="$(bash -c "source '$TMP/tools-$plat.sh'; tools" 2>&1)"
     contains "$plat: a hostile description comes out verbatim" "$TOOLS_DESC" "$out"
     case "$out" in
@@ -776,7 +775,7 @@ foreach ($n in 'gb', 'gs', 'cheat') {
     if (-not $f) { throw "no function $n in profile.ps1" }
     Invoke-Expression $f.Extent.Text
 }
-function rg { "HELP:$($args -join ' ')" }
+function fd { "HELP:$($args -join ' ')" }
 git init -q "$env:T_TMP/repo" | Out-Null
 Set-Location "$env:T_TMP/repo"
 git config user.email t@example.com; git config user.name t
@@ -791,10 +790,10 @@ gs *> $null
 "applied=$((Get-Content f) -join '')"
 "kept=$(@(git stash list).Count)"
 $global:ToolsRows = @(
-    ,@('ripgrep', 'rg', 'fast grep')
-    ,@('sd', 'sd', "it's sed")
+    ,@('fd', 'fd', 'fast find')
+    ,@('jq', 'jq', "it's json")
 )
-$env:FZF_DEFAULT_OPTS = '--filter=ripgrep'
+$env:FZF_DEFAULT_OPTS = '--filter=fast'
 "cheat=$(cheat)"
 PWSH
     win_wf="$(T_ROOT="$(native_path "$ROOT")" T_TMP="$(native_path "$TMP")" pwsh -NoProfile -File "$(native_path "$TMP")/pickers-win.ps1" 2>&1)"
@@ -937,48 +936,6 @@ if section 'theme activation'; then
     done
   else
     skip 'the deployed YAML parses' 'yq is not installed'
-  fi
-fi
-
-# --------------------------------------------------------- ripgrep config ----
-#
-# rg reads the file only through RIPGREP_CONFIG_PATH, so the path the zsh
-# fragment exports, the one the deploy step writes to and the one profile.ps1
-# exports on Windows have to agree, or a deployed config is never read. And a
-# flag rg does not know makes every search - grep included, through the alias -
-# fail, so the file is fed to the rg on this machine.
-
-if section 'ripgrep config'; then
-  rg_src="${ROOT}/ripgrep/config"
-  [[ -s "$rg_src" ]] && ok 'ripgrep/config is in the repo' \
-                     || bad 'ripgrep/config is in the repo' 'a non-empty file' 'missing or empty'
-
-  for os in linux macos; do
-    f="${ROOT}/${os}/bootstrap.sh"
-    if grep -qF 'export RIPGREP_CONFIG_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/ripgrep/config"' "$f" \
-       && grep -qF '"${XDG_CONFIG_HOME:-$HOME/.config}/ripgrep/config" '"'ripgrep config'" "$f"; then
-      ok "${os}: the fragment exports the path the deploy step writes"
-    else
-      bad "${os}: the fragment exports the path the deploy step writes" 'the same path in both' 'they differ'
-    fi
-  done
-  if grep -qF "Join-Path \$env:APPDATA 'ripgrep\\config'" "${ROOT}/windows/profile.ps1" \
-     && grep -qF "Join-Path \$env:APPDATA 'ripgrep\\config'" "${ROOT}/windows/bootstrap.ps1"; then
-    ok 'windows: profile.ps1 exports the path bootstrap.ps1 writes'
-  else
-    bad 'windows: profile.ps1 exports the path bootstrap.ps1 writes' '%APPDATA%\ripgrep\config in both' 'they differ'
-  fi
-
-  if command -v rg >/dev/null 2>&1; then
-    # A lowercase pattern against "Needle" matches only under --smart-case.
-    printf 'Needle\n' > "$TMP/rg-probe.txt"
-    if out="$(RIPGREP_CONFIG_PATH="$rg_src" rg -c needle "$TMP/rg-probe.txt" 2>&1)" && [[ "$out" == 1 ]]; then
-      ok 'rg accepts every flag in the config, smart-case included'
-    else
-      bad 'rg accepts every flag in the config, smart-case included' '1 match' "$out"
-    fi
-  else
-    skip 'rg accepts the config' 'rg is not installed'
   fi
 fi
 

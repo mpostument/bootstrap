@@ -35,7 +35,7 @@ none. Override with `--gui` or `--no-gui`.
    pyenv, nvm and tofuenv.
 7. **.NET SDK** — Microsoft's install script into `$HOME/.dotnet`.
 8. **Release binaries** — upstream builds into `~/.local/bin`: the modern CLI
-   bundle (bat, eza, fd, ripgrep, fzf, jq, yt-dlp and the rest), starship,
+   bundle (bat, eza, fd, fzf, jq, yt-dlp and the rest), starship,
    atuin, uv, carapace, and the Kubernetes and Terraform tools. The archive
    trails upstream by years for most of them, and Ubuntu 24.04 lacks several.
 9. **Python tools** — each group's `GROUP_*_UV` entries, through `uv tool`.
@@ -278,7 +278,7 @@ $ ./bootstrap.sh --history=3
 
 == History =====================================================
   when              took     result   i/u/f   what moved
-  2026-09-15 04:20* 1m 34s   ok       1/12/0  node 24.20.0>24.21.0, ripgrep 14.1.0>14.1.1
+  2026-09-15 04:20* 1m 34s   ok       1/12/0  node 24.20.0>24.21.0, fzf 0.66.0>0.67.0
   2026-09-16 04:20* 2m 02s   exit 1   0/3/2   starship 1.25.1>1.26.0
   2026-09-17 09:11  8s       ok       0/0/0
   3 run(s), * = unattended

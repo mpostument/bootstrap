@@ -16,13 +16,12 @@
 
         @{
             Name        = 'cli'
-            Description = 'Modern CLI bundle - nicer cat, ls, find and grep'
+            Description = 'Modern CLI bundle - nicer cat, ls and find'
             Packages    = @(
                 'sharkdp.bat'
                 'dandavison.delta'
                 'eza-community.eza'
                 'sharkdp.fd'
-                'BurntSushi.ripgrep.MSVC'
                 'ajeetdsouza.zoxide'
                 'junegunn.fzf'
                 'jqlang.jq'
@@ -32,7 +31,6 @@
                 'yt-dlp.FFmpeg'
                 'bootandy.dust'
                 'muesli.duf'
-                'chmln.sd'
                 'MrKaran.Doggo'
                 'JesseDuffield.lazygit'
                 'JesseDuffield.Lazydocker'
@@ -299,6 +297,15 @@
                 Url    = 'https://raw.githubusercontent.com/mpv-player/mpv/{0}/TOOLS/lua/autoload.lua'
             }
             @{
+                Name   = 'ontop-playback'
+                Source = 'commit'
+                Repo   = 'mpv-player/mpv'
+                Path   = 'TOOLS/lua/ontop-playback.lua'
+                Kind   = 'script'
+                File   = 'ontop-playback.lua'
+                Url    = 'https://raw.githubusercontent.com/mpv-player/mpv/{0}/TOOLS/lua/ontop-playback.lua'
+            }
+            @{
                 Name   = 'chapterskip'
                 Source = 'commit'
                 Repo   = 'dyphire/mpv-scripts'
@@ -315,14 +322,6 @@
                 Kind   = 'script'
                 File   = 'auto-save-state.lua'
                 Url    = 'https://raw.githubusercontent.com/dyphire/mpv-scripts/{0}/auto-save-state.lua'
-            }
-            @{
-                Name   = 'memo'
-                Source = 'commit'
-                Repo   = 'po5/memo'
-                Kind   = 'script'
-                File   = 'memo.lua'
-                Url    = 'https://raw.githubusercontent.com/po5/memo/{0}/memo.lua'
             }
         )
     }

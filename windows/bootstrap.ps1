@@ -89,7 +89,7 @@ function Invoke-Native {
 # The parameters as given, for the rerun after an update.
 $script:BoundParams = @{} + $PSBoundParameters
 
-$script:BootstrapVersion = '2.2.0'
+$script:BootstrapVersion = '2.3.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion
@@ -103,7 +103,6 @@ $script:ProfileSource = Join-Path $script:ToolRoot 'profile.ps1'
 $script:StarshipTomlSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'starship.toml'
 $script:AtuinSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'atuin'
 $script:BatSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'bat'
-$script:RipgrepSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'ripgrep'
 $script:KubecolorSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'kubecolor'
 $script:YtDlpSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'yt-dlp'
 $script:CarapaceSource = Join-Path (Split-Path $script:ToolRoot -Parent) 'carapace'
@@ -564,7 +563,6 @@ foreach (`$c in @($list)) {
 }
 `$out += "env:PATH=`$env:PATH"
 `$out += "env:JAVA_HOME=`$env:JAVA_HOME"
-`$out += "env:RIPGREP_CONFIG_PATH=`$env:RIPGREP_CONFIG_PATH"
 `$prompt = Get-Command prompt -CommandType Function -ErrorAction SilentlyContinue
 `$out += "fn:prompt=`$(if (`$prompt) { `$prompt.Definition -replace '\s+', ' ' } else { '' })"
 foreach (`$n in 'tools', 'gb', 'gs', 'fkill', 'cheat', 'ports') {
@@ -830,20 +828,6 @@ function Test-DoctorConfig {
         foreach ($f in $script:NvimManaged) {
             Test-DoctorFile -Label "nvim $f" -Source (Join-Path $script:NvimSource $f) `
                 -Target (Join-Path $env:LOCALAPPDATA "nvim\$f")
-        }
-    }
-    if (Get-Command rg -ErrorAction SilentlyContinue) {
-        $rgConfig = Join-Path $env:APPDATA 'ripgrep\config'
-        Test-DoctorFile -Label 'ripgrep config' -Source (Join-Path $script:RipgrepSource 'config') -Target $rgConfig
-        # rg finds no config file by itself: without the variable the file
-        # above is never read.
-        $rgEnv = Get-ProbeValue 'env:RIPGREP_CONFIG_PATH'
-        if (-not $rgEnv) {
-            Add-DoctorBroken 'RIPGREP_CONFIG_PATH' 'unset in a new shell, so rg reads no config'
-        } elseif ($rgEnv -eq $rgConfig) {
-            Add-DoctorOk 'RIPGREP_CONFIG_PATH' $rgEnv
-        } else {
-            Add-DoctorNote 'RIPGREP_CONFIG_PATH' ("{0} - not the repo's config, which may be deliberate" -f $rgEnv)
         }
     }
     foreach ($tool in @(
@@ -2656,16 +2640,6 @@ if ($SkipShell) {
         -Target (Join-Path $env:USERPROFILE '.config\atuin\themes\catppuccin-mocha.toml') `
         -Group 'shell' -Label 'atuin theme'
 
-    # ripgrep config: smart-case, dotfiles searched, .git left out. rg reads it
-    # through RIPGREP_CONFIG_PATH, which profile.ps1 sets when the file exists.
-    if (Get-Command rg -ErrorAction SilentlyContinue) {
-        Deploy-ManagedFile -Source (Join-Path $script:RipgrepSource 'config') `
-            -Target (Join-Path $env:APPDATA 'ripgrep\config') `
-            -Group 'shell' -Label 'ripgrep config' -Marker 'managed by the bootstrap'
-    } else {
-        Add-Result -Group 'shell' -Id 'ripgrep config' -Action 'missing' -Detail 'ripgrep is not installed'
-    }
-
     # Neovim config: LazyVim with Catppuccin Mocha, in %LOCALAPPDATA%\nvim. The
     # repo's files are replaced every run; the first replacement of one that
     # was not ours is kept as .bak. An init.vim of yours is left alone: nvim
@@ -3009,7 +2983,7 @@ if ($SkipMpv) {
         Add-UserPathEntry -Directory (Split-Path $mpvExe -Parent) -Group 'mpv' -Label 'mpv on PATH'
     }
 
-    foreach ($name in @('mpv.conf', 'input.conf', 'script-opts\autoload.conf')) {
+    foreach ($name in @('mpv.conf', 'input.conf', 'script-opts\autoload.conf', 'script-opts\uosc.conf')) {
         Deploy-ManagedFile -Source (Join-Path $script:MpvSource $name) `
             -Target (Join-Path $mpvDir $name) -Label $name -Group 'mpv'
     }

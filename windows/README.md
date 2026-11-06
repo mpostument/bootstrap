@@ -52,13 +52,14 @@ Deployed into `%APPDATA%\mpv\`:
 
 | | |
 |---|---|
-| `mpv.conf` | `gpu-next` on `d3d11`, `profile=high-quality`, `hwdec=auto-safe`, large cache for network shares. |
+| `mpv.conf` | `gpu-next` on `d3d11`, `profile=high-quality`, `hwdec=auto-safe`, large cache for network shares, watch history for the recently-played menu on `h`. |
 | `input.conf` | Bindings, plus the uosc menu on right-click. |
 | `script-opts/autoload.conf` | Which file types join a playlist. |
+| `script-opts/uosc.conf` | A pin button on the control bar that keeps the window on top (also `Shift+T` and the menu). |
 | **uosc** | A real UI: menus, timeline, window controls. |
 | **thumbfast** | Hover-preview thumbnails on the seek bar. |
 | **autoload** | Opening one file queues the rest of the directory. |
-| **memo** | Recently-played menu, on `h`. |
+| **ontop-playback** | An always-on-top window drops behind others while paused and comes back on top when playback resumes. |
 | **chapterskip** | `Ctrl+s` skips to the next silence. |
 | **auto-save-state** | Periodically re-saves the resume position. |
 
@@ -249,7 +250,7 @@ the profile configures it — stated as such rather than pretended.
 .\bootstrap.ps1 -Doctor
 
 == Doctor - the cli group on PATH ==============================
-  ok            rg                      C:\Users\you\AppData\Local\Microsoft\WinGet\Links\rg.exe
+  ok            bat                     C:\Users\you\AppData\Local\Microsoft\WinGet\Links\bat.exe
   present       fd                      C:\...\fd.exe - and 2 copies on PATH
 == Doctor - shell integration ==================================
   ok            starship prompt         the prompt function comes from starship
