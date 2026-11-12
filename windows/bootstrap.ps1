@@ -89,7 +89,7 @@ function Invoke-Native {
 # The parameters as given, for the rerun after an update.
 $script:BoundParams = @{} + $PSBoundParameters
 
-$script:BootstrapVersion = '2.3.0'
+$script:BootstrapVersion = '2.4.0'
 
 if ($ShowVersion) {
     Write-Output $script:BootstrapVersion

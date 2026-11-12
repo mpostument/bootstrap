@@ -20,6 +20,15 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [2.4.0]
+
+### Changed
+
+- **Okular (`KDE.Okular`) replaces SumatraPDF in the `apps` group.** Okular
+  reads more than PDF - EPub, comics, Markdown, images - and annotates.
+  The bootstrap never uninstalls, so SumatraPDF stays on a machine that
+  has it; `winget uninstall SumatraPDF.SumatraPDF` cleans it up.
+
 ## [2.3.0]
 
 ### Removed

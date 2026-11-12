@@ -157,7 +157,7 @@
                 'Anthropic.Claude'
                 'Bruno.Bruno'
                 'DBeaver.DBeaver.Community'
-                'SumatraPDF.SumatraPDF'
+                'KDE.Okular'
                 'VideoLAN.VLC'
                 'shinchiro.mpv'
                 'Rufus.Rufus'
