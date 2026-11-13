@@ -15,6 +15,13 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0]
+
+### Added
+
+- **Koodo Reader** in the `apps` group (cask `koodo-reader`). An ebook reader for EPUB,
+  MOBI, AZW3, PDF and comics, with highlights, notes and sync.
+
 ## [2.4.0]
 
 ### Removed

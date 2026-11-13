@@ -158,6 +158,7 @@
                 'Bruno.Bruno'
                 'DBeaver.DBeaver.Community'
                 'KDE.Okular'
+                'AppByTroye.KoodoReader'
                 'VideoLAN.VLC'
                 'shinchiro.mpv'
                 'Rufus.Rufus'

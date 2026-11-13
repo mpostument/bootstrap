@@ -20,6 +20,13 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [2.5.0]
+
+### Added
+
+- **Koodo Reader** in the `apps` group (`AppByTroye.KoodoReader`). An ebook reader for EPUB,
+  MOBI, AZW3, PDF and comics, with highlights, notes and sync.
+
 ## [2.4.0]
 
 ### Changed
