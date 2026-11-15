@@ -1021,7 +1021,7 @@ if section 'prompt'; then
     have=$("${PYTHON[@]}" -c "
 import tomllib,sys
 print('\n'.join(sorted(tomllib.load(open(sys.argv[1],'rb')).get('profiles', {}))))" \
-      "${ROOT}/starship.toml")
+      "${ROOT}/starship.toml" | tr -d '\r')
     groups=$( { sed -n "s/.*group=\\([a-z]*\\) ;;.*/\\1/p" "${ROOT}/linux/bootstrap.sh" \
                                                               "${ROOT}/macos/bootstrap.sh"
                 sed -n "s/^ *\\([a-z]*\\) *= *@(.*/\\1/p" "${ROOT}/windows/profile.ps1"
