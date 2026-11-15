@@ -1665,7 +1665,7 @@ doctor_check_more_themes() {
 }
 
 doctor_check_configs() {
-  local bat_cfg rg_cfg shadow
+  local bat_cfg shadow
   doctor_config 'starship.toml' "${SCRIPT_DIR}/../starship.toml" "${HOME}/.config/starship.toml"
   doctor_config 'atuin config' "${SCRIPT_DIR}/../atuin/config.toml" "${HOME}/.config/atuin/config.toml"
 
