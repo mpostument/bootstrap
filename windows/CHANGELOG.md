@@ -20,6 +20,18 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html), read as:
 - **minor** — packages added or removed, new flags, new behaviour.
 - **patch** — fixes that change nothing about how you call it.
 
+## [2.6.0]
+
+### Changed
+
+- **Readest (`chrox.Readest`) replaces Koodo Reader in the `apps` group.** Readest
+  syncs progress, highlights and notes across Windows, Android and e-ink
+  (Boox), and speaks KOReader's KOSync. The bootstrap never uninstalls, so
+  Koodo Reader stays on a machine that has it; `winget uninstall AppByTroye.KoodoReader` cleans it up.
+- **Python 3.15 (`Python.Python.3.15`) replaces 3.14 in the `dev` group.**
+  The bootstrap never uninstalls, so 3.14 stays beside it on a machine that
+  has it; `winget uninstall Python.Python.3.14` cleans it up.
+
 ## [2.5.0]
 
 ### Added

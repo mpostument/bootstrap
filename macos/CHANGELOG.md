@@ -15,6 +15,15 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0]
+
+### Changed
+
+- **Readest (`readest`) replaces Koodo Reader in the `apps` group.** Readest
+  syncs progress, highlights and notes across Windows, Android and e-ink
+  (Boox), and speaks KOReader's KOSync. The bootstrap never uninstalls, so
+  Koodo Reader stays on a machine that has it; `brew uninstall --cask koodo-reader` cleans it up.
+
 ## [2.5.0]
 
 ### Added

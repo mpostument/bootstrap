@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='2.5.0'
+BOOTSTRAP_VERSION='2.6.0'
 BOOTSTRAP_PLATFORM='macos'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
