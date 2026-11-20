@@ -15,6 +15,14 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1]
+
+### Fixed
+
+- **Bitwarden CLI** failed to install from cli-v2026.11.0 on (404): Bitwarden renamed its
+  release zips, and the commercial-license build these names always meant is now
+  `bw-bit-linux[-arm64]-{version}.zip`. The open-source build is `bw-oss-*`.
+
 ## [2.5.0]
 
 ### Added
