@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BOOTSTRAP_VERSION='2.6.0'
+BOOTSTRAP_VERSION='2.6.1'
 BOOTSTRAP_PLATFORM='linux'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -251,7 +251,11 @@ notify_failure() {   # notify_failure <exit-code>
   fi
 
   if [[ "$(id -u)" -ne 0 ]]; then
-    notify-send -u critical "bootstrap-linux: $subtitle" "$body" >/dev/null 2>&1 || true
+    # The timer's run (User= of a system unit) has no session bus of its own; a
+    # desktop session of the same user has one at the usual place.
+    bus="${DBUS_SESSION_BUS_ADDRESS:-}"
+    [[ -z "$bus" && -S "/run/user/$(id -u)/bus" ]] && bus="unix:path=/run/user/$(id -u)/bus"
+    DBUS_SESSION_BUS_ADDRESS="$bus" notify-send -u critical "bootstrap-linux: $subtitle" "$body" >/dev/null 2>&1 || true
     return 0
   fi
   for bus in /run/user/*/bus; do
@@ -600,6 +604,67 @@ run_priv() {
     "$@"
   else
     sudo "$@"
+  fi
+}
+
+# `aws/install --update` puts each release beside the last and only repoints
+# v2/current, so every daily upgrade left about 270 MB behind - 28 copies, 7.4 GB,
+# on one Raspberry Pi's SD card. Everything in v2/ but the version current points
+# at goes. Prints how many went, nothing when none did.
+prune_awscli() {
+  local v2="${AWSCLI_DIR}/v2" keep dir n=0
+  keep="$(readlink "${v2}/current" 2>/dev/null || true)"
+  keep="${keep%/}"
+  keep="${keep##*/}"
+  [[ -n "$keep" && -d "${v2}/${keep}" ]] || return 0
+  for dir in "${v2}"/*; do
+    [[ -d "$dir" && ! -L "$dir" && "${dir##*/}" != "$keep" ]] || continue
+    rm -rf -- "$dir" && n=$((n + 1))
+  done
+  [[ "$n" -gt 0 ]] && printf '%s' "$n"
+  return 0
+}
+
+# dotnet-install.sh adds each SDK and runtime beside the last and removes
+# nothing: four 10.0.4xx SDKs and four of each runtime, 2.6 GB, per user. What
+# goes is only what the newest replaces: SDKs of its own feature band (10.0.4xx)
+# and runtime patches of its own major.minor, which roll forward to the newest by
+# default. Another band, another major and any preview stay. Prints a summary.
+prune_dotnet() {   # prune_dotnet <dotnet exe>
+  local root newest band mm dir v fw keep_rt sdks=0 rts=0
+  root="$(dirname "$1")"
+  newest="$("$1" --list-sdks 2>/dev/null | awk '{print $1}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)"
+  [[ "$newest" =~ ^([0-9]+\.[0-9]+)\.([0-9])[0-9]{2}$ ]] || return 0
+  mm="${BASH_REMATCH[1]}"
+  band="${mm}.${BASH_REMATCH[2]}"
+  for dir in "${root}/sdk"/*; do
+    v="${dir##*/}"
+    [[ -d "$dir" && "$v" != "$newest" && "$v" =~ ^${band//./\\.}[0-9]{2}$ ]] || continue
+    rm -rf -- "$dir" && sdks=$((sdks + 1))
+  done
+  for fw in "${root}/shared"/*; do
+    [[ -d "$fw" ]] || continue
+    keep_rt="$(find "$fw" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | grep -E "^${mm//./\\.}\.[0-9]+$" | sort -V | tail -1 || true)"
+    [[ -n "$keep_rt" ]] || continue
+    for dir in "$fw"/*; do
+      v="${dir##*/}"
+      [[ -d "$dir" && "$v" != "$keep_rt" && "$v" =~ ^${mm//./\\.}\.[0-9]+$ ]] || continue
+      rm -rf -- "$dir" && rts=$((rts + 1))
+    done
+  done
+  [[ $((sdks + rts)) -gt 0 ]] && printf '%s old SDK(s), %s old runtime(s)' "$sdks" "$rts"
+  return 0
+}
+
+# Whether <user> may sudo without a password - not merely with credentials
+# still cached from the run you are sitting at (-k ignores the cache).
+sudo_nopasswd() {   # sudo_nopasswd <user>
+  if [[ "$(id -un)" == "$1" ]]; then
+    sudo -n -k true >/dev/null 2>&1
+  elif [[ "$(id -u)" -eq 0 ]]; then
+    sudo -n -u "$1" sudo -n -k true >/dev/null 2>&1
+  else
+    return 1
   fi
 }
 
@@ -2510,11 +2575,13 @@ else
       mktemp_tracked tmp_script
       if curl -fsSL https://dot.net/v1/dotnet-install.sh -o "$tmp_script" 2>/dev/null &&
          bash "$tmp_script" --channel "$DOTNET_CHANNEL" --install-dir "$DOTNET_DIR" >/dev/null 2>&1; then
+        dotnet_pruned="$(prune_dotnet "$dotnet_exe")"
         after="$("$dotnet_exe" --list-sdks 2>/dev/null | awk '{print $1}' | paste -sd, - || true)"
+        dotnet_note="${dotnet_pruned:+, removed ${dotnet_pruned}}"
         if [[ "$versions" == "$after" ]]; then
-          result 'current' 'dotnet SDK' "$after"
+          result 'current' 'dotnet SDK' "${after}${dotnet_note}"
         else
-          result 'upgraded' 'dotnet SDK' "$versions -> $after"
+          result 'upgraded' 'dotnet SDK' "$versions -> ${after}${dotnet_note}"
         fi
       else
         result 'failed' 'dotnet SDK' 'dotnet-install.sh failed'
@@ -2871,12 +2938,14 @@ else
       ./aws/install --install-dir "$AWSCLI_DIR" --bin-dir "$RELEASE_BIN_DIR" "${aws_mode[@]+"${aws_mode[@]}"}" >/dev/null 2>&1
     ); then
       aws_now="$("$aws_exe" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+      aws_pruned="$(prune_awscli)"
+      aws_note="${aws_pruned:+, removed ${aws_pruned} old}"
       if [[ -z "$aws_have" ]]; then
-        result 'installed' 'AWS CLI v2' "${aws_now:-installed}"
+        result 'installed' 'AWS CLI v2' "${aws_now:-installed}${aws_note}"
       elif [[ "$aws_have" == "$aws_now" ]]; then
-        result 'current' 'AWS CLI v2' "$aws_now"
+        result 'current' 'AWS CLI v2' "${aws_now}${aws_note}"
       else
-        result 'upgraded' 'AWS CLI v2' "$aws_have -> $aws_now"
+        result 'upgraded' 'AWS CLI v2' "$aws_have -> ${aws_now}${aws_note}"
       fi
     else
       result 'failed' 'AWS CLI v2' "could not fetch or install $aws_url"
@@ -4270,6 +4339,14 @@ else
   unit_exec="${unit_dir//\\/\\\\}/bootstrap.sh"
   unit_exec="${unit_exec//\"/\\\"}"
   unit_exec="${unit_exec//\$/\$\$}"
+  # The run belongs to the checkout's owner: as root it worked in /root and kept
+  # a second copy of every per-user tool there, upgraded daily (14 GB on one
+  # Raspberry Pi's SD card). It needs a sudo that asks no password, since nobody
+  # is there to type one; without that it stays root, as before.
+  unit_user="$(stat -c %U "$SCRIPT_DIR" 2>/dev/null || true)"
+  if [[ -z "$unit_user" || "$unit_user" == root || "$unit_user" == UNKNOWN ]] || ! sudo_nopasswd "$unit_user"; then
+    unit_user=''
+  fi
   mktemp_tracked NEW_SERVICE
   {
     echo '[Unit]'
@@ -4277,6 +4354,7 @@ else
     echo
     echo '[Service]'
     echo 'Type=oneshot'
+    [[ -n "$unit_user" ]] && echo "User=${unit_user}"
     echo "WorkingDirectory=${unit_dir}"
     echo "ExecStart=\"${unit_exec}\" --yes --scheduled"
   } > "$NEW_SERVICE"
@@ -4312,12 +4390,12 @@ else
 
   if [[ "$SERVICE_CHANGED" == "no" && "$TIMER_CHANGED" == "no" && "$TIMER_ACTIVE" == "yes" ]]; then
     rm -f "$NEW_SERVICE" "$NEW_TIMER"
-    result 'current' "$SCHEDULE_UNIT_NAME" "daily at $SCHEDULE_TIME"
+    result 'current' "$SCHEDULE_UNIT_NAME" "daily at ${SCHEDULE_TIME}${unit_user:+ as $unit_user}"
   elif [[ "$DRY_RUN" == "yes" ]]; then
     rm -f "$NEW_SERVICE" "$NEW_TIMER"
     action='would-install'
     [[ -f "$SERVICE_UNIT" ]] && action='would-upgrade'
-    result "$action" "$SCHEDULE_UNIT_NAME" "daily at $SCHEDULE_TIME"
+    result "$action" "$SCHEDULE_UNIT_NAME" "daily at ${SCHEDULE_TIME}${unit_user:+ as $unit_user}"
   else
     action='installed'
     [[ -f "$SERVICE_UNIT" ]] && action='upgraded'
@@ -4325,7 +4403,7 @@ else
     run_priv install -m 0644 "$NEW_TIMER" "$TIMER_UNIT"
     rm -f "$NEW_SERVICE" "$NEW_TIMER"
     if run_priv systemctl daemon-reload && run_priv systemctl enable --now "${SCHEDULE_UNIT_NAME}.timer" >/dev/null; then
-      result "$action" "$SCHEDULE_UNIT_NAME" "daily at $SCHEDULE_TIME"
+      result "$action" "$SCHEDULE_UNIT_NAME" "daily at ${SCHEDULE_TIME}${unit_user:+ as $unit_user}"
     else
       result 'failed' "$SCHEDULE_UNIT_NAME" 'systemctl daemon-reload/enable failed'
     fi

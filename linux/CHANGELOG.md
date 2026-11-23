@@ -15,6 +15,29 @@ version of each is inside.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1]
+
+### Fixed
+
+- **The daily timer ran as root and kept a second copy of every per-user tool in
+  `/root`.** Its unit had no `User=`, so the scheduled run worked in `/root`:
+  release binaries, AWS CLI, .NET, mise, uv and their caches, all upgraded daily
+  beside the real ones in your home - 13-14 GB on each Raspberry Pi's SD card.
+  The unit now runs as the checkout's owner when that user may `sudo` without a
+  password (checked with `sudo -n -k`, so cached credentials do not count);
+  otherwise it stays root, as before. A failure notice from such a run still
+  reaches your desktop session's bus. What the old runs left in `/root` is not
+  removed: `sudo rm -rf /root/.local/aws-cli /root/.local/bin /root/.local/share /root/.dotnet /root/.cache`
+  once the timer reads `as <you>` in the Schedule phase.
+- **AWS CLI kept every version it ever upgraded to.** `aws/install --update` puts each
+  release beside the last and only moves `v2/current`; about 270 MB a release,
+  4-7 GB after two months of daily runs. Every version but `current` is now
+  removed after an install or upgrade, the result says how many.
+- **.NET kept every SDK and runtime patch.** `dotnet-install.sh` removes nothing.
+  After it runs, the older SDKs of the newest SDK's feature band (`10.0.4xx`) and
+  the older runtime patches of its `major.minor` are removed - what rolls forward
+  to the newest anyway. Another band or major and any preview are kept.
+
 ## [2.6.0]
 
 ### Changed
